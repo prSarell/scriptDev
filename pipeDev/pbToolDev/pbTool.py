@@ -109,6 +109,7 @@ class PBTool(object):
         self.widgets["show_fps"] = cmds.checkBox(label="Show Frame Rate", value=True)
         self.widgets["show_scene"] = cmds.checkBox(label="Show Scene Name", value=True)
         self.widgets["show_frame"] = cmds.checkBox(label="Show Frame Number", value=True)
+        self.widgets["show_focal"] = cmds.checkBox(label="Show Focal Length", value=True)
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -380,6 +381,7 @@ class PBTool(object):
         show_fps = cmds.checkBox(self.widgets["show_fps"], q=True, value=True)
         show_scene = cmds.checkBox(self.widgets["show_scene"], q=True, value=True)
         show_frame = cmds.checkBox(self.widgets["show_frame"], q=True, value=True)
+        show_focal = cmds.checkBox(self.widgets["show_focal"], q=True, value=True)
 
         fps_text = self.get_frame_rate_label() if show_fps else ""
         scene_text = self.get_scene_name() if show_scene else ""
@@ -388,6 +390,7 @@ class PBTool(object):
         render_aspect = float(render_width) / float(render_height)
 
         target_aspect = render_aspect
+        focal_text = ""
         try:
             panel = self.get_active_model_panel()
             cam = cmds.modelEditor(panel, q=True, camera=True)
@@ -403,6 +406,9 @@ class PBTool(object):
                 v_ap = cmds.getAttr(cam + ".verticalFilmAperture")
                 if v_ap and v_ap != 0:
                     target_aspect = float(h_ap) / float(v_ap)
+                if show_focal:
+                    fl = cmds.getAttr(cam + ".focalLength")
+                    focal_text = "{0:.0f}mm".format(fl)
         except Exception:
             pass
 
@@ -434,6 +440,7 @@ class PBTool(object):
             margin_x = max(36, int(active_width * 0.04))
             text_height = max(34, int(active_height * 0.055))
             top_inset = active_y + max(28, int(active_height * 0.04))
+            bottom_inset = active_y + active_height - max(28, int(active_height * 0.04)) - text_height
 
             font = QtGui.QFont("Arial", font_size)
             font.setBold(True)
@@ -481,6 +488,19 @@ class PBTool(object):
                 right_rect,
                 frame_text,
                 int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            )
+
+            bottom_left_rect = QtCore.QRect(
+                active_x + margin_x,
+                bottom_inset,
+                int(active_width * 0.25) - margin_x,
+                text_height
+            )
+            self._draw_text_block(
+                painter,
+                bottom_left_rect,
+                focal_text,
+                int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
             )
 
             painter.end()
