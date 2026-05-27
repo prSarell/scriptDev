@@ -21,4 +21,16 @@ BUTTONS = [
             "pbTool.show_pbTool()"
         ),
     },
+    {
+        "label": "CamPreset",
+        "tooltip": "Open the Camera Preset Manager — save and apply named camera/render presets",
+        "icon": "camera.png",
+        "script": "ps_cam_preset_simple.py",
+        "command": (
+            "import importlib\n"
+            "import ps_cam_preset_simple as ps\n"
+            "importlib.reload(ps)\n"
+            "ps.show()"
+        ),
+    },
 ]
