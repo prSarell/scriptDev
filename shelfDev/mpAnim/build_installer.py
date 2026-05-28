@@ -142,7 +142,14 @@ def _install():
     if os.path.exists(usersetup):
         with open(usersetup, "r", encoding="utf-8") as fh:
             existing = fh.read()
-    if _USERSETUP_MARKER not in existing:
+    _OLD_USERSETUP_LINE = "import animMultiTool; animMultiTool.show()"
+    if _OLD_USERSETUP_LINE in existing:
+        # Replace non-deferred line left by an earlier installer version
+        existing = existing.replace(_OLD_USERSETUP_LINE, _USERSETUP_LINE)
+        with open(usersetup, "w", encoding="utf-8") as fh:
+            fh.write(existing)
+        print("[mpAnim installer] updated userSetup.py to deferred animMultiTool load")
+    elif _USERSETUP_MARKER not in existing:
         with open(usersetup, "a", encoding="utf-8") as fh:
             fh.write("\\n" + _USERSETUP_MARKER + "\\n" + _USERSETUP_LINE + "\\n")
         print("[mpAnim installer] patched userSetup.py for animMultiTool auto-load")

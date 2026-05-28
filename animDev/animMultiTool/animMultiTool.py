@@ -109,7 +109,7 @@ def show():
         initialWidth=270,
         minimumWidth=200,
         retain=True,
-        uiScript="import animMultiTool; animMultiTool._populate_workspace_control()",
+        uiScript="import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool._populate_workspace_control()')",
     )
 
 
