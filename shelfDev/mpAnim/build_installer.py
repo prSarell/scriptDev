@@ -35,10 +35,13 @@ spec.loader.exec_module(config)
 
 def _bundle_scripts():
     bundled = {}
+    all_scripts = list(config.EXTRA_SCRIPTS)
     for btn in config.BUTTONS:
         name = btn.get("script", "")
-        if not name:
-            continue
+        if name and name not in all_scripts:
+            all_scripts.append(name)
+
+    for name in all_scripts:
         path = os.path.join(TOOLS_DIR, name)
         if not os.path.exists(path):
             print(f"  WARNING: script not found — skipping: {path}")
@@ -93,6 +96,9 @@ _BUTTONS = {buttons_r}
 _BUNDLED = {bundled_r}
 _ICONS = {icons_r}
 
+_USERSETUP_MARKER = "# animMultiTool auto-load (mpAnim installer)"
+_USERSETUP_LINE = "import animMultiTool; animMultiTool.show()"
+
 
 def _install():
     import shutil
@@ -130,11 +136,24 @@ def _install():
     else:
         print("[mpAnim installer] WARNING: studiolibrary_src not found — Studio Library button may not work")
 
+    # Patch userSetup.py so animMultiTool loads on every Maya start
+    usersetup = os.path.join(scripts_dir, "userSetup.py")
+    existing = ""
+    if os.path.exists(usersetup):
+        with open(usersetup, "r", encoding="utf-8") as fh:
+            existing = fh.read()
+    if _USERSETUP_MARKER not in existing:
+        with open(usersetup, "a", encoding="utf-8") as fh:
+            fh.write("\\n" + _USERSETUP_MARKER + "\\n" + _USERSETUP_LINE + "\\n")
+        print("[mpAnim installer] patched userSetup.py for animMultiTool auto-load")
+    else:
+        print("[mpAnim installer] userSetup.py already patched")
+
     # Build / refresh shelf
     shelf_top = mel.eval("$tmpVar=$gShelfTopLevel")
-    existing = cmds.shelfTabLayout(shelf_top, query=True, childArray=True) or []
+    existing_tabs = cmds.shelfTabLayout(shelf_top, query=True, childArray=True) or []
 
-    if _SHELF_NAME not in existing:
+    if _SHELF_NAME not in existing_tabs:
         mel.eval(f'addNewShelfTab "{{_SHELF_NAME}}"')
         print("[mpAnim installer] created new shelf tab")
 
@@ -158,6 +177,16 @@ def _install():
 
     mel.eval("saveAllShelves $gShelfTopLevel")
     print("[mpAnim installer] done")
+
+    # Launch animMultiTool and dock it next to the Channel Box
+    try:
+        import animMultiTool
+        import importlib
+        importlib.reload(animMultiTool)
+        animMultiTool.show()
+        print("[mpAnim installer] animMultiTool launched")
+    except Exception as e:
+        print("[mpAnim installer] WARNING: could not launch animMultiTool: " + str(e))
 
     cmds.inViewMessage(
         amg=f"<b>{{_SHELF_NAME}} v{{_SHELF_VERSION}}</b> installed successfully.",
