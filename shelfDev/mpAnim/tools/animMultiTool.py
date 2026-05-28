@@ -6,74 +6,8 @@ TOOL_VERSION = "1.0"
 
 
 # ---------------------------------------------------------------------------
-# Main widget
+# Snap logic (no PySide2 needed here)
 # ---------------------------------------------------------------------------
-
-class AnimMultiTool(object):
-    # Constructed lazily inside _populate_workspace_control
-    pass
-
-
-class AnimMultiToolWidget(object):
-    pass
-
-
-def _build_widget(parent):
-    from PySide2 import QtWidgets, QtCore
-
-    widget = QtWidgets.QWidget(parent)
-    widget.setObjectName("animMultiToolWidget")
-
-    main_layout = QtWidgets.QVBoxLayout(widget)
-    main_layout.setContentsMargins(4, 4, 4, 4)
-    main_layout.setSpacing(6)
-    main_layout.setAlignment(QtCore.Qt.AlignTop)
-
-    main_layout.addWidget(_build_snap_section(widget))
-    main_layout.addStretch()
-
-    return widget
-
-
-def _build_snap_section(parent):
-    from PySide2 import QtWidgets
-
-    group = QtWidgets.QGroupBox("Snap")
-    layout = QtWidgets.QVBoxLayout(group)
-    layout.setSpacing(4)
-
-    # Checkboxes
-    cb_layout = QtWidgets.QHBoxLayout()
-    cb_translate = QtWidgets.QCheckBox("Translate")
-    cb_translate.setChecked(True)
-    cb_rotate = QtWidgets.QCheckBox("Rotate")
-    cb_rotate.setChecked(True)
-    cb_scale = QtWidgets.QCheckBox("Scale")
-    cb_scale.setChecked(False)
-    cb_layout.addWidget(cb_translate)
-    cb_layout.addWidget(cb_rotate)
-    cb_layout.addWidget(cb_scale)
-    cb_layout.addStretch()
-    layout.addLayout(cb_layout)
-
-    # Buttons
-    btn_layout = QtWidgets.QHBoxLayout()
-    btn_a_to_b = QtWidgets.QPushButton("Snap A  →  B")
-    btn_b_to_a = QtWidgets.QPushButton("Snap B  →  A")
-    btn_a_to_b.setToolTip("Snap first selected object to second selected object")
-    btn_b_to_a.setToolTip("Snap second selected object to first selected object")
-    btn_a_to_b.clicked.connect(
-        lambda: _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first=True)
-    )
-    btn_b_to_a.clicked.connect(
-        lambda: _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first=False)
-    )
-    btn_layout.addWidget(btn_a_to_b)
-    btn_layout.addWidget(btn_b_to_a)
-    layout.addLayout(btn_layout)
-
-    return group
-
 
 def _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first):
     sel = cmds.ls(selection=True, long=True)
@@ -101,7 +35,66 @@ def _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first):
 
 
 # ---------------------------------------------------------------------------
-# Workspace control / docking
+# UI builders (PySide2 imported lazily)
+# ---------------------------------------------------------------------------
+
+def _build_snap_section():
+    from PySide2 import QtWidgets
+
+    group = QtWidgets.QGroupBox("Snap")
+    layout = QtWidgets.QVBoxLayout(group)
+    layout.setSpacing(4)
+
+    cb_layout = QtWidgets.QHBoxLayout()
+    cb_translate = QtWidgets.QCheckBox("Translate")
+    cb_translate.setChecked(True)
+    cb_rotate = QtWidgets.QCheckBox("Rotate")
+    cb_rotate.setChecked(True)
+    cb_scale = QtWidgets.QCheckBox("Scale")
+    cb_scale.setChecked(False)
+    cb_layout.addWidget(cb_translate)
+    cb_layout.addWidget(cb_rotate)
+    cb_layout.addWidget(cb_scale)
+    cb_layout.addStretch()
+    layout.addLayout(cb_layout)
+
+    btn_layout = QtWidgets.QHBoxLayout()
+    btn_a_to_b = QtWidgets.QPushButton("Snap A  →  B")
+    btn_b_to_a = QtWidgets.QPushButton("Snap B  →  A")
+    btn_a_to_b.setToolTip("Snap first selected object to second selected object")
+    btn_b_to_a.setToolTip("Snap second selected object to first selected object")
+    btn_a_to_b.clicked.connect(
+        lambda: _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first=True)
+    )
+    btn_b_to_a.clicked.connect(
+        lambda: _do_snap(cb_translate, cb_rotate, cb_scale, source_is_first=False)
+    )
+    btn_layout.addWidget(btn_a_to_b)
+    btn_layout.addWidget(btn_b_to_a)
+    layout.addLayout(btn_layout)
+
+    return group
+
+
+def _build_tool_widget(parent=None):
+    from PySide2 import QtWidgets, QtCore
+
+    widget = QtWidgets.QWidget(parent)
+    widget.setObjectName("animMultiToolWidget")
+
+    main_layout = QtWidgets.QVBoxLayout(widget)
+    main_layout.setContentsMargins(4, 4, 4, 4)
+    main_layout.setSpacing(6)
+    main_layout.setAlignment(QtCore.Qt.AlignTop)
+
+    main_layout.addWidget(_build_snap_section())
+    main_layout.addStretch()
+
+    return widget
+
+
+# ---------------------------------------------------------------------------
+# Workspace control
 # ---------------------------------------------------------------------------
 
 def show():
@@ -125,25 +118,33 @@ def _populate_workspace_control():
     from shiboken2 import wrapInstance
     from maya import OpenMayaUI as omui
 
-    ptr = omui.MQtUtil.findControl(WORKSPACE_CONTROL_NAME)
+    # Maya sets the parent context before calling uiScript — query it here
+    parent_name = cmds.setParent(query=True)
+
+    ptr = omui.MQtUtil.findLayout(parent_name)
     if not ptr:
+        ptr = omui.MQtUtil.findControl(parent_name)
+    if not ptr:
+        print("[animMultiTool] ERROR: could not find workspace control parent widget")
         return
+
     parent = wrapInstance(int(ptr), QtWidgets.QWidget)
 
-    # Clear any existing layout before repopulating
-    old_layout = parent.layout()
-    if old_layout:
-        while old_layout.count():
-            item = old_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-    else:
-        from PySide2 import QtWidgets as _QtWidgets
-        layout = _QtWidgets.QVBoxLayout(parent)
-        layout.setContentsMargins(0, 0, 0, 0)
+    # Replace contents if called again (e.g. Maya restoring layout on startup)
+    existing = parent.findChild(QtWidgets.QWidget, "animMultiToolWidget")
+    if existing:
+        existing.deleteLater()
 
-    widget = _build_widget(parent)
-    parent.layout().addWidget(widget)
+    widget = _build_tool_widget(parent)
+
+    if parent.layout() is None:
+        layout = QtWidgets.QVBoxLayout(parent)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(widget)
+    else:
+        parent.layout().addWidget(widget)
+
+    widget.show()
 
 
 def close():
