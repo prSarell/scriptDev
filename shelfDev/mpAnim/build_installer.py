@@ -28,7 +28,9 @@ spec.loader.exec_module(config)
 def _bundle_scripts():
     bundled = {}
     for btn in config.BUTTONS:
-        name = btn["script"]
+        name = btn.get("script", "")
+        if not name:
+            continue
         path = os.path.join(TOOLS_DIR, name)
         if not os.path.exists(path):
             print(f"  WARNING: script not found — skipping: {path}")

@@ -34,6 +34,23 @@ BUTTONS = [
         ),
     },
     {
+        "label": "StudioLib",
+        "tooltip": "Open Studio Library — animation pose and clip manager",
+        "icon": "iconStudioLib.png",
+        "command": (
+            "try:\n"
+            "    import studiolibrary\n"
+            "    studiolibrary.main()\n"
+            "except ImportError:\n"
+            "    import maya.cmds as cmds\n"
+            "    cmds.confirmDialog(\n"
+            "        title='Studio Library Not Found',\n"
+            "        message='Studio Library is not installed.\\n\\nDrag the install.py file from\\nanimDev/studiolibrary-2.20.2/ onto the Maya viewport, then try again.',\n"
+            "        button=['OK']\n"
+            "    )"
+        ),
+    },
+    {
         "label": "JiffyPomo",
         "tooltip": "Open JiffyPomo — Pomodoro timer and task tracker for Maya artists",
         "icon": "iconJiffy.png",
