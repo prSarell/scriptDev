@@ -49,6 +49,10 @@ class SimClothRig():
 		self.nClothSettingsName = ['bounce', 'friction', 'damp', 'stickiness', 'pointMass', 'stretchResistance', 'compressionResistance', 'bendResistance', 'rigidity', 'stretchDamp']
 		self.customPreset = [0, 2, 0.25, 0, 1.5, 200, 200, 3, 0.01, 0.1]
 
+	def _get_nucleus(self, clothRigName):
+		connections = cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or []
+		return connections[0] if connections else None
+
 	def UI(self, parent='clothChain_mainWindow', *args):
 		if parent == 'clothChain_mainWindow':
 			if cmds.window("clothChain_mainWindow", exists=True):
@@ -213,10 +217,10 @@ class SimClothRig():
 		cmds.window('segmentOffset_window', e=True, w=40, h=40)
 		self.loadSegmentsList()
 		# Keep your existing job target (module name) the same as the file’s module name
-		cmds.scriptJob(e=["timeChanged", "import tlmClothChain; tlmClothChain.scriptJobFunction()"], p="segmentOffset_window")
+		cmds.scriptJob(e=["timeChanged", scriptJobFunction], p="segmentOffset_window")
 
 	def invertSegmentOffset(self, *args):
-		clothRigName = cmds.text('clothRig_text', q=True, l=True).rpartition(' ')[2]
+		clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
 		values = []
 		for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []:
 			if 'dynamicConstraint' in i:
@@ -241,7 +245,7 @@ class SimClothRig():
 		cmds.showWindow("discreteDropoff_window")
 		cmds.window('discreteDropoff_window', e=True, w=40, h=40)
 		self.loadDiscreteList(controlsList)
-		cmds.scriptJob(e=["timeChanged", "import tlmClothChain; tlmClothChain.scriptJobFunction2(%s)" % controlsList], p='discreteDropoff_window')
+		cmds.scriptJob(e=["timeChanged", partial(scriptJobFunction2, controlsList)], p='discreteDropoff_window')
 
 	def loadSegmentsList(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -487,7 +491,8 @@ class SimClothRig():
 		mel.eval("createNCloth 0")
 		cmds.rename('nCloth1', clothRigName + '_nCloth1')
 		cmds.parent(clothRigName + '_nCloth1', clothRigName + '_nCloth_grp')
-		cmds.parent('nucleus1', clothRigName + '_nCloth_grp')
+		nucleus_node = (cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or ['nucleus1'])[0]
+		cmds.parent(nucleus_node, clothRigName + '_nCloth_grp')
 
 		for idx in range(len(self.nClothSettingsName)):
 			cmds.setAttr(clothRigName + '_nClothShape1.' + self.nClothSettingsName[idx], self.customPreset[idx])
@@ -535,9 +540,9 @@ class SimClothRig():
 		cmds.menuItem(clothRigName + '_clothRig', label=clothRigName, p='clothRig_list')
 		cmds.optionMenu('clothRig_list', e=True, v=clothRigName)
 
-		cmds.setAttr('nucleus1.startFrame', start_fr)
-		cmds.setAttr('nucleus1.timeScale', 1.5)
-		cmds.setAttr('nucleus1.spaceScale', 1.5)
+		cmds.setAttr(nucleus_node + '.startFrame', start_fr)
+		cmds.setAttr(nucleus_node + '.timeScale', 1.5)
+		cmds.setAttr(nucleus_node + '.spaceScale', 1.5)
 
 		self.loadSettings()
 
@@ -561,16 +566,14 @@ class SimClothRig():
 	def feedOptionMenu(self, mode, *args):
 		items = cmds.optionMenu(mode + '_list', q=True, ils=True)
 		if items is not None:
-			for i in cmds.ls():
-				if mode + '_grp' in i:
-					name = i.partition(mode + '_grp')[0]
-					if name not in items:
-						cmds.menuItem(name + mode, label=name[:-1], p=mode + '_list')
-		else:
-			for i in cmds.ls():
-				if mode + '_grp' in i:
-					name = i.partition(mode + '_grp')[0]
+			for i in cmds.ls('*_' + mode + '_grp', type='transform'):
+				name = i.partition(mode + '_grp')[0]
+				if name not in items:
 					cmds.menuItem(name + mode, label=name[:-1], p=mode + '_list')
+		else:
+			for i in cmds.ls('*_' + mode + '_grp', type='transform'):
+				name = i.partition(mode + '_grp')[0]
+				cmds.menuItem(name + mode, label=name[:-1], p=mode + '_list')
 
 	def loadPreset(self, presetOption, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -590,11 +593,12 @@ class SimClothRig():
 
 	def loadSettings(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
-		if cmds.objExists('nucleus1'):
-			gravity =  "%.2f" % cmds.getAttr('nucleus1.gravity')
-			startFrame = cmds.getAttr('nucleus1.startFrame')
-			timeScale = "%.2f" % cmds.getAttr('nucleus1.timeScale')
-			spaceScale = "%.2f" % cmds.getAttr('nucleus1.spaceScale')
+		nucleus = self._get_nucleus(clothRigName)
+		if nucleus:
+			gravity =  "%.2f" % cmds.getAttr(nucleus + '.gravity')
+			startFrame = cmds.getAttr(nucleus + '.startFrame')
+			timeScale = "%.2f" % cmds.getAttr(nucleus + '.timeScale')
+			spaceScale = "%.2f" % cmds.getAttr(nucleus + '.spaceScale')
 			cmds.textField('gravity_textField', e=True, tx=gravity)
 			cmds.textField('startFrame_textField', e=True, tx=str(startFrame))
 			cmds.textField('timeScale_textField', e=True, tx=timeScale)
@@ -648,19 +652,17 @@ class SimClothRig():
 		clothRigName = cmds.optionMenu('baseGeo_list', q=True, v=True)
 		segmentsNumber = len(cmds.listRelatives(clothRigName + '_main_CTRL') or []) - 2
 		for i in range(0, (segmentsNumber + 1) * 2, 2):
-			pp = cmds.pointPosition(clothRigName + '_bsGeo.vtx[' + str(i) + ']', w=1)
-			fol = cmds.createNode('follicle', n=clothRigName + '_fol' + str(i) + 'Shape')
+			cmds.createNode('follicle', n=clothRigName + '_fol' + str(i) + 'Shape')
 			cmds.connectAttr(clothRigName + '_bsGeoShape.worldMatrix[0]', clothRigName + '_fol' + str(i) + 'Shape.inputWorldMatrix')
 			cmds.connectAttr(clothRigName + '_bsGeoShape.outMesh', clothRigName + '_fol' + str(i) + 'Shape.inputMesh')
-			cmds.connectAttr(clothRigName + '_fol' + str(i) + 'Shape.outTranslate', clothRigName + '_fol' + str(i) + '.translate') 
+			cmds.connectAttr(clothRigName + '_fol' + str(i) + 'Shape.outTranslate', clothRigName + '_fol' + str(i) + '.translate')
 			cmds.connectAttr(clothRigName + '_fol' + str(i) + 'Shape.outRotate', clothRigName + '_fol' + str(i) + '.rotate')
 			cmds.setAttr(clothRigName + '_fol' + str(i) + 'Shape.parameterU', .5)
 			cmds.parent(clothRigName + '_fol' + str(i), clothRigName + '_follicles_grp')
 
-		a = -2
 		for i in range(segmentsNumber + 1):
-			a += 2
-			cmds.setAttr(clothRigName + '_fol' + str(a) + 'Shape.parameterV', i * (1.0 / float(segmentsNumber)))
+			vtx_i = i * 2
+			cmds.setAttr(clothRigName + '_fol' + str(vtx_i) + 'Shape.parameterV', i * (1.0 / float(segmentsNumber)))
 
 	def previewSim(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -813,8 +815,11 @@ class SimClothRig():
 
 	### SETTINGS OPERATIONS
 	def nucleusChange(self, attribute, *args):
-		value = float(cmds.textField(attribute + '_textField', q=True, tx=True))
-		cmds.setAttr('nucleus1.' + attribute, value)
+		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
+		nucleus = self._get_nucleus(clothRigName)
+		if nucleus:
+			value = float(cmds.textField(attribute + '_textField', q=True, tx=True))
+			cmds.setAttr(nucleus + '.' + attribute, value)
 
 	def applyClothSettings(self, option, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
