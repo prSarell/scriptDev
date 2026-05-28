@@ -1,6 +1,6 @@
 # mpAnim_installer.py
 # Version : 1.0
-# Built   : 2026-05-28 15:58
+# Built   : 2026-05-28 16:02
 #
 # Drag this file into a Maya viewport to install the mpAnim shelf.
 # The studiolibrary_src/ folder must sit next to this file (it does if
@@ -98,15 +98,9 @@ def _install():
     mel.eval("saveAllShelves $gShelfTopLevel")
     print("[mpAnim installer] done")
 
-    # Launch animMultiTool and dock it next to the Channel Box
-    try:
-        import animMultiTool
-        import importlib
-        importlib.reload(animMultiTool)
-        animMultiTool.show()
-        print("[mpAnim installer] animMultiTool launched")
-    except Exception as e:
-        print("[mpAnim installer] WARNING: could not launch animMultiTool: " + str(e))
+    # Launch animMultiTool deferred so shiboken2/PySide2 are fully available
+    cmds.evalDeferred("import animMultiTool; animMultiTool.show()")
+    print("[mpAnim installer] animMultiTool queued for launch")
 
     cmds.inViewMessage(
         amg=f"<b>{_SHELF_NAME} v{_SHELF_VERSION}</b> installed successfully.",
