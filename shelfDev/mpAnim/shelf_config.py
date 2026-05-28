@@ -33,4 +33,16 @@ BUTTONS = [
             "ps.show()"
         ),
     },
+    {
+        "label": "JiffyPomo",
+        "tooltip": "Open JiffyPomo — Pomodoro timer and task tracker for Maya artists",
+        "icon": "iconJiffy.png",
+        "script": "Jiffypomo.py",
+        "command": (
+            "import importlib\n"
+            "import Jiffypomo\n"
+            "importlib.reload(Jiffypomo)\n"
+            "Jiffypomo.run_jiffypomo()"
+        ),
+    },
 ]
