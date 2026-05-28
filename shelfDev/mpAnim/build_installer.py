@@ -97,7 +97,7 @@ _BUNDLED = {bundled_r}
 _ICONS = {icons_r}
 
 _USERSETUP_MARKER = "# animMultiTool auto-load (mpAnim installer)"
-_USERSETUP_LINE = "import animMultiTool; animMultiTool.show()"
+_USERSETUP_LINE = "import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool.show()')"
 
 
 def _install():
