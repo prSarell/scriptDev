@@ -34,6 +34,20 @@ BUTTONS = [
         ),
     },
     {
+        "label": "ClothChain",
+        "tooltip": "Open the Cloth Chain Sim tool — build and control nCloth chain rigs",
+        "icon": "iconClothChain.png",
+        "script": "tlmClothChain.py",
+        "command": (
+            "import importlib\n"
+            "import tlmClothChain\n"
+            "importlib.reload(tlmClothChain)\n"
+            "import maya.cmds as cmds\n"
+            "run = tlmClothChain.SimClothRig()\n"
+            "cmds.evalDeferred(run.UI)"
+        ),
+    },
+    {
         "label": "StudioLib",
         "tooltip": "Open Studio Library — animation pose and clip manager",
         "icon": "iconStudioLib.png",
