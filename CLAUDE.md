@@ -20,7 +20,7 @@ Maya Python tool development workspace for a 3D animation teaching pipeline. Scr
 ## Code Conventions
 
 - Use `maya.cmds` for all new code. Avoid `pymel` dependencies — pymel is not guaranteed in future Maya versions.
-- UI tools use **PySide2**.
+- UI tools use **PySide6** (Maya 2025+). Use `shiboken6` for `wrapInstance`. PySide2/shiboken2 are not available in Maya 2025+.
 - Prefer `maya.api.OpenMaya` over the legacy `maya.OpenMaya` bindings when C++ API access is needed.
 
 Key Maya modules available at runtime:

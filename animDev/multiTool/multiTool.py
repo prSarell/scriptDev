@@ -4,6 +4,7 @@ import mtSnap
 import mtConstraints
 import mtGravity
 import mtRefPlane
+import mtWSBake
 import mtTips
 
 WORKSPACE_CONTROL_NAME = 'multiToolWorkspaceControl'
@@ -153,6 +154,23 @@ def _gravity_content(layout):
     layout.addWidget(hint)
 
 
+def _ws_bake_content(layout):
+    from PySide6 import QtWidgets
+
+    btn = QtWidgets.QPushButton('Bake to World')
+    btn.setMinimumHeight(BTN_H)
+    btn.setStyleSheet(_btn('#4A5E7A'))
+    btn.setToolTip(
+        'Select one object, drag-select a frame range on the timeslider, then bake.\n'
+        'No range selected = full timeline.')
+    btn.clicked.connect(mtWSBake.bake_to_world)
+    layout.addWidget(btn)
+
+    hint = QtWidgets.QLabel('select one object  |  drag timeslider for range (or full timeline)')
+    hint.setStyleSheet(HINT_STYLE)
+    layout.addWidget(hint)
+
+
 def _ref_plane_content(layout):
     from PySide6 import QtWidgets, QtCore
 
@@ -205,6 +223,7 @@ def _build_tool_widget(parent=None):
     layout.addWidget(_make_collapsible('Constraints',  _constraints_content))
     layout.addWidget(_make_collapsible('Gravity Ball', _gravity_content))
     layout.addWidget(_make_collapsible('Ref Plane',    _ref_plane_content))
+    layout.addWidget(_make_collapsible('WS Bake',      _ws_bake_content))
     layout.addStretch()
 
     from PySide6 import QtWidgets
