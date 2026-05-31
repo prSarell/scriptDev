@@ -9,6 +9,7 @@ import mtWSBake
 import mtOSBake
 import mtBakeDown
 import mtTips
+import mtPanic
 
 WORKSPACE_CONTROL_NAME = 'multiToolWorkspaceControl'
 TOOL_VERSION = '1.0'
@@ -307,12 +308,24 @@ def _build_tool_widget(parent=None):
     layout.addStretch()
 
     from PySide6 import QtWidgets
+    bottom_row = QtWidgets.QHBoxLayout()
+    bottom_row.setSpacing(2)
+
     tips_btn = QtWidgets.QPushButton('Learn Me Something')
     tips_btn.setMinimumHeight(BTN_H + 4)
     tips_btn.setStyleSheet(_btn('#5A3F1E'))
     tips_btn.setToolTip('Shows a random animation tip')
     tips_btn.clicked.connect(mtTips.show_tip)
-    layout.addWidget(tips_btn)
+    bottom_row.addWidget(tips_btn)
+
+    panic_btn = QtWidgets.QPushButton('Panic')
+    panic_btn.setMinimumHeight(BTN_H + 4)
+    panic_btn.setStyleSheet(_btn('#7A1A1A'))
+    panic_btn.setToolTip('Take a breath')
+    panic_btn.clicked.connect(mtPanic.show_panic)
+    bottom_row.addWidget(panic_btn)
+
+    layout.addLayout(bottom_row)
 
     return widget
 
