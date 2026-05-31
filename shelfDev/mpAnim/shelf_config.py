@@ -76,4 +76,16 @@ BUTTONS = [
             "Jiffypomo.run_jiffypomo()"
         ),
     },
+    {
+        "label": "Ballistics",
+        "tooltip": "Open Ballistics — reads launch velocity from existing animation and simulates projectile trajectory with gravity, drag, and optional floor",
+        "icon": "nParticle.png",
+        "script": "ballistics.py",
+        "command": (
+            "import importlib\n"
+            "import ballistics\n"
+            "importlib.reload(ballistics)\n"
+            "ballistics.show()"
+        ),
+    },
 ]

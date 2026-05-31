@@ -3,8 +3,11 @@ import maya.cmds as cmds
 import mtSnap
 import mtConstraints
 import mtGravity
+import mtBallistics
 import mtRefPlane
 import mtWSBake
+import mtOSBake
+import mtBakeDown
 import mtTips
 
 WORKSPACE_CONTROL_NAME = 'multiToolWorkspaceControl'
@@ -133,40 +136,117 @@ def _constraints_content(layout):
 
 
 def _gravity_content(layout):
-    from PySide6 import QtWidgets, QtCore
+    from PySide6 import QtWidgets, QtCore, QtGui
 
-    btn = QtWidgets.QPushButton('Gravity Ball')
-    btn.setMinimumHeight(BTN_H)
-    btn.setStyleSheet(_btn('#336633'))
-    btn.setToolTip('Creates a gravity ball from selected object  |  Right-click for custom settings')
-    btn.clicked.connect(mtGravity.ball_launcher)
-    btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+    row = QtWidgets.QHBoxLayout()
+    row.setSpacing(2)
 
-    def _context(pos):
+    # ── Gravity Ball ──────────────────────────────────────────────────────
+    gb_btn = QtWidgets.QPushButton('Gravity Ball')
+    gb_btn.setMinimumHeight(BTN_H)
+    gb_btn.setStyleSheet(_btn('#336633'))
+    gb_btn.setToolTip('Creates a gravity ball from selected object  |  Right-click for custom settings')
+    gb_btn.clicked.connect(mtGravity.ball_launcher)
+    gb_btn.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def _grav_context(pos):
         m = QtWidgets.QMenu()
         m.addAction('Custom Settings…', mtGravity.show_settings)
-        m.exec(btn.mapToGlobal(pos))
-    btn.customContextMenuRequested.connect(_context)
-    layout.addWidget(btn)
+        m.exec(gb_btn.mapToGlobal(pos))
+    gb_btn.customContextMenuRequested.connect(_grav_context)
+    row.addWidget(gb_btn)
 
-    hint = QtWidgets.QLabel('select one object  |  right-click for custom settings')
+    # ── Ballistics ────────────────────────────────────────────────────────
+    bal_btn = QtWidgets.QPushButton('Ballistics')
+    bal_btn.setMinimumHeight(BTN_H)
+    bal_btn.setStyleSheet(_btn('#2A4A7A'))
+    bal_btn.setToolTip('Bake ballistic trajectory from selected object  |  Shift+click for presets')
+
+    # Floor controls — referenced by both the click handler and the row below
+    floor_chk = QtWidgets.QCheckBox('Floor')
+    floor_chk.setStyleSheet('font-size:10px;')
+    floor_val = QtWidgets.QLineEdit('0.0')
+    floor_val.setFixedWidth(48)
+    floor_val.setFixedHeight(18)
+    floor_val.setStyleSheet('font-size:10px;')
+    floor_val.setEnabled(False)
+    floor_chk.stateChanged.connect(lambda s: floor_val.setEnabled(bool(s)))
+
+    def _get_floor():
+        if floor_chk.isChecked():
+            try:
+                return float(floor_val.text())
+            except ValueError:
+                return None
+        return None
+
+    def _bal_handler():
+        mods = QtWidgets.QApplication.keyboardModifiers()
+        if mods & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            m = QtWidgets.QMenu()
+            for key, p in mtBallistics.PRESETS.items():
+                m.addAction(p['label'],
+                            lambda checked=False, k=key: mtBallistics.launch_preset(k, floor_y=_get_floor()))
+            m.exec(QtGui.QCursor.pos())
+        else:
+            mtBallistics.launch(floor_y=_get_floor())
+
+    bal_btn.clicked.connect(_bal_handler)
+    row.addWidget(bal_btn)
+    layout.addLayout(row)
+
+    # ── Floor row ─────────────────────────────────────────────────────────
+    floor_row = QtWidgets.QHBoxLayout()
+    floor_row.setSpacing(4)
+    floor_row.addWidget(floor_chk)
+    floor_lbl = QtWidgets.QLabel('Y:')
+    floor_lbl.setStyleSheet('font-size:10px;')
+    floor_row.addWidget(floor_lbl)
+    floor_row.addWidget(floor_val)
+    floor_row.addStretch()
+    layout.addLayout(floor_row)
+
+    hint = QtWidgets.QLabel('select one object  |  G-ball: right-click  |  Ballistics: shift+click for presets')
     hint.setStyleSheet(HINT_STYLE)
     layout.addWidget(hint)
 
 
-def _ws_bake_content(layout):
+def _bake_content(layout):
     from PySide6 import QtWidgets
 
-    btn = QtWidgets.QPushButton('Bake to World')
-    btn.setMinimumHeight(BTN_H)
-    btn.setStyleSheet(_btn('#4A5E7A'))
-    btn.setToolTip(
-        'Select one object, drag-select a frame range on the timeslider, then bake.\n'
-        'No range selected = full timeline.')
-    btn.clicked.connect(mtWSBake.bake_to_world)
-    layout.addWidget(btn)
+    row = QtWidgets.QHBoxLayout()
+    row.setSpacing(2)
 
-    hint = QtWidgets.QLabel('select one object  |  drag timeslider for range (or full timeline)')
+    ws_btn = QtWidgets.QPushButton('Bake to World')
+    ws_btn.setMinimumHeight(BTN_H)
+    ws_btn.setStyleSheet(_btn('#4A5E7A'))
+    ws_btn.setToolTip(
+        'Select one object, drag-select a range, bake to world space.\n'
+        'No range selected = full timeline.')
+    ws_btn.clicked.connect(mtWSBake.bake_to_world)
+    row.addWidget(ws_btn)
+
+    os_btn = QtWidgets.QPushButton('Bake to Object')
+    os_btn.setMinimumHeight(BTN_H)
+    os_btn.setStyleSheet(_btn('#6B4A5E'))
+    os_btn.setToolTip(
+        'Select driven first, driver last, drag-select a range, bake to object space.\n'
+        'No range selected = full timeline.')
+    os_btn.clicked.connect(mtOSBake.bake_to_object)
+    row.addWidget(os_btn)
+
+    layout.addLayout(row)
+
+    down_btn = QtWidgets.QPushButton('Bake to Origin Space')
+    down_btn.setMinimumHeight(BTN_H)
+    down_btn.setStyleSheet(_btn('#4A6B4A'))
+    down_btn.setToolTip(
+        'Bake driven object(s) back to direct keys and remove constraints.\n'
+        'Select an anim layer to bake to that layer instead of base animation.')
+    down_btn.clicked.connect(mtBakeDown.bake_to_origin)
+    layout.addWidget(down_btn)
+
+    hint = QtWidgets.QLabel('WS: one object  |  OS: driven → driver last  |  origin: select layer to bake to layer')
     hint.setStyleSheet(HINT_STYLE)
     layout.addWidget(hint)
 
@@ -221,9 +301,9 @@ def _build_tool_widget(parent=None):
 
     layout.addWidget(_make_collapsible('Snap',         _snap_content))
     layout.addWidget(_make_collapsible('Constraints',  _constraints_content))
-    layout.addWidget(_make_collapsible('Gravity Ball', _gravity_content))
+    layout.addWidget(_make_collapsible('Physics',      _gravity_content))
     layout.addWidget(_make_collapsible('Ref Plane',    _ref_plane_content))
-    layout.addWidget(_make_collapsible('WS Bake',      _ws_bake_content))
+    layout.addWidget(_make_collapsible('Bake',          _bake_content))
     layout.addStretch()
 
     from PySide6 import QtWidgets
