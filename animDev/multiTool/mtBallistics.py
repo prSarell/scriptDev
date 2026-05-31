@@ -8,27 +8,27 @@ PRESETS = {
     'tiny_light': {
         'label':       'Tiny Light  (pen / ping-pong)',
         'drag_ps':     0.50,
-        'friction_ps': 0.60,
+        'friction_ps': 0.10,
     },
     'small_light': {
         'label':       'Small Light  (basketball)',
         'drag_ps':     0.75,
-        'friction_ps': 0.72,
+        'friction_ps': 0.20,
     },
     'big_heavy': {
         'label':       'Big Heavy  (person → car)',
         'drag_ps':     0.93,
-        'friction_ps': 0.85,
+        'friction_ps': 0.44,
     },
     'massive_heavy': {
         'label':       'Massive Heavy  (bus → whale)',
         'drag_ps':     0.99,
-        'friction_ps': 0.93,
+        'friction_ps': 0.70,
     },
 }
 
 _DEFAULT_DRAG_PS     = 1.0
-_DEFAULT_FRICTION_PS = 0.78
+_DEFAULT_FRICTION_PS = 0.30
 
 # ---------------------------------------------------------------------------
 # Helpers
