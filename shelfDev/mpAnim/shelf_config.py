@@ -5,6 +5,8 @@ SHELF_VERSION = "1.0"
 # Listed as filenames inside tools/.
 EXTRA_SCRIPTS = [
     "animMultiTool.py",
+    "mpAnimConfig.py",
+    "shortCuts.py",
 ]
 
 # Each entry defines one shelf button.
@@ -74,6 +76,18 @@ BUTTONS = [
             "import Jiffypomo\n"
             "importlib.reload(Jiffypomo)\n"
             "Jiffypomo.run_jiffypomo()"
+        ),
+    },
+    {
+        "label": "shortCuts",
+        "tooltip": "Open shortCuts — manage and switch hotkey presets per workflow",
+        "icon": "commandButton.png",
+        "script": "shortCuts.py",
+        "command": (
+            "import importlib\n"
+            "import shortCuts\n"
+            "importlib.reload(shortCuts)\n"
+            "shortCuts.show()"
         ),
     },
     {

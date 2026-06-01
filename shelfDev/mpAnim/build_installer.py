@@ -189,6 +189,10 @@ def _install():
     cmds.evalDeferred("import animMultiTool; animMultiTool.show()")
     print("[mpAnim installer] animMultiTool queued for launch")
 
+    # Prompt for save path on first install — silently skips if already configured
+    cmds.evalDeferred("import mpAnimConfig; mpAnimConfig.get_save_path()")
+    print("[mpAnim installer] mpAnimConfig path check queued")
+
     cmds.inViewMessage(
         amg=f"<b>{{_SHELF_NAME}} v{{_SHELF_VERSION}}</b> installed successfully.",
         pos="midCenter",
