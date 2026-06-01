@@ -1,18 +1,24 @@
+import re
 import maya.cmds as cmds
 
 _TAG   = 'multiTool_refPlane'
-_TZ    = -0.875
-_TY    =  0.3
-_TX    =  0.15
-_SCALE =  0.025
+_TZ    = -5.0
+_TY    =  1.0
+_TX    =  1.7
+_SCALE =  0.268
 _Y_STEP = 0.03   # nudge each additional plane down so they don't overlap
 
 
 def _active_camera():
+    # Outliner selection takes priority
+    for node in (cmds.ls(selection=True, type='transform') or []):
+        if cmds.listRelatives(node, shapes=True, type='camera'):
+            return node
+
     panel = cmds.getPanel(withFocus=True)
     if cmds.getPanel(typeOf=panel) != 'modelPanel':
         cmds.inViewMessage(
-            amg='<b>Ref Plane:</b> Click inside a viewport first.',
+            amg='<b>Ref Plane:</b> Select a camera or click inside a viewport first.',
             pos='midCenter', fade=True)
         return None
     cam = cmds.modelEditor(panel, q=True, camera=True)
@@ -54,6 +60,19 @@ def add_ref_plane():
         pos='midCenter', fade=True)
 
 
+def _find_seq_start(image_path):
+    sep = '/' if '/' in image_path else '\\'
+    folder = image_path[:image_path.rindex(sep) + 1]
+    ext = '*' + image_path[image_path.rindex('.'):]
+    files = cmds.getFileList(folder=folder, filespec=ext) or []
+    numbers = []
+    for f in files:
+        matches = re.findall(r'\b\d+\b', f)
+        if matches:
+            numbers.append(int(matches[-1]))
+    return min(numbers) if numbers else None
+
+
 def sync_frame_offset():
     cam = _active_camera()
     if not cam:
@@ -67,38 +86,29 @@ def sync_frame_offset():
         return
 
     scene_start = int(cmds.playbackOptions(q=True, minTime=True))
-
-    result = cmds.promptDialog(
-        title='Sync Frame Offset',
-        message='Image sequence start frame:',
-        text='1',
-        button=['OK', 'Cancel'],
-        defaultButton='OK',
-        cancelButton='Cancel',
-        dismissString='Cancel'
-    )
-    if result != 'OK':
-        return
-
-    try:
-        seq_start = int(cmds.promptDialog(query=True, text=True))
-    except ValueError:
-        cmds.warning('mtRefPlane: invalid frame number.')
-        return
-
-    # displayed_frame = current_time + frameOffset
-    # at scene_start we want displayed_frame = seq_start
-    frame_offset = seq_start - scene_start
+    synced = []
 
     for t in transforms:
         shapes = cmds.listRelatives(t, shapes=True, type='imagePlane') or []
         for s in shapes:
+            image_path = cmds.getAttr(s + '.imageName')
+            if not image_path:
+                cmds.warning('mtRefPlane: no image loaded on {}.'.format(s))
+                continue
+            seq_start = _find_seq_start(image_path)
+            if seq_start is None:
+                cmds.warning('mtRefPlane: could not detect frame number from {}.'.format(image_path))
+                continue
+            # displayed_frame = current_time + frameOffset
+            # at scene_start we want displayed_frame = seq_start
+            frame_offset = seq_start - scene_start
             cmds.setAttr(s + '.frameOffset', frame_offset)
+            synced.append((s, frame_offset))
 
-    cmds.inViewMessage(
-        amg='Frame offset set to <hl>{}</hl> on <hl>{}</hl>.'.format(
-            frame_offset, cam),
-        pos='midCenter', fade=True)
+    if synced:
+        cmds.inViewMessage(
+            amg='Frame offset auto-synced on <hl>{}</hl>.'.format(cam),
+            pos='midCenter', fade=True)
 
 
 def remove_ref_planes():
