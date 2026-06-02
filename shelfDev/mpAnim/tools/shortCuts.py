@@ -45,6 +45,10 @@ _DEFAULT_PRESET = {
     'enabled': {h['id']: True for h in HOTKEYS},
 }
 
+_BUILTIN_PRESETS = [
+    {'name': 'Default', 'enabled': {h['id']: False for h in HOTKEYS}},
+]
+
 # ---------------------------------------------------------------------------
 # Stylesheet
 # ---------------------------------------------------------------------------
@@ -526,11 +530,11 @@ class ShortCutsUI(QtWidgets.QDialog):
         add_btn.clicked.connect(self._new_preset)
         btn_row.addWidget(add_btn)
 
-        del_btn = QtWidgets.QPushButton('✕')
-        del_btn.setObjectName('sidebarBtn')
-        del_btn.setToolTip('Delete preset')
-        del_btn.clicked.connect(self._delete_preset)
-        btn_row.addWidget(del_btn)
+        self._del_btn = QtWidgets.QPushButton('✕')
+        self._del_btn.setObjectName('sidebarBtn')
+        self._del_btn.setToolTip('Delete preset')
+        self._del_btn.clicked.connect(self._delete_preset)
+        btn_row.addWidget(self._del_btn)
 
         btn_row.addStretch()
         layout.addLayout(btn_row)
@@ -596,11 +600,6 @@ class ShortCutsUI(QtWidgets.QDialog):
         row.setSpacing(8)
         row.addStretch()
 
-        reset_btn = QtWidgets.QPushButton('Reset to Maya')
-        reset_btn.setObjectName('resetBtn')
-        reset_btn.clicked.connect(self._reset)
-        row.addWidget(reset_btn)
-
         apply_btn = QtWidgets.QPushButton('Apply Preset')
         apply_btn.setObjectName('applyBtn')
         apply_btn.clicked.connect(self._apply)
@@ -614,9 +613,11 @@ class ShortCutsUI(QtWidgets.QDialog):
     def _refresh_list(self, select=None):
         self._list.blockSignals(True)
         self._list.clear()
+        for p in _BUILTIN_PRESETS:
+            self._list.addItem(p['name'])
         for p in self._data['presets']:
             self._list.addItem(p['name'])
-        target = select or (self._data['presets'][0]['name'] if self._data['presets'] else '')
+        target = select or (self._data['presets'][0]['name'] if self._data['presets'] else _BUILTIN_PRESETS[0]['name'])
         items = self._list.findItems(target, QtCore.Qt.MatchFlag.MatchExactly)
         if items:
             self._list.setCurrentItem(items[0])
@@ -628,15 +629,20 @@ class ShortCutsUI(QtWidgets.QDialog):
         if not item:
             return None
         name = item.text()
+        for p in _BUILTIN_PRESETS:
+            if p['name'] == name:
+                return p
         return next((p for p in self._data['presets'] if p['name'] == name), None)
 
     def _load_checkboxes(self):
         preset = self._current_preset()
         if not preset:
             return
+        is_builtin = any(p['name'] == preset['name'] for p in _BUILTIN_PRESETS)
         for hk in HOTKEYS:
-            self._checkboxes[hk['id']].setChecked(
-                preset['enabled'].get(hk['id'], False))
+            cb = self._checkboxes[hk['id']]
+            cb.setChecked(preset['enabled'].get(hk['id'], False))
+            cb.setEnabled(not is_builtin)
 
     def _sync_checkboxes(self):
         preset = self._current_preset()
@@ -648,17 +654,17 @@ class ShortCutsUI(QtWidgets.QDialog):
     # Slots
     # ------------------------------------------------------------------
 
-    def _on_preset_changed(self, _name):
+    def _on_preset_changed(self, name):
         self._load_checkboxes()
+        self._del_btn.setEnabled(not any(p['name'] == name for p in _BUILTIN_PRESETS))
 
     def _apply(self):
-        self._sync_checkboxes()
         preset = self._current_preset()
-        if preset:
-            apply_preset(preset, self._data)
-
-    def _reset(self):
-        reset_all(self._data)
+        if not preset:
+            return
+        if not any(p['name'] == preset['name'] for p in _BUILTIN_PRESETS):
+            self._sync_checkboxes()
+        apply_preset(preset, self._data)
 
     def _new_preset(self):
         name, ok = QtWidgets.QInputDialog.getText(
@@ -666,7 +672,8 @@ class ShortCutsUI(QtWidgets.QDialog):
         if not ok or not name.strip():
             return
         name = name.strip()
-        if any(p['name'] == name for p in self._data['presets']):
+        if (any(p['name'] == name for p in self._data['presets']) or
+                any(p['name'] == name for p in _BUILTIN_PRESETS)):
             QtWidgets.QMessageBox.warning(
                 self, 'shortCuts', '"{}" already exists.'.format(name))
             return
@@ -679,6 +686,8 @@ class ShortCutsUI(QtWidgets.QDialog):
     def _delete_preset(self):
         preset = self._current_preset()
         if not preset:
+            return
+        if any(p['name'] == preset['name'] for p in _BUILTIN_PRESETS):
             return
         if len(self._data['presets']) <= 1:
             QtWidgets.QMessageBox.warning(self, 'shortCuts', 'Cannot delete the last preset.')
