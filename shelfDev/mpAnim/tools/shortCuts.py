@@ -36,7 +36,7 @@ HOTKEYS = [
         'label':   'Space',
         'desc':    'Toggle play',
         'special': True,
-        'warn':    'Overrides panePopAt — tap plays, hold 10s shows hotbox',
+        'warn':    'Tap = play/stop  |  Hold 400ms = hotbox',
     },
 ]
 
