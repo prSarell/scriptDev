@@ -1,6 +1,7 @@
 import os
 import json
 import maya.cmds as cmds
+import maya.mel as mel
 from PySide6 import QtWidgets, QtCore, QtGui
 from shiboken6 import wrapInstance
 from maya import OpenMayaUI as omui
@@ -30,12 +31,12 @@ HOTKEYS = [
         'py_command': 'import maya.cmds as cmds; cmds.currentTime(cmds.currentTime(q=True) + 1)',
     },
     {
-        'id':         'spacebar_play',
-        'key':        ' ',
-        'label':      'Space',
-        'desc':       'Toggle play',
-        'py_command': 'import maya.cmds as cmds\nif cmds.play(q=True, state=True):\n    cmds.play(state=False)\nelse:\n    cmds.play(forward=True)',
-        'warn':       "Replaces Maya's default spacebar (viewport maximize / hotbox)",
+        'id':      'spacebar_play',
+        'key':     ' ',
+        'label':   'Space',
+        'desc':    'Toggle play',
+        'special': True,
+        'warn':    'Overrides panePopAt — tap plays, hold 10s shows hotbox',
     },
 ]
 
@@ -308,6 +309,65 @@ def _ensure_name_command(hk):
     return nc
 
 
+_space_filter = None
+_HOLD_MS      = 400  # tap vs hold threshold in ms
+
+
+class _SpacePlayFilter(QtCore.QObject):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pressed = False
+        self._held    = False
+        self._timer   = QtCore.QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(_HOLD_MS)
+        self._timer.timeout.connect(self._on_hold)
+
+    def _on_hold(self):
+        self._held = True
+        mel.eval('hotBox')
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t not in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.KeyRelease):
+            return False
+        if event.key() != QtCore.Qt.Key.Key_Space:
+            return False
+        if event.isAutoRepeat():
+            return True
+        if t == QtCore.QEvent.Type.KeyPress and not self._pressed:
+            self._pressed = True
+            self._held    = False
+            self._timer.start()
+            return True
+        if t == QtCore.QEvent.Type.KeyRelease and self._pressed:
+            self._pressed = False
+            if self._held:
+                self._held = False
+                mel.eval('hotBox -release')
+            else:
+                self._timer.stop()
+                mel.eval('togglePlayback')
+            return True
+        return False
+
+
+def _bind_spacebar():
+    global _space_filter
+    _restore_spacebar()
+    app = QtWidgets.QApplication.instance()
+    _space_filter = _SpacePlayFilter(app)
+    app.installEventFilter(_space_filter)
+
+
+def _restore_spacebar():
+    global _space_filter
+    if _space_filter is not None:
+        QtWidgets.QApplication.instance().removeEventFilter(_space_filter)
+        _space_filter = None
+
+
 def _set_key(key, press, release=''):
     try:
         cmds.hotkey(key=key, name=press, releaseName=release)
@@ -323,12 +383,17 @@ def _restore_key(key, data):
 
 def apply_preset(preset, data):
     for hk in HOTKEYS:
-        key = hk['key']
-        _save_original(key, data)
-        if preset['enabled'].get(hk['id'], False):
-            _set_key(key, _ensure_name_command(hk))
+        enabled = preset['enabled'].get(hk['id'], False)
+        if hk.get('special'):
+            if hk['id'] == 'spacebar_play':
+                _bind_spacebar() if enabled else _restore_spacebar()
         else:
-            _restore_key(key, data)
+            key = hk['key']
+            _save_original(key, data)
+            if enabled:
+                _set_key(key, _ensure_name_command(hk))
+            else:
+                _restore_key(key, data)
     data['active'] = preset['name']
     _save_data(data)
     cmds.inViewMessage(
@@ -338,7 +403,11 @@ def apply_preset(preset, data):
 
 def reset_all(data):
     for hk in HOTKEYS:
-        _restore_key(hk['key'], data)
+        if hk.get('special'):
+            if hk['id'] == 'spacebar_play':
+                _restore_spacebar()
+        else:
+            _restore_key(hk['key'], data)
     _save_data(data)
     cmds.inViewMessage(amg='Hotkeys reset to Maya defaults.', pos='midCenter', fade=True)
 
