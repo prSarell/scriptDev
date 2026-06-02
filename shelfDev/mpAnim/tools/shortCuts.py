@@ -334,6 +334,31 @@ class _SpacePlayFilter(QtCore.QObject):
             return False
         if event.key() != QtCore.Qt.Key.Key_Space:
             return False
+
+        # Text-input widgets: consume event and inject the space so Maya's C++
+        # playback handler never sees it.
+        focus_widget = QtWidgets.QApplication.focusWidget()
+        if focus_widget is not None:
+            is_text = isinstance(focus_widget, (QtWidgets.QTextEdit,
+                                                QtWidgets.QPlainTextEdit,
+                                                QtWidgets.QLineEdit))
+            if not is_text:
+                try:
+                    is_text = bool(focus_widget.inputMethodQuery(
+                        QtCore.Qt.InputMethodQuery.ImEnabled))
+                except Exception:
+                    pass
+            if is_text:
+                if t == QtCore.QEvent.Type.KeyPress and not event.isAutoRepeat():
+                    if hasattr(focus_widget, 'insertPlainText'):
+                        focus_widget.insertPlainText(' ')
+                    elif hasattr(focus_widget, 'insert'):
+                        focus_widget.insert(' ')
+                return True
+
+        panel = cmds.getPanel(withFocus=True)
+        if not panel or cmds.getPanel(typeOf=panel) != 'modelPanel':
+            return False
         if event.isAutoRepeat():
             return True
         if t == QtCore.QEvent.Type.KeyPress and not self._pressed:
@@ -356,6 +381,7 @@ class _SpacePlayFilter(QtCore.QObject):
 def _bind_spacebar():
     global _space_filter
     _restore_spacebar()
+    cmds.hotkey(keyShortcut='space', name='', releaseName='')
     app = QtWidgets.QApplication.instance()
     _space_filter = _SpacePlayFilter(app)
     app.installEventFilter(_space_filter)
@@ -366,6 +392,7 @@ def _restore_spacebar():
     if _space_filter is not None:
         QtWidgets.QApplication.instance().removeEventFilter(_space_filter)
         _space_filter = None
+    cmds.hotkey(keyShortcut='space', name='', releaseName='')
 
 
 def _set_key(key, press, release=''):
