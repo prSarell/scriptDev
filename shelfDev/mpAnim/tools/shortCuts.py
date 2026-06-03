@@ -281,8 +281,8 @@ def _save_original(key, data):
     if slug in ob:
         return
     try:
-        press   = cmds.hotkey(key=key, query=True, name=True)        or ''
-        release = cmds.hotkey(key=key, query=True, releaseName=True) or ''
+        press   = cmds.hotkey(keyShortcut=key, query=True, name=True)        or ''
+        release = cmds.hotkey(keyShortcut=key, query=True, releaseName=True) or ''
     except Exception:
         press, release = '', ''
     ob[slug] = {'press': press, 'release': release}
@@ -313,8 +313,9 @@ def _ensure_name_command(hk):
     return nc
 
 
-_space_filter = None
-_HOLD_MS      = 400  # tap vs hold threshold in ms
+_space_filter      = None
+_saved_space_hk    = None
+_HOLD_MS           = 400  # tap vs hold threshold in ms
 
 
 class _SpacePlayFilter(QtCore.QObject):
@@ -383,8 +384,15 @@ class _SpacePlayFilter(QtCore.QObject):
 
 
 def _bind_spacebar():
-    global _space_filter
+    global _space_filter, _saved_space_hk
     _restore_spacebar()
+    try:
+        _saved_space_hk = {
+            'press':   cmds.hotkey(key='space', query=True, name=True)        or '',
+            'release': cmds.hotkey(key='space', query=True, releaseName=True) or '',
+        }
+    except Exception:
+        _saved_space_hk = {'press': '', 'release': ''}
     cmds.hotkey(keyShortcut='space', name='', releaseName='')
     app = QtWidgets.QApplication.instance()
     _space_filter = _SpacePlayFilter(app)
@@ -392,16 +400,22 @@ def _bind_spacebar():
 
 
 def _restore_spacebar():
-    global _space_filter
+    global _space_filter, _saved_space_hk
     if _space_filter is not None:
         QtWidgets.QApplication.instance().removeEventFilter(_space_filter)
         _space_filter = None
-    cmds.hotkey(keyShortcut='space', name='', releaseName='')
+    if _saved_space_hk is not None:
+        cmds.hotkey(keyShortcut='space',
+                    name=_saved_space_hk['press'],
+                    releaseName=_saved_space_hk['release'])
+        _saved_space_hk = None
+    else:
+        cmds.hotkey(keyShortcut='space', name='', releaseName='')
 
 
 def _set_key(key, press, release=''):
     try:
-        cmds.hotkey(key=key, name=press, releaseName=release)
+        cmds.hotkey(keyShortcut=key, name=press, releaseName=release)
     except Exception as e:
         cmds.warning('shortCuts: could not bind "{}" — {}'.format(key, e))
 
