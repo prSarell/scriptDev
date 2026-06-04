@@ -20,6 +20,7 @@ from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS_DIR = os.path.join(HERE, "tools")
+MULTITOOL_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "animDev", "multiTool"))
 ICONS_DIR = os.path.join(HERE, "icons")
 DIST_DIR = os.path.join(HERE, "dist")
 STUDIOLIB_SRC = os.path.normpath(
@@ -35,12 +36,13 @@ spec.loader.exec_module(config)
 
 def _bundle_scripts():
     bundled = {}
+
+    # tools/ scripts (EXTRA_SCRIPTS + button scripts)
     all_scripts = list(config.EXTRA_SCRIPTS)
     for btn in config.BUTTONS:
         name = btn.get("script", "")
         if name and name not in all_scripts:
             all_scripts.append(name)
-
     for name in all_scripts:
         path = os.path.join(TOOLS_DIR, name)
         if not os.path.exists(path):
@@ -48,6 +50,16 @@ def _bundle_scripts():
             continue
         with open(path, "r", encoding="utf-8") as fh:
             bundled[name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
+
+    # animDev/multiTool/ scripts
+    for name in getattr(config, "MULTITOOL_SCRIPTS", []):
+        path = os.path.join(MULTITOOL_DIR, name)
+        if not os.path.exists(path):
+            print(f"  WARNING: multiTool script not found — skipping: {path}")
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            bundled[name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
+
     return bundled
 
 
@@ -96,8 +108,8 @@ _BUTTONS = {buttons_r}
 _BUNDLED = {bundled_r}
 _ICONS = {icons_r}
 
-_USERSETUP_MARKER = "# animMultiTool auto-load (mpAnim installer)"
-_USERSETUP_LINE = "import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool.show()')"
+_USERSETUP_MARKER = "# multiTool auto-load (mpAnim installer)"
+_USERSETUP_LINE = "import maya.utils; maya.utils.executeDeferred('import multiTool; multiTool.show()')"
 
 
 def _install():
@@ -142,14 +154,16 @@ def _install():
     if os.path.exists(usersetup):
         with open(usersetup, "r", encoding="utf-8") as fh:
             existing = fh.read()
-    _OLD_USERSETUP_LINE = "import animMultiTool; animMultiTool.show()"
-    if _OLD_USERSETUP_LINE in existing:
-        # Replace non-deferred line left by an earlier installer version
-        existing = existing.replace(_OLD_USERSETUP_LINE, _USERSETUP_LINE)
-        with open(usersetup, "w", encoding="utf-8") as fh:
-            fh.write(existing)
-        print("[mpAnim installer] updated userSetup.py to deferred animMultiTool load")
-    elif _USERSETUP_MARKER not in existing:
+    _OLD_MARKERS = [
+        "# animMultiTool auto-load (mpAnim installer)",
+        "import animMultiTool; animMultiTool.show()",
+        "import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool.show()')",
+    ]
+    for old in _OLD_MARKERS:
+        if old in existing:
+            existing = existing.replace(old, "")
+    existing = "\\n".join(line for line in existing.splitlines() if line.strip())
+    if _USERSETUP_MARKER not in existing:
         with open(usersetup, "a", encoding="utf-8") as fh:
             fh.write("\\n" + _USERSETUP_MARKER + "\\n" + _USERSETUP_LINE + "\\n")
         print("[mpAnim installer] patched userSetup.py for animMultiTool auto-load")
@@ -185,9 +199,8 @@ def _install():
     mel.eval("saveAllShelves $gShelfTopLevel")
     print("[mpAnim installer] done")
 
-    # Launch animMultiTool deferred so shiboken2/PySide2 are fully available
-    cmds.evalDeferred("import animMultiTool; animMultiTool.show()")
-    print("[mpAnim installer] animMultiTool queued for launch")
+    cmds.evalDeferred("import multiTool; multiTool.show()")
+    print("[mpAnim installer] multiTool queued for launch")
 
     # Prompt for save path on first install — silently skips if already configured
     cmds.evalDeferred("import mpAnimConfig; mpAnimConfig.get_save_path()")

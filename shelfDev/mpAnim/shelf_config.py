@@ -2,11 +2,25 @@ SHELF_NAME = "mpAnim"
 SHELF_VERSION = "1.0"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
-# Listed as filenames inside tools/.
+# Listed as filenames inside tools/ or multitool/.
 EXTRA_SCRIPTS = [
-    "animMultiTool.py",
     "mpAnimConfig.py",
     "shortCuts.py",
+]
+
+# Scripts from animDev/multiTool/ — all deployed flat to ~/maya/scripts/.
+MULTITOOL_SCRIPTS = [
+    "multiTool.py",
+    "mtSnap.py",
+    "mtConstraints.py",
+    "mtGravity.py",
+    "mtBallistics.py",
+    "mtRefPlane.py",
+    "mtWSBake.py",
+    "mtOSBake.py",
+    "mtBakeDown.py",
+    "mtTips.py",
+    "mtPanic.py",
 ]
 
 # Each entry defines one shelf button.

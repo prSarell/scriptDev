@@ -13,35 +13,114 @@ _BUILTIN_SET = 'Maya_Default'
 _HOLD_MS     = 400
 
 # ---------------------------------------------------------------------------
-# Keyboard layout  (display_label, maya keyShortcut value) | None = visual gap
+# Keyboard layout
 # ---------------------------------------------------------------------------
+# Entry dicts:
+#   type='key'   → assignable; 'key' = Maya keyShortcut string
+#   type='mod'   → modifier toggle; 'mod' = 'alt'|'ctrl'|'shift'
+#   type='dead'  → visual-only, not assignable
+#   type='space' → spacebar (assignable, wide)
+# None entries = small visual gap
+
+def _K(lbl, key, w=30):       return {'type': 'key',   'label': lbl, 'key': key,     'w': w}
+def _FN(lbl, key):             return {'type': 'key',   'label': lbl, 'key': key,     'w': 34}
+def _MOD(lbl, key, mod, w=44): return {'type': 'mod',   'label': lbl, 'key': key,     'w': w, 'mod': mod}
+def _DEAD(lbl, w=34):          return {'type': 'dead',  'label': lbl, 'key': None,    'w': w}
+def _SPACE():                  return {'type': 'space', 'label': 'Space', 'key': 'space', 'w': 150}
+
 _KB_FN = [
-    ('F1','F1'),('F2','F2'),('F3','F3'),('F4','F4'), None,
-    ('F5','F5'),('F6','F6'),('F7','F7'),('F8','F8'), None,
-    ('F9','F9'),('F10','F10'),('F11','F11'),('F12','F12'),
+    _K('Esc', 'Escape', 34), None,
+    _FN('F1','F1'), _FN('F2','F2'), _FN('F3','F3'), _FN('F4','F4'), None,
+    _FN('F5','F5'), _FN('F6','F6'), _FN('F7','F7'), _FN('F8','F8'), None,
+    _FN('F9','F9'), _FN('F10','F10'), _FN('F11','F11'), _FN('F12','F12'),
 ]
 _KB_NUM = [
-    ('`','`'),('1','1'),('2','2'),('3','3'),('4','4'),('5','5'),
-    ('6','6'),('7','7'),('8','8'),('9','9'),('0','0'),('-','-'),('=','='),
+    _K('`','`'), _K('1','1'), _K('2','2'), _K('3','3'), _K('4','4'), _K('5','5'),
+    _K('6','6'), _K('7','7'), _K('8','8'), _K('9','9'), _K('0','0'),
+    _K('-','-'), _K('=','='), _K('⌫', 'BackSpace', 52),
 ]
 _KB_Q = [
-    ('Q','q'),('W','w'),('E','e'),('R','r'),('T','t'),('Y','y'),
-    ('U','u'),('I','i'),('O','o'),('P','p'),('[','['),(']',']'),('\\','\\'),
+    _K('Tab', 'Tab', 46),
+    _K('Q','q'), _K('W','w'), _K('E','e'), _K('R','r'), _K('T','t'), _K('Y','y'),
+    _K('U','u'), _K('I','i'), _K('O','o'), _K('P','p'),
+    _K('[','['), _K(']',']'), _K('\\','\\'),
 ]
 _KB_A = [
-    ('A','a'),('S','s'),('D','d'),('F','f'),('G','g'),('H','h'),
-    ('J','j'),('K','k'),('L','l'),(';',';'),("'","'"),
+    _DEAD('Caps', 52),
+    _K('A','a'), _K('S','s'), _K('D','d'), _K('F','f'), _K('G','g'), _K('H','h'),
+    _K('J','j'), _K('K','k'), _K('L','l'), _K(';',';'), _K("'","'"),
+    _K('Enter', 'Return', 52),
 ]
 _KB_Z = [
-    ('Z','z'),('X','x'),('C','c'),('V','v'),('B','b'),('N','n'),
-    ('M','m'),(',',','),('.','.'),('/','/')
+    _MOD('Shift', 'LShift', 'shift', 62),
+    _K('Z','z'), _K('X','x'), _K('C','c'), _K('V','v'), _K('B','b'), _K('N','n'),
+    _K('M','m'), _K(',',','), _K('.','.'), _K('/','/',),
+    _MOD('Shift', 'RShift', 'shift', 62),
+]
+_KB_BOTTOM_PC = [
+    _MOD('Ctrl', 'LCtrl', 'ctrl', 44), _DEAD('Win', 36),
+    _MOD('Alt',  'LAlt',  'alt',  40), _SPACE(),
+    _MOD('Alt',  'RAlt',  'alt',  40), _DEAD('Win', 36),
+    _DEAD('Menu', 36),                 _MOD('Ctrl', 'RCtrl', 'ctrl', 44),
+]
+_KB_BOTTOM_MAC = [
+    _MOD('⌃', 'LCtrl', 'ctrl', 38), _MOD('⌥', 'LAlt', 'alt', 40),
+    _DEAD('⌘', 44),                  _SPACE(),
+    _DEAD('⌘', 44),                  _MOD('⌥', 'RAlt', 'alt', 40),
+    _MOD('⌃', 'RCtrl', 'ctrl', 38),
 ]
 
-KB_ROWS  = [_KB_FN, _KB_NUM, _KB_Q, _KB_A, _KB_Z]
-# Row pixel offsets to mimic keyboard stagger (applied as left margin)
-KB_OFFSETS = [0, 0, 12, 18, 28]
+KB_COMMON_ROWS = [_KB_FN, _KB_NUM, _KB_Q, _KB_A, _KB_Z]
+KB_OFFSETS     = [0, 0, 12, 18, 28, 0]   # index 5 = bottom row
 
-ALL_KEYS = [e[1] for row in KB_ROWS for e in row if e is not None]
+ALL_MAYA_KEYS = [
+    e['key']
+    for rows in [*KB_COMMON_ROWS, _KB_BOTTOM_PC]
+    for e in rows
+    if e is not None and e['type'] in ('key', 'space')
+]
+
+# Qt physical key → Maya keyShortcut string
+# Uses getattr so any key name absent from this Qt build is silently skipped.
+def _qt_key(name):
+    return getattr(QtCore.Qt.Key, name, None)
+
+_QT_TO_MAYA_KEY = {}
+for _qt, _mk in [
+    ('Key_Escape',       'Escape'),
+    ('Key_Tab',          'Tab'),
+    ('Key_Backspace',    'BackSpace'),
+    ('Key_Return',       'Return'),
+    ('Key_Enter',        'Return'),
+    ('Key_Space',        'space'),
+    ('Key_QuoteLeft',    '`'),      # backtick / grave
+    ('Key_Minus',        '-'),
+    ('Key_Equal',        '='),
+    ('Key_BracketLeft',  '['),
+    ('Key_BracketRight', ']'),
+    ('Key_Backslash',    '\\'),
+    ('Key_Semicolon',    ';'),
+    ('Key_Apostrophe',   "'"),
+    ('Key_Comma',        ','),
+    ('Key_Period',       '.'),
+    ('Key_Slash',        '/'),
+]:
+    k = _qt_key(_qt)
+    if k is not None:
+        _QT_TO_MAYA_KEY[k] = _mk
+for _c in 'abcdefghijklmnopqrstuvwxyz':
+    k = _qt_key(f'Key_{_c.upper()}')
+    if k is not None:
+        _QT_TO_MAYA_KEY[k] = _c
+for _d in '0123456789':
+    k = _qt_key(f'Key_{_d}')
+    if k is not None:
+        _QT_TO_MAYA_KEY[k] = _d
+for _n in range(1, 13):
+    k = _qt_key(f'Key_F{_n}')
+    if k is not None:
+        _QT_TO_MAYA_KEY[k] = f'F{_n}'
+del _qt_key, _qt, _mk, _c, _d, _n, k
 
 _SEED_HOTKEYS = [
     {
@@ -72,11 +151,11 @@ _HOVER   = 'rgba(255,255,255,18)'
 _SEL     = 'rgba(77,144,212,200)'
 _BORDER  = 'rgba(255,255,255,12)'
 
-_K_FREE   = '#1e3d1e'; _K_FREE_H  = '#2a5a2a'
-_K_MINE   = '#1a2d4a'; _K_MINE_H  = '#2a4a6a'
-_K_MUTED  = '#3a2550'; _K_MUTED_H = '#50356a'
-_K_DEF    = '#323232'; _K_DEF_H   = '#484848'
-_K_SEL    = '#4D90D4'; _K_SEL_H   = '#5ca0e4'
+_K_FREE   = '#3a3a3a'; _K_FREE_H  = '#484848'   # unassigned — visible grey
+_K_MINE   = '#1a4d7a'; _K_MINE_H  = '#2260a0'   # user assigned — blue
+_K_MUTED  = '#0f2535'; _K_MUTED_H = '#162e42'   # user assigned muted — dim blue
+_K_DEF    = '#6b4a00'; _K_DEF_H   = '#8a6000'   # Maya default — amber
+_K_SEL    = '#4D90D4'; _K_SEL_H   = '#5ca0e4'   # selected — bright accent
 
 STYLESHEET = f"""
 QWidget {{
@@ -165,15 +244,9 @@ QCheckBox::indicator:hover    {{ border-color: {_ACCENT}; }}
 #modBtn:hover                {{ background: rgba(255,255,255,22); }}
 #modBtn:checked:hover        {{ background: {_ACCENT2}; }}
 
-#keyBtn {{
+#keyBtn, #fnBtn {{
     color: rgba(255,255,255,210); border-radius: 3px; font-size: 10px;
-    font-weight: bold; border: none;
-    min-width: 30px; max-width: 30px; min-height: 26px; max-height: 26px;
-}}
-#fnBtn {{
-    color: rgba(255,255,255,210); border-radius: 3px; font-size: 9px;
-    font-weight: bold; border: none;
-    min-width: 34px; max-width: 34px; min-height: 26px; max-height: 26px;
+    font-weight: bold; border: none; min-height: 26px; max-height: 26px;
 }}
 #keyBtn[state="free"],    #fnBtn[state="free"]    {{ background: {_K_FREE};  }}
 #keyBtn[state="free"]:hover, #fnBtn[state="free"]:hover {{ background: {_K_FREE_H}; }}
@@ -185,6 +258,21 @@ QCheckBox::indicator:hover    {{ border-color: {_ACCENT}; }}
 #keyBtn[state="default"]:hover, #fnBtn[state="default"]:hover {{ background: {_K_DEF_H}; }}
 #keyBtn[state="selected"],#fnBtn[state="selected"] {{ background: {_K_SEL};  }}
 #keyBtn[state="selected"]:hover, #fnBtn[state="selected"]:hover {{ background: {_K_SEL_H}; }}
+
+#modKeyBtn {{
+    color: rgba(255,255,255,210); border-radius: 3px; font-size: 10px;
+    font-weight: bold; border: none; min-height: 26px; max-height: 26px;
+}}
+#modKeyBtn[active="false"]       {{ background: rgba(255,255,255,12); }}
+#modKeyBtn[active="false"]:hover {{ background: rgba(255,255,255,22); }}
+#modKeyBtn[active="true"]        {{ background: {_ACCENT}; color: white; }}
+#modKeyBtn[active="true"]:hover  {{ background: {_ACCENT2}; }}
+
+#deadKeyBtn {{
+    color: rgba(255,255,255,50); border-radius: 3px; font-size: 9px;
+    font-weight: bold; background: rgba(255,255,255,5); border: none;
+    min-height: 26px; max-height: 26px;
+}}
 
 #assignSection {{ background: {_BG}; padding: 8px 10px; }}
 #keyDisplayLbl {{
@@ -315,7 +403,7 @@ def _load_data():
                 return data
         except Exception:
             pass
-    return {'sets': {}, 'active': None}
+    return {'sets': {}, 'active': None, 'keyboard': 'pc'}
 
 
 def _save_data(data):
@@ -343,37 +431,38 @@ def _get_default_bindings():
         if not cmds.hotkeySet(_BUILTIN_SET, q=True, exists=True):
             return _default_cache
         cmds.hotkeySet(_BUILTIN_SET, edit=True, current=True)
-        combos = [
-            (False, False, False), (True,  False, False),
-            (False, True,  False), (False, False, True),
-            (True,  True,  False), (True,  False, True),
-            (False, True,  True),  (True,  True,  True),
-        ]
-        for key in ALL_KEYS:
-            for alt, ctrl, shift in combos:
+
+        # assignCommand keyString format: [key, alt, ctrl, ?, ?, ?, shift]
+        num = cmds.assignCommand(q=True, numElements=True) or 0
+        for i in range(1, num + 1):
+            try:
+                ks = cmds.assignCommand(i, q=True, keyString=True)
+                nc = cmds.assignCommand(i, q=True, name=True)
+                if not ks or not nc or len(ks) < 7:
+                    continue
+                key   = ks[0].lower() if ks[0] else ''
+                if not key:
+                    continue
+                if key == ' ':
+                    key = 'space'
+                alt   = ks[1] == '1'
+                ctrl  = ks[2] == '1'
+                shift = ks[6] == '1'
+                _default_cache[_slug(key, alt, ctrl, shift)] = nc
+                # Resolve annotation for reference browser
                 try:
-                    nc = cmds.hotkey(
-                        keyShortcut=key, query=True, name=True,
-                        altModifier=alt, ctrlModifier=ctrl, shiftModifier=shift,
-                    ) or ''
-                    if nc:
-                        _default_cache[_slug(key, alt, ctrl, shift)] = nc
+                    rtc = cmds.nameCommand(nc, query=True, command=True) or ''
+                    if rtc and cmds.runTimeCommand(rtc, query=True, exists=True):
+                        ann = cmds.runTimeCommand(rtc, query=True, annotation=True) or nc
+                        cat = cmds.runTimeCommand(rtc, query=True, category=True)  or ''
+                        _default_ann[nc] = {'annotation': ann, 'category': cat}
                 except Exception:
                     pass
+            except Exception:
+                pass
     finally:
         if current and cmds.hotkeySet(current, q=True, exists=True):
             cmds.hotkeySet(current, edit=True, current=True)
-
-    # Resolve annotations for reference browser (best-effort)
-    for slug, nc in _default_cache.items():
-        try:
-            rtc = cmds.nameCommand(nc, query=True, command=True) or ''
-            if rtc and cmds.runTimeCommand(rtc, query=True, exists=True):
-                ann = cmds.runTimeCommand(rtc, query=True, annotation=True) or nc
-                cat = cmds.runTimeCommand(rtc, query=True, category=True)  or ''
-                _default_ann[nc] = {'annotation': ann, 'category': cat}
-        except Exception:
-            pass
 
     return _default_cache
 
@@ -559,6 +648,7 @@ def _init(data):
 
 _space_filter   = None
 _saved_space_hk = None
+_SPACE_PROP     = 'mpAnimSpaceFilterRef'   # key stored on QApplication across reloads
 
 
 class _SpacePlayFilter(QtCore.QObject):
@@ -638,13 +728,20 @@ def _bind_spacebar():
     app = QtWidgets.QApplication.instance()
     _space_filter = _SpacePlayFilter(app)
     app.installEventFilter(_space_filter)
+    app.setProperty(_SPACE_PROP, _space_filter)   # survive future reloads
 
 
 def _restore_spacebar():
     global _space_filter, _saved_space_hk
-    if _space_filter is not None:
-        QtWidgets.QApplication.instance().removeEventFilter(_space_filter)
-        _space_filter = None
+    app = QtWidgets.QApplication.instance()
+    # Retrieve any filter stored across reloads, even if _space_filter was reset
+    stored = app.property(_SPACE_PROP)
+    if stored is not None:
+        app.removeEventFilter(stored)
+        app.setProperty(_SPACE_PROP, None)
+    if _space_filter is not None and _space_filter is not stored:
+        app.removeEventFilter(_space_filter)
+    _space_filter = None
     if _saved_space_hk is not None:
         cmds.hotkey(keyShortcut='space',
                     name=_saved_space_hk['press'],
@@ -655,16 +752,18 @@ def _restore_spacebar():
 
 
 # ---------------------------------------------------------------------------
-# KeyButton & KeyboardWidget
+# Key buttons
 # ---------------------------------------------------------------------------
 
 class _KeyButton(QtWidgets.QPushButton):
+    """Assignable key — colours reflect hotkey state."""
     clicked_key = QtCore.Signal(str)
 
-    def __init__(self, label, key, fn_key=False, parent=None):
-        super().__init__(label, parent)
-        self.key = key
-        self.setObjectName('fnBtn' if fn_key else 'keyBtn')
+    def __init__(self, entry, parent=None):
+        super().__init__(entry['label'], parent)
+        self.key = entry['key']
+        self.setObjectName('keyBtn')
+        self.setFixedSize(entry['w'], 26)
         self._state = ''
         self.set_state('free')
         self.clicked.connect(lambda: self.clicked_key.emit(self.key))
@@ -678,53 +777,155 @@ class _KeyButton(QtWidgets.QPushButton):
         self.style().polish(self)
 
 
-class KeyboardWidget(QtWidgets.QWidget):
-    key_selected = QtCore.Signal(str)
+class _ModKeyButton(QtWidgets.QPushButton):
+    """Modifier key (Shift/Ctrl/Alt) — sticky toggle."""
 
-    def __init__(self, parent=None):
+    def __init__(self, entry, parent=None):
+        super().__init__(entry['label'], parent)
+        self.key = entry['key']
+        self.mod = entry['mod']
+        self.setObjectName('modKeyBtn')
+        self.setFixedSize(entry['w'], 26)
+        self._active = False
+        self._refresh()
+
+    def set_active(self, active):
+        if active == self._active:
+            return
+        self._active = active
+        self._refresh()
+
+    def _refresh(self):
+        self.setProperty('active', 'true' if self._active else 'false')
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+class _DeadKeyButton(QtWidgets.QPushButton):
+    """Non-assignable visual key (Win, Cmd, CapsLock, Menu)."""
+
+    def __init__(self, entry, parent=None):
+        super().__init__(entry['label'], parent)
+        self.key = None
+        self.setObjectName('deadKeyBtn')
+        self.setFixedSize(entry['w'], 26)
+        self.setEnabled(False)
+
+
+# ---------------------------------------------------------------------------
+# KeyboardWidget
+# ---------------------------------------------------------------------------
+
+class KeyboardWidget(QtWidgets.QWidget):
+    key_selected      = QtCore.Signal(str)
+    modifiers_changed = QtCore.Signal()
+
+    def __init__(self, kb_type='pc', parent=None):
         super().__init__(parent)
-        self._btns     = {}   # key_value -> _KeyButton
+        self._kb_type  = kb_type
+        self._key_btns = {}                                     # maya_key -> _KeyButton
+        self._mod_btns = {'alt': [], 'ctrl': [], 'shift': []}  # mod -> [_ModKeyButton]
+        self._mods     = {'alt': False, 'ctrl': False, 'shift': False}
         self._selected = None
+        self._root_layout = QtWidgets.QVBoxLayout(self)
+        self._root_layout.setSpacing(2)
+        self._root_layout.setContentsMargins(8, 4, 8, 4)
         self._build()
 
     def _build(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(3)
-        layout.setContentsMargins(8, 6, 8, 6)
+        while self._root_layout.count():
+            item = self._root_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._key_btns.clear()
+        for v in self._mod_btns.values():
+            v.clear()
+        self._selected = None
 
-        for row_idx, row in enumerate(KB_ROWS):
-            row_w  = QtWidgets.QWidget()
-            row_l  = QtWidgets.QHBoxLayout(row_w)
+        bottom = _KB_BOTTOM_MAC if self._kb_type == 'mac' else _KB_BOTTOM_PC
+        rows   = [*KB_COMMON_ROWS, bottom]
+
+        for row_idx, row in enumerate(rows):
+            row_w = QtWidgets.QWidget()
+            row_l = QtWidgets.QHBoxLayout(row_w)
             row_l.setSpacing(3)
-            row_l.setContentsMargins(KB_OFFSETS[row_idx], 0, 0, 0)
+            offset = KB_OFFSETS[row_idx] if row_idx < len(KB_OFFSETS) else 0
+            row_l.setContentsMargins(offset, 0, 0, 0)
             row_l.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
 
-            is_fn = (row_idx == 0)
             for entry in row:
                 if entry is None:
-                    spacer = QtWidgets.QWidget()
-                    spacer.setFixedWidth(8)
-                    row_l.addWidget(spacer)
-                else:
-                    label, key = entry
-                    btn = _KeyButton(label, key, fn_key=is_fn)
+                    sp = QtWidgets.QWidget(); sp.setFixedWidth(8)
+                    row_l.addWidget(sp)
+                    continue
+                t = entry['type']
+                if t in ('key', 'space'):
+                    btn = _KeyButton(entry)
                     btn.clicked_key.connect(self._on_key_clicked)
-                    self._btns[key] = btn
+                    self._key_btns[entry['key']] = btn
                     row_l.addWidget(btn)
+                elif t == 'mod':
+                    btn = _ModKeyButton(entry)
+                    btn.clicked.connect(
+                        lambda _=False, m=entry['mod']: self.toggle_mod(m))
+                    self._mod_btns[entry['mod']].append(btn)
+                    row_l.addWidget(btn)
+                elif t == 'dead':
+                    row_l.addWidget(_DeadKeyButton(entry))
 
             row_l.addStretch()
-            layout.addWidget(row_w)
+            row_w.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Preferred,
+                QtWidgets.QSizePolicy.Policy.Fixed)
+            self._root_layout.addWidget(row_w)
+
+        self._root_layout.addStretch()
+
+    def switch_kb_type(self, kb_type):
+        self._kb_type = kb_type
+        self._build()
+        for mod, active in self._mods.items():
+            for btn in self._mod_btns[mod]:
+                btn.set_active(active)
+
+    # ── modifier state ──────────────────────────────────────
+
+    def mods(self):
+        return self._mods['alt'], self._mods['ctrl'], self._mods['shift']
+
+    def set_mod(self, mod, active):
+        if self._mods[mod] == active:
+            return
+        self._mods[mod] = active
+        for btn in self._mod_btns[mod]:
+            btn.set_active(active)
+        self.modifiers_changed.emit()
+
+    def toggle_mod(self, mod):
+        self.set_mod(mod, not self._mods[mod])
+
+    # ── key selection ───────────────────────────────────────
 
     def _on_key_clicked(self, key):
-        if self._selected and self._selected in self._btns:
-            # Will be refreshed by next update_states call; set temporarily
-            self._btns[self._selected].set_state('free')
         self._selected = key
-        self._btns[key].set_state('selected')
         self.key_selected.emit(key)
 
-    def update_states(self, category_hotkeys, default_bindings, alt, ctrl, shift):
-        for key, btn in self._btns.items():
+    def select_key(self, key):
+        if key in self._key_btns:
+            self._selected = key
+            self.key_selected.emit(key)
+
+    def clear_selection(self):
+        self._selected = None
+
+    def selected_key(self):
+        return self._selected
+
+    # ── visual update ───────────────────────────────────────
+
+    def update_states(self, category_hotkeys, default_bindings):
+        alt, ctrl, shift = self.mods()
+        for key, btn in self._key_btns.items():
             if key == self._selected:
                 btn.set_state('selected')
                 continue
@@ -736,12 +937,6 @@ class KeyboardWidget(QtWidgets.QWidget):
             else:
                 state = 'free'
             btn.set_state(state)
-
-    def clear_selection(self):
-        self._selected = None
-
-    def selected_key(self):
-        return self._selected
 
 
 # ---------------------------------------------------------------------------
@@ -1065,112 +1260,141 @@ class MainPanel(QtWidgets.QWidget):
 # KeyBinderPanel
 # ---------------------------------------------------------------------------
 
-class KeyBinderPanel(QtWidgets.QWidget):
-    hotkey_assigned = QtCore.Signal(str)   # emits set_name
+class KeyBinderPanel(QtCore.QObject):
+    """Coordinator — owns the keyboard and assign widgets, wires them together.
+    Call keyboard_widget() and assign_widget() to get the two tab contents."""
+    hotkey_assigned = QtCore.Signal(str)
 
-    def __init__(self, data, main_panel, parent=None):
+    def __init__(self, data, main_panel, kb_type='pc', parent=None):
         super().__init__(parent)
-        self.setObjectName('keyBinderPanel')
-        self._data       = data
-        self._main       = main_panel
-        self._build_ui()
+        self._data = data
+        self._main = main_panel
+        self._kb_widget    = self._build_keyboard_widget(kb_type)
+        self._assign_widget = self._build_assign_widget()
 
-    def _build_ui(self):
-        root = QtWidgets.QVBoxLayout(self)
+    # ── public accessors ────────────────────────────────────
+
+    def keyboard_widget(self):
+        return self._kb_widget
+
+    def assign_widget(self):
+        return self._assign_widget
+
+    # ── keyboard tab widget ─────────────────────────────────
+
+    def _build_keyboard_widget(self, kb_type):
+        w = QtWidgets.QWidget()
+        w.setObjectName('keyBinderPanel')
+        w.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        root = QtWidgets.QVBoxLayout(w)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        title = QtWidgets.QLabel('KEY BINDER')
-        title.setObjectName('binderTitle')
-        root.addWidget(title)
+        # Header: PC/Mac toggle
+        hdr = QtWidgets.QWidget()
+        hdr.setObjectName('keyBinderPanel')
+        hdr_l = QtWidgets.QHBoxLayout(hdr)
+        hdr_l.setContentsMargins(8, 4, 8, 4)
+        hdr_l.setSpacing(8)
+        hdr_l.addStretch()
 
-        body = QtWidgets.QHBoxLayout()
-        body.setContentsMargins(8, 6, 8, 6)
-        body.setSpacing(12)
-
-        # Left: modifier toggles + keyboard
-        left = QtWidgets.QVBoxLayout()
-        left.setSpacing(6)
-
-        mod_row = QtWidgets.QHBoxLayout()
-        mod_row.setSpacing(6)
-        self._alt   = QtWidgets.QPushButton('Alt')
-        self._ctrl  = QtWidgets.QPushButton('Ctrl')
-        self._shift = QtWidgets.QPushButton('Shift')
-        for btn in (self._alt, self._ctrl, self._shift):
+        self._pc_btn  = QtWidgets.QPushButton('PC')
+        self._mac_btn = QtWidgets.QPushButton('Mac')
+        for btn in (self._pc_btn, self._mac_btn):
             btn.setObjectName('modBtn')
             btn.setCheckable(True)
-            btn.toggled.connect(self._on_modifier_changed)
-            mod_row.addWidget(btn)
-        mod_row.addStretch()
-        left.addLayout(mod_row)
+            btn.setFixedHeight(22)
+        grp = QtWidgets.QButtonGroup(w)
+        grp.addButton(self._pc_btn)
+        grp.addButton(self._mac_btn)
+        (self._mac_btn if kb_type == 'mac' else self._pc_btn).setChecked(True)
+        self._pc_btn.toggled.connect(
+            lambda checked: self._switch_kb('pc')  if checked else None)
+        self._mac_btn.toggled.connect(
+            lambda checked: self._switch_kb('mac') if checked else None)
+        hdr_l.addWidget(self._pc_btn)
+        hdr_l.addWidget(self._mac_btn)
+        root.addWidget(hdr)
 
-        self._keyboard = KeyboardWidget()
+        # Keyboard fills space
+        self._keyboard = KeyboardWidget(kb_type=kb_type)
         self._keyboard.key_selected.connect(self._on_key_selected)
-        left.addWidget(self._keyboard)
-        left.addStretch()
+        self._keyboard.modifiers_changed.connect(self._on_modifier_changed)
+        root.addWidget(self._keyboard, 1)
 
-        # Right: assignment section
-        right = self._make_assign_section()
-
-        body.addLayout(left, 2)
-        body.addWidget(right, 1)
-        root.addLayout(body, 1)
-
-    def _make_assign_section(self):
-        w = QtWidgets.QWidget()
-        w.setObjectName('assignSection')
-        layout = QtWidgets.QVBoxLayout(w)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        self._key_lbl    = QtWidgets.QLabel('Select a key')
+        # Key display strip at bottom of keyboard tab
+        strip = QtWidgets.QWidget()
+        strip.setObjectName('assignSection')
+        strip_l = QtWidgets.QHBoxLayout(strip)
+        strip_l.setContentsMargins(10, 6, 10, 6)
+        self._key_lbl = QtWidgets.QLabel('Select a key')
         self._key_lbl.setObjectName('keyDisplayLbl')
         self._status_lbl = QtWidgets.QLabel('')
         self._status_lbl.setObjectName('statusLbl')
-        self._status_lbl.setWordWrap(True)
+        strip_l.addWidget(self._key_lbl)
+        strip_l.addStretch()
+        strip_l.addWidget(self._status_lbl)
+        root.addWidget(strip)
 
-        layout.addWidget(self._key_lbl)
-        layout.addWidget(self._status_lbl)
+        # Forward keyPressEvent from the keyboard tab widget
+        w.keyPressEvent = self._key_press_event
+        return w
 
+    # ── runtime command tab widget ──────────────────────────
+
+    def _build_assign_widget(self):
+        w = QtWidgets.QWidget()
+        w.setObjectName('assignSection')
+        lay = QtWidgets.QVBoxLayout(w)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(6)
+
+        # Shared key display at top
+        top = QtWidgets.QHBoxLayout()
+        self._assign_key_lbl    = QtWidgets.QLabel('Select a key in the Keyboard tab')
+        self._assign_key_lbl.setObjectName('keyDisplayLbl')
+        self._assign_status_lbl = QtWidgets.QLabel('')
+        self._assign_status_lbl.setObjectName('statusLbl')
+        top.addWidget(self._assign_key_lbl)
+        top.addStretch()
+        top.addWidget(self._assign_status_lbl)
+        lay.addLayout(top)
+
+        # Description + lang + buttons
+        mid = QtWidgets.QHBoxLayout()
+        mid.setSpacing(6)
         self._desc_edit = QtWidgets.QLineEdit()
         self._desc_edit.setPlaceholderText('Short description')
-        layout.addWidget(self._desc_edit)
-
-        lang_row = QtWidgets.QHBoxLayout()
+        mid.addWidget(self._desc_edit, 2)
         self._py_rb  = QtWidgets.QRadioButton('Python')
         self._mel_rb = QtWidgets.QRadioButton('MEL')
         self._py_rb.setChecked(True)
-        lang_row.addWidget(self._py_rb)
-        lang_row.addWidget(self._mel_rb)
-        lang_row.addStretch()
-        layout.addLayout(lang_row)
-
-        self._cmd_edit = QtWidgets.QPlainTextEdit()
-        self._cmd_edit.setPlaceholderText('Paste command from Script Editor…')
-        self._cmd_edit.setFixedHeight(72)
-        layout.addWidget(self._cmd_edit)
-
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(6)
-        btn_row.addStretch()
-
+        mid.addWidget(self._py_rb)
+        mid.addWidget(self._mel_rb)
         self._clear_btn = QtWidgets.QPushButton('Clear')
         self._clear_btn.setObjectName('clearBtn')
         self._clear_btn.setEnabled(False)
         self._clear_btn.setToolTip('Remove binding from this key')
         self._clear_btn.clicked.connect(self._clear_binding)
-        btn_row.addWidget(self._clear_btn)
-
+        mid.addWidget(self._clear_btn)
         self._assign_btn = QtWidgets.QPushButton('Assign')
         self._assign_btn.setObjectName('assignBtn')
         self._assign_btn.setEnabled(False)
         self._assign_btn.clicked.connect(self._assign)
-        btn_row.addWidget(self._assign_btn)
+        mid.addWidget(self._assign_btn)
+        lay.addLayout(mid)
 
-        layout.addLayout(btn_row)
-        layout.addStretch()
+        # Command area fills remaining space
+        self._cmd_edit = QtWidgets.QPlainTextEdit()
+        self._cmd_edit.setPlaceholderText('Paste command from Script Editor…')
+        lay.addWidget(self._cmd_edit, 1)
         return w
+
+    def _switch_kb(self, kb_type):
+        self._keyboard.switch_kb_type(kb_type)
+        self._data['keyboard'] = kb_type
+        _save_data(self._data)
+        self._update_keyboard()
 
     # ── refresh ────────────────────────────────────────────
 
@@ -1181,12 +1405,11 @@ class KeyBinderPanel(QtWidgets.QWidget):
         self._assign_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._keyboard.clear_selection()
-        if is_builtin:
-            self._key_lbl.setText('Default set — read only')
-            self._status_lbl.setText('')
-        else:
-            self._key_lbl.setText('Select a key')
-            self._status_lbl.setText('')
+        hint = 'Default set — read only' if is_builtin else 'Select a key'
+        self._key_lbl.setText(hint)
+        self._assign_key_lbl.setText(hint)
+        self._status_lbl.setText('')
+        self._assign_status_lbl.setText('')
         self._update_keyboard(set_name)
 
     def _update_keyboard(self, set_name=None):
@@ -1194,28 +1417,21 @@ class KeyBinderPanel(QtWidgets.QWidget):
             set_name = self._main.current_set()
         hotkeys  = {} if set_name == _BUILTIN_SET else \
                    self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
-        defaults = _get_default_bindings()
-        alt, ctrl, shift = self._mods()
-        self._keyboard.update_states(hotkeys, defaults, alt, ctrl, shift)
-
-    def _mods(self):
-        return self._alt.isChecked(), self._ctrl.isChecked(), self._shift.isChecked()
+        self._keyboard.update_states(hotkeys, _get_default_bindings())
 
     # ── slots ──────────────────────────────────────────────
 
     def _on_modifier_changed(self):
         self._update_keyboard()
-        # Re-evaluate selected key status
         key = self._keyboard.selected_key()
         if key:
             self._on_key_selected(key)
 
     def _on_key_selected(self, key):
-        set_name = self._main.current_set()
+        set_name   = self._main.current_set()
         is_builtin = set_name == _BUILTIN_SET
-        alt, ctrl, shift = self._mods()
-        slug = _slug(key, alt, ctrl, shift)
-
+        alt, ctrl, shift = self._keyboard.mods()
+        slug    = _slug(key, alt, ctrl, shift)
         display = _key_display(key, alt, ctrl, shift)
         self._key_lbl.setText(f'Selected: {display}')
 
@@ -1234,20 +1450,21 @@ class KeyBinderPanel(QtWidgets.QWidget):
             self._desc_edit.setText(hk.get('desc', ''))
             self._cmd_edit.setPlainText(hk.get('command', ''))
             (self._py_rb if hk.get('lang', 'python') == 'python' else self._mel_rb).setChecked(True)
-            self._status_lbl.setText('Already bound — editing existing.')
+            status = 'Already bound — editing existing.'
             self._clear_btn.setEnabled(True)
         else:
             self._desc_edit.clear()
             self._cmd_edit.clear()
             self._clear_btn.setEnabled(False)
             if slug in defaults:
-                nc  = defaults[slug]
-                ann = _default_ann.get(nc, {}).get('annotation', nc)
-                self._status_lbl.setText(f'⚠  Overrides Maya default: {ann}')
+                ann = _default_ann.get(defaults[slug], {}).get('annotation', defaults[slug])
+                status = f'⚠  Overrides Maya default: {ann}'
             else:
-                self._status_lbl.setText('')
-
+                status = ''
+        self._status_lbl.setText(status)
+        self._assign_status_lbl.setText(status)
         self._assign_btn.setEnabled(True)
+        self._update_keyboard()
 
     def _assign(self):
         key = self._keyboard.selected_key()
@@ -1256,18 +1473,20 @@ class KeyBinderPanel(QtWidgets.QWidget):
         set_name = self._main.current_set()
         if not set_name or set_name == _BUILTIN_SET:
             return
-        alt, ctrl, shift = self._mods()
+        alt, ctrl, shift = self._keyboard.mods()
         desc = self._desc_edit.text().strip()
         cmd  = self._cmd_edit.toPlainText().strip()
         lang = 'python' if self._py_rb.isChecked() else 'mel'
         if not desc or not cmd:
-            QtWidgets.QMessageBox.warning(self, 'Key Binder',
-                                          'Description and command are both required.')
+            QtWidgets.QMessageBox.warning(
+                self._assign_widget, 'Key Binder',
+                'Description and command are both required.')
             return
         add_hotkey(set_name, key, alt, ctrl, shift, desc, cmd, lang, self._data)
         self._update_keyboard(set_name)
         self._clear_btn.setEnabled(True)
         self._status_lbl.setText('Assigned.')
+        self._assign_status_lbl.setText('Assigned.')
         self.hotkey_assigned.emit(set_name)
 
     def _clear_binding(self):
@@ -1277,13 +1496,12 @@ class KeyBinderPanel(QtWidgets.QWidget):
         set_name = self._main.current_set()
         if not set_name or set_name == _BUILTIN_SET:
             return
-        alt, ctrl, shift = self._mods()
+        alt, ctrl, shift = self._keyboard.mods()
         slug = _slug(key, alt, ctrl, shift)
-        hotkeys = self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
-        if slug not in hotkeys:
+        if slug not in self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {}):
             return
         reply = QtWidgets.QMessageBox.question(
-            self, 'Clear Binding',
+            self._assign_widget, 'Clear Binding',
             f'Remove the binding for {_key_display(key, alt, ctrl, shift)}?',
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
         if reply != QtWidgets.QMessageBox.StandardButton.Yes:
@@ -1293,8 +1511,28 @@ class KeyBinderPanel(QtWidgets.QWidget):
         self._cmd_edit.clear()
         self._clear_btn.setEnabled(False)
         self._status_lbl.setText('')
+        self._assign_status_lbl.setText('')
         self._update_keyboard(set_name)
         self.hotkey_assigned.emit(set_name)
+
+    # ── physical keyboard input ─────────────────────────────
+
+    def _key_press_event(self, event):
+        focus = QtWidgets.QApplication.focusWidget()
+        if isinstance(focus, (QtWidgets.QLineEdit, QtWidgets.QPlainTextEdit)):
+            return
+        key = event.key()
+        if key == QtCore.Qt.Key.Key_Shift:
+            self._keyboard.toggle_mod('shift'); return
+        if key == QtCore.Qt.Key.Key_Control:
+            self._keyboard.toggle_mod('ctrl');  return
+        if key == QtCore.Qt.Key.Key_Alt:
+            self._keyboard.toggle_mod('alt');   return
+        maya_key = _QT_TO_MAYA_KEY.get(key)
+        if maya_key:
+            self._keyboard.select_key(maya_key)
+            return
+        super().keyPressEvent(event)
 
 
 # ---------------------------------------------------------------------------
@@ -1385,13 +1623,36 @@ def _maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
+def _embed_rtc_editor():
+    """Return Maya's native runtimeCommandEditor as a QWidget, or a fallback label."""
+    try:
+        tmp_win = cmds.window(visible=False)
+        layout  = cmds.formLayout(parent=tmp_win)
+        editor  = cmds.runtimeCommandEditor(parent=layout)
+        cmds.showWindow(tmp_win)
+        ptr = omui.MQtUtil.findControl(editor)
+        if ptr:
+            widget = wrapInstance(int(ptr), QtWidgets.QWidget)
+            widget.setParent(None)   # detach from Maya window before we hide it
+            cmds.window(tmp_win, edit=True, visible=False)
+            return widget
+        cmds.deleteUI(tmp_win)
+    except Exception as e:
+        cmds.warning(f'shortCuts: could not embed runtimeCommandEditor — {e}')
+
+    fallback = QtWidgets.QLabel('Runtime Command Editor unavailable.')
+    fallback.setObjectName('disabledHint')
+    fallback.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    return fallback
+
+
 class ShortCutsUI(QtWidgets.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('shortCuts')
         self.setObjectName(WINDOW_NAME)
-        self.setMinimumSize(700, 660)
+        self.setMinimumSize(900, 660)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window |
             QtCore.Qt.WindowType.WindowCloseButtonHint
@@ -1410,37 +1671,33 @@ class ShortCutsUI(QtWidgets.QDialog):
 
         root.addWidget(self._make_header())
 
-        tabs = QtWidgets.QTabWidget()
-
-        # ── Tab 1: Main + Key Binder ──────────────────────
-        tab1 = QtWidgets.QWidget()
-        t1   = QtWidgets.QVBoxLayout(tab1)
-        t1.setContentsMargins(0, 0, 0, 0)
-        t1.setSpacing(0)
-
+        # ── Outer horizontal splitter: left ~1/3, right ~2/3 ──
         self._main_panel = MainPanel(self._data)
-        self._key_binder = KeyBinderPanel(self._data, self._main_panel)
+        self._key_binder = KeyBinderPanel(
+            self._data, self._main_panel,
+            kb_type=self._data.get('keyboard', 'pc'))
+        self._ref        = ReferenceBrowser()
 
         self._main_panel.set_selected.connect(self._key_binder.refresh)
         self._key_binder.hotkey_assigned.connect(self._main_panel.refresh_hotkeys)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        # ── Right panel: 3-tab widget ──────────────────────
+        right_tabs = QtWidgets.QTabWidget()
+
+        right_tabs.addTab(self._key_binder.keyboard_widget(), 'Keyboard')
+        right_tabs.addTab(self._key_binder.assign_widget(),   'Runtime Command')
+        right_tabs.addTab(self._ref,                          'Reference')
+        right_tabs.currentChanged.connect(self._on_right_tab_changed)
+
+        # ── Horizontal splitter ────────────────────────────
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         splitter.addWidget(self._main_panel)
-        splitter.addWidget(self._key_binder)
-        splitter.setSizes([220, 420])
+        splitter.addWidget(right_tabs)
+        splitter.setSizes([300, 600])
         splitter.setChildrenCollapsible(False)
-        t1.addWidget(splitter, 1)
 
-        # ── Tab 2: Reference Browser ──────────────────────
-        self._ref = ReferenceBrowser()
+        root.addWidget(splitter, 1)
 
-        tabs.addTab(tab1,      'Hotkeys')
-        tabs.addTab(self._ref, 'Reference')
-        tabs.currentChanged.connect(self._on_tab_changed)
-
-        root.addWidget(tabs, 1)
-
-        # Trigger initial keyboard state
         QtCore.QTimer.singleShot(0, lambda: self._key_binder.refresh(
             self._main_panel.current_set()))
 
@@ -1462,8 +1719,8 @@ class ShortCutsUI(QtWidgets.QDialog):
         row.addWidget(gear)
         return w
 
-    def _on_tab_changed(self, index):
-        if index == 1:
+    def _on_right_tab_changed(self, index):
+        if index == 2:   # Reference tab
             self._ref.populate()
 
 
