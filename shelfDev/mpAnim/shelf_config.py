@@ -95,7 +95,7 @@ BUTTONS = [
     {
         "label": "shortCuts",
         "tooltip": "Open shortCuts — manage and switch hotkey presets per workflow",
-        "icon": "commandButton.png",
+        "icon": "iconShortCuts.png",
         "script": "shortCuts.py",
         "command": (
             "import importlib\n"
