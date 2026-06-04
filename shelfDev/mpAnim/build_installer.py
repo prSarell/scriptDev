@@ -166,7 +166,7 @@ def _install():
     if _USERSETUP_MARKER not in existing:
         with open(usersetup, "a", encoding="utf-8") as fh:
             fh.write("\\n" + _USERSETUP_MARKER + "\\n" + _USERSETUP_LINE + "\\n")
-        print("[mpAnim installer] patched userSetup.py for animMultiTool auto-load")
+        print("[mpAnim installer] patched userSetup.py for multiTool auto-load")
     else:
         print("[mpAnim installer] userSetup.py already patched")
 
