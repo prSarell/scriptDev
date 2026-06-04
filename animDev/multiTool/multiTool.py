@@ -2,12 +2,14 @@ import maya.cmds as cmds
 
 import mtSnap
 import mtConstraints
+import mtAimRig
 import mtGravity
 import mtBallistics
 import mtRefPlane
 import mtWSBake
 import mtOSBake
 import mtBakeDown
+import mtCycleKeys
 import mtTips
 import mtPanic
 
@@ -136,6 +138,66 @@ def _constraints_content(layout):
     layout.addWidget(hint)
 
 
+def _aim_rig_content(layout):
+    from PySide6 import QtWidgets
+
+    build_btn = QtWidgets.QPushButton('Build Aim Rig')
+    build_btn.setMinimumHeight(BTN_H)
+    build_btn.setStyleSheet(_btn('#7A4A33'))
+    build_btn.setToolTip(
+        'No selection: build at world origin\n'
+        'One object: snap and parent-constrain rig to selection\n'
+        'Multiple objects: cluster of rigs, chained aim (tail mode)')
+    build_btn.clicked.connect(mtAimRig.build_aim_rig)
+    layout.addWidget(build_btn)
+
+    row = QtWidgets.QHBoxLayout()
+    row.setSpacing(2)
+
+    flip_btn = QtWidgets.QPushButton('Bake & Flip')
+    flip_btn.setMinimumHeight(BTN_H)
+    flip_btn.setStyleSheet(_btn('#4A5E7A'))
+    flip_btn.setToolTip(
+        'Select cluster or master_grp_01\n'
+        'Bakes parent constraint to keys, then flips —\n'
+        'aim_loc drives the original joint')
+    flip_btn.clicked.connect(mtAimRig.bake_and_flip)
+    row.addWidget(flip_btn)
+
+    bake_btn = QtWidgets.QPushButton('Bake Aim')
+    bake_btn.setMinimumHeight(BTN_H)
+    bake_btn.setStyleSheet(_btn('#5E4A7A'))
+    bake_btn.setToolTip(
+        'Select cluster or master_grp_01\n'
+        'Bakes joints driven by aim_loc back to direct keys')
+    row.addWidget(bake_btn)
+
+    layout.addLayout(row)
+
+    chk_row = QtWidgets.QHBoxLayout()
+    chk_row.setSpacing(8)
+    chk_row.addStretch()
+
+    layer_chk = QtWidgets.QCheckBox('Bake to Layer')
+    layer_chk.setStyleSheet('font-size:10px;')
+    chk_row.addWidget(layer_chk)
+
+    delete_chk = QtWidgets.QCheckBox('Delete Rig')
+    delete_chk.setStyleSheet('font-size:10px;')
+    chk_row.addWidget(delete_chk)
+
+    layout.addLayout(chk_row)
+
+    bake_btn.clicked.connect(
+        lambda: mtAimRig.bake_aim(
+            to_layer=layer_chk.isChecked(),
+            delete_rig=delete_chk.isChecked()))
+
+    hint = QtWidgets.QLabel('build: no sel=origin | one=snap | multi=chain  —  flip/bake: select cluster or grp_01')
+    hint.setStyleSheet(HINT_STYLE)
+    layout.addWidget(hint)
+
+
 def _gravity_content(layout):
     from PySide6 import QtWidgets, QtCore, QtGui
 
@@ -208,6 +270,42 @@ def _gravity_content(layout):
     layout.addLayout(floor_row)
 
     hint = QtWidgets.QLabel('select one object  |  G-ball: right-click  |  Ballistics: shift+click for presets')
+    hint.setStyleSheet(HINT_STYLE)
+    layout.addWidget(hint)
+
+
+def _cycle_keys_content(layout):
+    from PySide6 import QtWidgets, QtCore
+
+    reps_spin = QtWidgets.QSpinBox()
+    reps_spin.setMinimum(1)
+    reps_spin.setMaximum(99)
+    reps_spin.setValue(1)
+    reps_spin.setFixedWidth(48)
+    reps_spin.setFixedHeight(20)
+
+    btn_row = QtWidgets.QHBoxLayout()
+    btn_row.setSpacing(2)
+    for label, direction in [('Forward', 'forward'), ('Backward', 'backward'), ('Both', 'both')]:
+        btn = QtWidgets.QPushButton(label)
+        btn.setMinimumHeight(BTN_H)
+        btn.setStyleSheet(_btn('#4A6B6B'))
+        btn.setToolTip('Tile selected keys {} by N reps'.format(direction))
+        btn.clicked.connect(
+            lambda checked=False, d=direction: mtCycleKeys.tile_keys(reps_spin.value(), d))
+        btn_row.addWidget(btn)
+    layout.addLayout(btn_row)
+
+    reps_row = QtWidgets.QHBoxLayout()
+    reps_row.setSpacing(4)
+    reps_lbl = QtWidgets.QLabel('Reps:')
+    reps_lbl.setStyleSheet('font-size:11px;')
+    reps_row.addWidget(reps_lbl)
+    reps_row.addWidget(reps_spin)
+    reps_row.addStretch()
+    layout.addLayout(reps_row)
+
+    hint = QtWidgets.QLabel('select objects + keys in Graph Editor, set reps, pick direction')
     hint.setStyleSheet(HINT_STYLE)
     layout.addWidget(hint)
 
@@ -302,8 +400,10 @@ def _build_tool_widget(parent=None):
 
     layout.addWidget(_make_collapsible('Snap',         _snap_content))
     layout.addWidget(_make_collapsible('Constraints',  _constraints_content))
+    layout.addWidget(_make_collapsible('Aim Rig',      _aim_rig_content))
     layout.addWidget(_make_collapsible('Physics',      _gravity_content))
     layout.addWidget(_make_collapsible('Ref Plane',    _ref_plane_content))
+    layout.addWidget(_make_collapsible('Cycle Keys',   _cycle_keys_content))
     layout.addWidget(_make_collapsible('Bake',          _bake_content))
     layout.addStretch()
 
