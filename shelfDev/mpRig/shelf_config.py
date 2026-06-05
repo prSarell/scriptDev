@@ -14,8 +14,7 @@ BUTTONS = [
     {
         "label": "ps_spine",
         "tooltip": "Open ps_spine — build a ribbon spine rig from a drawn curve",
-        "icon": "kinJoint.png",
-        "script": "ps_spine.py",
+        "icon": "iconSpine.png",
         "command": (
             "import importlib\n"
             "import ps_spine\n"
