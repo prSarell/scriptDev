@@ -4,7 +4,6 @@ import maya.mel as mel
 import os
 from functools import partial
 import importlib
-from maya.api.OpenMaya import MVector  # API 2.0
 
 def scriptJobFunction(*args):
 	clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
@@ -31,7 +30,7 @@ def scriptJobFunction2(controlsList, *args):
 			cmds.textField(i + '_textField', e=True, tx=newValue)
 
 def refreshTool(*args):
-	# Reload this tool’s module (update "tlmClothChain" below if your file/module is named differently)
+	# Reload this tool's module (update "tlmClothChain" below if your file/module is named differently)
 	import sys
 	mod_name = 'tlmClothChain'  # <-- change to the actual module name for your file if different
 	if mod_name in sys.modules:
@@ -53,6 +52,51 @@ class SimClothRig():
 		connections = cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or []
 		return connections[0] if connections else None
 
+	def _locked_axes(self, ctrl):
+		st, sr = [], []
+		for att in ['.tx', '.ty', '.tz', '.rx', '.ry', '.rz']:
+			if cmds.getAttr(ctrl + att, l=True):
+				if 't' in att:
+					st.append(att[-1])
+				else:
+					sr.append(att[-1])
+		return st, sr
+
+	def _get_follicle_list(self, clothRigName):
+		fols = cmds.listRelatives(clothRigName + '_follicles_grp', children=True) or []
+		fols.sort(key=lambda f: cmds.getAttr(f + 'Shape.parameterV'))
+		return fols
+
+	def _buildAimChain(self, clothRigName, follicles):
+		chain_grp = cmds.group(em=True, name=clothRigName + '_aimChain_grp', p=clothRigName + '_clothRig_grp')
+		for i in range(len(follicles) - 1):
+			fol = follicles[i]
+			next_fol = follicles[i + 1]
+			prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
+			master1 = cmds.group(em=True, name=prefix + '_master_grp_01', p=chain_grp)
+			master2 = cmds.group(em=True, name=prefix + '_master_grp_02', p=master1)
+			master3 = cmds.group(em=True, name=prefix + '_master_grp_03', p=master2)
+			up_grp = cmds.group(em=True, name=prefix + '_up_grp', p=master3)
+			up_loc = cmds.spaceLocator(name=prefix + '_up_loc')[0]
+			cmds.parent(up_loc, up_grp)
+			cmds.setAttr(up_grp + '.ty', 5)
+			aim_grp = cmds.group(em=True, name=prefix + '_aim_grp', p=master3)
+			aim_loc = cmds.spaceLocator(name=prefix + '_aim_loc')[0]
+			cmds.parent(aim_loc, aim_grp)
+			target_grp = cmds.group(em=True, name=prefix + '_target_grp', p=master3)
+			target_loc = cmds.spaceLocator(name=prefix + '_target_loc')[0]
+			cmds.parent(target_loc, target_grp)
+			cmds.parentConstraint(fol, master1, maintainOffset=False)
+			cmds.pointConstraint(next_fol, target_grp, maintainOffset=False)
+			cmds.aimConstraint(
+				target_loc, aim_grp,
+				aimVector=(0, 0, 1),
+				upVector=(0, 1, 0),
+				worldUpType='object',
+				worldUpObject=up_loc,
+				maintainOffset=False,
+			)
+
 	def UI(self, parent='clothChain_mainWindow', *args):
 		if parent == 'clothChain_mainWindow':
 			if cmds.window("clothChain_mainWindow", exists=True):
@@ -64,7 +108,7 @@ class SimClothRig():
 		cmds.separator(st='none', h=5)
 
 		cmds.columnLayout('clothChain_frameLayout', adjustableColumn=2, columnAttach=('both', 5))
-		cmds.rowLayout('rowLayout_info', nc=2, cw2=[275, 30], adjustableColumn=1) 
+		cmds.rowLayout('rowLayout_info', nc=2, cw2=[275, 30], adjustableColumn=1)
 		cmds.text('Create Proxy Geometry', h=16, bgc=(.22,.22,.22), al='center', fn="boldLabelFont")
 		cmds.iconTextButton(w=20, h=20,style='iconOnly', image1='info.png', ann='Click here to see the script info.')
 		cmds.popupMenu(b=1)
@@ -188,7 +232,7 @@ class SimClothRig():
 		if parent == 'clothChain_mainWindow':
 			cmds.showWindow("clothChain_mainWindow")
 
-		if cmds.objExists('clothSimChain_grp'): 
+		if cmds.objExists('clothSimChain_grp'):
 			self.loadSettings()
 		elif cmds.objExists('allBaseGeo_grp'):
 			cmds.frameLayout('settings_frameLayout', e=True, en=False)
@@ -216,7 +260,7 @@ class SimClothRig():
 		cmds.showWindow("segmentOffset_window")
 		cmds.window('segmentOffset_window', e=True, w=40, h=40)
 		self.loadSegmentsList()
-		# Keep your existing job target (module name) the same as the file’s module name
+		# Keep your existing job target (module name) the same as the file's module name
 		cmds.scriptJob(e=["timeChanged", scriptJobFunction], p="segmentOffset_window")
 
 	def invertSegmentOffset(self, *args):
@@ -278,7 +322,7 @@ class SimClothRig():
 			cmds.textField(i + '_textField', w=50, tx=value, ec=partial(self.applyBlendparent, i))
 			cmds.text(i, al='left')
 			if cmds.keyframe(i + '.blendParent1', q=True, kc=True) == 0:
-			  	cmds.iconTextButton('keyframe_button' + i, w=20, h=20,style='iconOnly', image1='autoKeyframeOff.png', c=partial(self.blenParentKey, i), p='discreteDropoff_rowColumnLayout')
+				cmds.iconTextButton('keyframe_button' + i, w=20, h=20,style='iconOnly', image1='autoKeyframeOff.png', c=partial(self.blenParentKey, i), p='discreteDropoff_rowColumnLayout')
 			else:
 				cmds.iconTextButton('keyframe_button' + i, w=20, h=20,style='iconOnly', image1='autoKeyframeOn.png', c=partial(self.blenParentKey, i), p='discreteDropoff_rowColumnLayout')
 			cmds.popupMenu('fallOffSettings_popupMenu')
@@ -330,7 +374,7 @@ class SimClothRig():
 
 			cmds.optionMenu('colliders_list', e=True, v=sel)
 			colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
-			thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness') 
+			thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
 			cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
 		else:
 			cmds.warning('Create a Cloth Rig first.')
@@ -347,7 +391,7 @@ class SimClothRig():
 					cmds.textField('colliderColThickness_textField', e=True, tx='')
 				else:
 					colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
-					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness') 
+					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
 					cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
 		except Exception:
 			pass
@@ -479,7 +523,7 @@ class SimClothRig():
 		cmds.group(empty=True, name=clothRigName + '_geo_grp', p=clothRigName + '_clothRig_grp')
 		cmds.group(empty=True, name=clothRigName + '_nCloth_grp', p=clothRigName + '_clothRig_grp')
 		cmds.group(empty=True, name=clothRigName + '_follicles_grp', p=clothRigName + '_clothRig_grp')
-				
+
 		cmds.duplicate(clothRigName + '_baseGeo', n=clothRigName + '_skinGeo')
 		cmds.parent(clothRigName + '_skinGeo', clothRigName + '_geo_grp')
 		cmds.duplicate(clothRigName + '_baseGeo', n=clothRigName + '_simGeo')
@@ -627,7 +671,7 @@ class SimClothRig():
 						cmds.menuItem(i.rpartition('_')[0] + '_collider', l=i.rpartition('_')[0], p='colliders_list')
 				colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 				if colliderObj:
-					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness') 
+					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
 					cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
 
 			self.loadNclothSettings()
@@ -670,85 +714,69 @@ class SimClothRig():
 		end_fr = int(cmds.playbackOptions(q=True, maxTime=True))
 		cmds.currentTime(start_fr)
 
-		if not cmds.objExists(clothRigName + '_preview_grp'):
-			self.controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
-			if self.controlsList is None:
-				cmds.warning('Add controls first.')
-				return
-
-			cmds.group(empty=True, name=clothRigName + '_preview_grp', p=clothRigName + '_clothRig_grp')
-
-			controlDic = {}
-			for i in self.controlsList:
-				controlDic[i] = cmds.xform(i, q=True, ws=True, piv=True)[:3]
-
-			folliclesDic = {}
-			for i in cmds.listRelatives(clothRigName + '_follicles_grp') or []:
-				folliclesDic[i] = cmds.xform(i, q=True, ws=True, piv=True)[:3]
-
-			toUseDic = {}
-			for i in controlDic.keys():
-				distanceDic = {}
-				for k in folliclesDic.keys():
-					a = MVector(*controlDic[i])
-					b = MVector(*folliclesDic[k])
-					c = a - b
-					distanceDic[k] = c.length()
-				toUseValue = min(float(s) for s in distanceDic.values())
-				for key in distanceDic.keys():
-					if distanceDic[key] == toUseValue:
-						toUseDic[i] = key
-
-			locsCreated = []
-			for i in toUseDic.values():
-				cmds.spaceLocator(n=i + '_loc')
-				cmds.parentConstraint(i, i + '_loc')
-				cmds.parent(i + '_loc', clothRigName + '_preview_grp')
-				locsCreated.append(i + '_loc')
-
-			cmds.select(locsCreated)
-			cmds.refresh(su=True)
-			cmds.bakeResults(t=(start_fr, end_fr), simulation=True, sampleBy=1)
-			cmds.refresh(su=False)
-
-			for i in toUseDic.values():
-				if cmds.objExists(i + '_loc_parentConstraint1'):
-					cmds.delete(i + '_loc_parentConstraint1')
-
-			for i in toUseDic:
-				attributesLock = {'translate': [], 'rotate': []}
-				for att in ['.tx', '.ty', '.tz', '.rx', '.ry', '.rz']:
-					if cmds.getAttr(i + att, l=True) and 't' in att:
-						attributesLock['translate'].append(att[-1])
-					elif cmds.getAttr(i + att, l=True) and 'r' in att:
-						attributesLock['rotate'].append(att[-1])
-				cmds.parentConstraint(toUseDic[i] + '_loc', i, sr=attributesLock['rotate'], st=attributesLock['translate'], mo=True)
-				cmds.setKeyframe(i)
-				cmds.setAttr(i + '.blendParent1', 1)
-
-			cmds.checkBox('clothRig_checkBox', e=True, bgc=(.4,.2,.2), v=False, l='Off ')
-			cmds.setAttr(clothRigName + '_nClothShape1.isDynamic', 0)
-
-			cmds.spaceLocator(n=clothRigName + '_controlNames')
-			cmds.parent(clothRigName + '_controlNames', clothRigName + '_clothRig_grp')
-			cmds.setAttr(clothRigName + '_controlNames.visibility', 0)
-			for i in range(len(self.controlsList)):
-				attName = chr(i + ord('a')).upper()
-				cmds.addAttr(clothRigName + '_controlNames', ln=attName, dt='string') 
-				cmds.setAttr(clothRigName + '_controlNames.' + attName, self.controlsList[i], type='string')
-
-			cmds.select(clear=True)
-
-			cmds.columnLayout('previewSettings_columnLayout', adjustableColumn=1, p='settings_frameLayout')
-			cmds.text('Dropoff Settings:', fn="boldLabelFont")
-			cmds.rowLayout('previewSettings_rowLayout', nc=3, adjustableColumn=2)
-			cmds.text('Overall Dropoff:')
-			cmds.floatSliderGrp('dropoff_slider', f=True, w=100, min=0, max=1, value=1, step=.1, dc=self.overAllDropoff)
-			cmds.button('singleDropoff_button', l='Discrete Dropoff', c=partial(self.discreteDropoffUI, self.controlsList))
-			self.cacheCheckUI(clothRigName)
-			cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
-		else:
+		if cmds.objExists(clothRigName + '_preview_grp'):
 			cmds.warning("Cloth Rig '%s' already in preview mode. Right click to load Dropoff Settings." % clothRigName)
+			return
+
+		self.controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
+		if self.controlsList is None:
+			cmds.warning('Add controls first.')
+			return
+
+		follicles = self._get_follicle_list(clothRigName)
+
+		if not cmds.objExists(clothRigName + '_aimChain_grp'):
+			self._buildAimChain(clothRigName, follicles)
+
+		cmds.group(empty=True, name=clothRigName + '_preview_grp', p=clothRigName + '_clothRig_grp')
+
+		# 1. Geo cache _bsGeo — Maya plays through and bakes the sim into the cache
+		cmds.select(clothRigName + '_bsGeo')
+		mel.eval('doCreateGeometryCache 6 {"0", "%s", "%s", "OneFile", "1", "", "0", "", "add", "1", "1", "1", "0", "1", "mcx", "0"};' % (start_fr, end_fr))
+
+		# 2. Orient each aim_loc to match its control before constraining
+		for i in range(len(self.controlsList) - 1):
+			prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
+			ctrl_rot = cmds.xform(self.controlsList[i], q=True, ws=True, ro=True)
+			cmds.xform(prefix + '_aim_loc', ws=True, ro=ctrl_rot)
+
+		# 3. Constrain controls to aim_locs (all but last)
+		for i in range(len(self.controlsList) - 1):
+			ctrl = self.controlsList[i]
+			prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
+			st, sr = self._locked_axes(ctrl)
+			cmds.parentConstraint(prefix + '_aim_loc', ctrl, sr=sr, st=st, mo=True)
+			cmds.setKeyframe(ctrl)
+			cmds.setAttr(ctrl + '.blendParent1', 1)
+
+		# Last control parent-constrained directly to last follicle
+		last_ctrl = self.controlsList[-1]
+		st, sr = self._locked_axes(last_ctrl)
+		cmds.parentConstraint(follicles[-1], last_ctrl, sr=sr, st=st, mo=True)
+		cmds.setKeyframe(last_ctrl)
+		cmds.setAttr(last_ctrl + '.blendParent1', 1)
+
+		cmds.checkBox('clothRig_checkBox', e=True, bgc=(.4,.2,.2), v=False, l='Off ')
+		cmds.setAttr(clothRigName + '_nClothShape1.isDynamic', 0)
+
+		cmds.spaceLocator(n=clothRigName + '_controlNames')
+		cmds.parent(clothRigName + '_controlNames', clothRigName + '_clothRig_grp')
+		cmds.setAttr(clothRigName + '_controlNames.visibility', 0)
+		for i in range(len(self.controlsList)):
+			attName = chr(i + ord('a')).upper()
+			cmds.addAttr(clothRigName + '_controlNames', ln=attName, dt='string')
+			cmds.setAttr(clothRigName + '_controlNames.' + attName, self.controlsList[i], type='string')
+
+		cmds.select(clear=True)
+
+		cmds.columnLayout('previewSettings_columnLayout', adjustableColumn=1, p='settings_frameLayout')
+		cmds.text('Dropoff Settings:', fn="boldLabelFont")
+		cmds.rowLayout('previewSettings_rowLayout', nc=3, adjustableColumn=2)
+		cmds.text('Overall Dropoff:')
+		cmds.floatSliderGrp('dropoff_slider', f=True, w=100, min=0, max=1, value=1, step=.1, dc=self.overAllDropoff)
+		cmds.button('singleDropoff_button', l='Discrete Dropoff', c=partial(self.discreteDropoffUI, self.controlsList))
+		self.cacheCheckUI(clothRigName)
+		cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
 
 	def overAllDropoff(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -762,14 +790,31 @@ class SimClothRig():
 
 	def undoPreview(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
+
+		controlsList = []
+		for i in cmds.listAttr(clothRigName + '_controlNames') or []:
+			if len(i) <= 3:
+				controlsList.append(cmds.getAttr(clothRigName + '_controlNames.' + i))
+
+		cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
+		for node in cache_nodes:
+			cmds.delete(node)
+
+		for ctrl in controlsList:
+			for c in cmds.listRelatives(ctrl, type='parentConstraint') or []:
+				cmds.delete(c)
+
 		cmds.delete(clothRigName + '_preview_grp')
 		cmds.delete(clothRigName + '_controlNames')
+
 		cmds.checkBox('clothRig_checkBox', e=True, bgc=(.2,.4,.2), v=True, l='On ')
 		cmds.setAttr(clothRigName + '_nClothShape1.isDynamic', 1)
+
 		if cmds.columnLayout('previewSettings_columnLayout', exists=True):
 			cmds.deleteUI('previewSettings_columnLayout')
-		if cmds.window('clothChain_window', exists=True):
-			cmds.window('clothChain_window', e=True, h=40)
+		if cmds.window('clothChain_mainWindow', exists=True):
+			cmds.window('clothChain_mainWindow', e=True, h=40)
+
 		self.cacheCheckUI(clothRigName)
 		cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 1)
 
@@ -789,6 +834,10 @@ class SimClothRig():
 			else:
 				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, simulation=True)
 			cmds.refresh(su=False)
+
+			cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
+			for node in cache_nodes:
+				cmds.delete(node)
 
 			cmds.delete(clothRigName + '_preview_grp')
 			cmds.delete(clothRigName + '_controlNames')

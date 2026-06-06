@@ -1,0 +1,186 @@
+Cloth Sim Tool — Development Notes
+=====================================
+Date: 2026-06-06
+Files: simDev/tmClothSimToolDev/tlmClothChain.py  (dev)
+       shelfDev/mpAnim/tools/tlmClothChain.py      (shelf deployment copy — must stay in sync)
+
+
+--- OVERVIEW ---
+
+Tool: SimClothRig — Maya nCloth-based cloth chain simulation tool.
+Builds a cloth rig on proxy geometry, runs nCloth simulation, and transfers
+the result onto rig controls via a "Preview on Rig" step before final bake.
+
+Both copies of tlmClothChain.py must be kept in sync manually.
+After syncing the shelf copy, rebuild the installer:
+    & "C:\Program Files\Autodesk\Maya2025\bin\mayapy.exe" build_installer.py
+    (run from shelfDev/mpAnim/)
+Output: shelfDev/mpAnim/dist/mpAnim_installer.py
+
+
+--- BUGS FIXED THIS SESSION ---
+
+1. Mixed indentation TabError (line 281 original)
+   loadDiscreteList had a line with '\t  \t' mixed tab/space indentation.
+   Fixed by rewriting the whole file with consistent tab indentation throughout.
+
+2. Wrong window name in undoPreview
+   'clothChain_window' -> 'clothChain_mainWindow'
+   The main UI window is created as 'clothChain_mainWindow' in UI().
+   undoPreview was referencing a non-existent name, so the window height
+   reset after undo was silently failing.
+
+
+--- MAIN REDESIGN: Preview on Rig ---
+
+PROBLEM:
+The original previewSim baked the cloth sim onto locators, then parent-
+constrained rig controls to those locators. Locators store Euler rotations —
+when the sim moves a control through large arcs, Euler angles accumulate and
+gimbal lock occurs. The result is unrecoverable rotation flipping.
+
+SOLUTION:
+Replace the entire locator-bake approach with:
+  1. Maya geometry cache on _bsGeo (overrides the live cloth sim)
+  2. A persistent chain of aim rigs (modeled on mtAimRig.py) driving the controls
+  3. No locators at all
+
+WHY THIS FIXES GIMBAL:
+Aim constraints derive rotation from the DIRECTION between two points in world
+space. They never accumulate Euler angles. No matter how the sim moves the
+geometry, the aim constraint always finds the correct orientation mathematically.
+
+
+--- THREE NEW HELPER METHODS ---
+
+Added after _get_nucleus(), before UI():
+
+def _locked_axes(self, ctrl):
+    Inspects a control's channel box lock state.
+    Returns two lists: (skipTranslate, skipRotate) — axes that are locked.
+    Used when applying parentConstraints so we don't fight locked channels.
+
+def _get_follicle_list(self, clothRigName):
+    Gets all follicles from clothRigName_follicles_grp, sorted by parameterV.
+    Ensures the follicle order always matches the control chain order
+    (follicle 0 = root, follicle N = tip).
+
+def _buildAimChain(self, clothRigName, follicles):
+    Builds a chain of aim rigs under clothRigName_aimChain_grp.
+    One aim rig per segment (len(follicles) - 1 rigs).
+
+    Hierarchy per aim rig (prefix = clothRigName_aimRig_NN):
+        prefix_master_grp_01  <- parentConstrained to follicle[i]
+            prefix_master_grp_02
+                prefix_master_grp_03
+                    prefix_up_grp (ty=5)
+                        prefix_up_loc     <- world-up object for aim constraint
+                    prefix_aim_grp        <- aim-constrained to target_loc
+                        prefix_aim_loc    <- this drives the rig control
+                    prefix_target_grp     <- pointConstrained to follicle[i+1]
+                        prefix_target_loc
+
+    Aim constraint settings:
+        aimVector=(0,0,1), upVector=(0,1,0)
+        worldUpType='object', worldUpObject=up_loc
+
+    The aim chain is PERSISTENT — it is built once on first previewSim call
+    and is never deleted by undoPreview. Only the geo cache and parent
+    constraints on the controls are torn down/rebuilt each preview cycle.
+
+
+--- REVISED previewSim ---
+
+Three steps only:
+
+Step 1 — Geo cache _bsGeo
+    cmds.select(clothRigName + '_bsGeo')
+    mel.eval('doCreateGeometryCache 6 {"0", "START", "END", "OneFile", "1",
+              "", "0", "", "add", "1", "1", "1", "0", "1", "mcx", "0"};')
+    Maya plays through the timeline, bakes the nCloth deformation into a .mcx
+    cache file, and attaches it to _bsGeo. The cache overrides the live sim —
+    follicles connected to _bsGeo now read from the cache instead of
+    the live nucleus, so scrubbing works without re-simulating.
+
+Step 2 — Orient each aim_loc to match its control
+    Before applying any constraints, set each aim_loc's world rotation to
+    match the rotation of the control it will drive.
+        ctrl_rot = cmds.xform(ctrl, q=True, ws=True, ro=True)
+        cmds.xform(prefix + '_aim_loc', ws=True, ro=ctrl_rot)
+    This is critical — if aim_loc's rotation doesn't match the control,
+    the parentConstraint (maintainOffset=True) will store an offset that
+    causes a jump when blendParent1 is keyed on.
+
+Step 3 — Constrain controls to aim_locs
+    All controls except the last:
+        cmds.parentConstraint(prefix + '_aim_loc', ctrl, sr=sr, st=st, mo=True)
+        cmds.setKeyframe(ctrl)
+        cmds.setAttr(ctrl + '.blendParent1', 1)
+    Last control constrained directly to the last follicle (no aim rig needed
+    for the tip — it just needs to follow position):
+        cmds.parentConstraint(follicles[-1], last_ctrl, sr=sr, st=st, mo=True)
+    sr/st are the locked axes returned by _locked_axes() — parentConstraint
+    skips those channels so we never fight a locked channel.
+
+After constraining:
+    - clothRig_checkBox set to Off (red)
+    - nClothShape1.isDynamic set to 0 (sim disabled, cache takes over)
+    - Control names stored on a locator node (clothRigName_controlNames)
+      as string attributes for undoPreview to read back
+    - nCloth_grp visibility set to 0 (clean viewport)
+
+
+--- REVISED undoPreview ---
+
+1. Read back control list from clothRigName_controlNames attributes
+2. Delete geo cache: listConnections(_bsGeoShape, type='cacheFile') -> delete
+3. Delete parentConstraints on each control
+4. Delete clothRigName_preview_grp
+5. Delete clothRigName_controlNames locator
+6. Restore clothRig_checkBox to On (green), isDynamic = 1
+7. Delete previewSettings_columnLayout UI if present
+8. Reset window height
+9. Restore nCloth_grp visibility
+
+The aimChain_grp is NOT deleted — aim rigs persist for the next preview.
+
+
+--- bakeFinalSim ADDITION ---
+
+After bakeResults completes and cmds.refresh(su=False), clean up the geo cache:
+    cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape',
+                                       type='cacheFile') or []
+    for node in cache_nodes:
+        cmds.delete(node)
+This ensures the cache file node doesn't linger after bake, which would
+interfere with any further simulation work on the same rig.
+
+
+--- SCENE HIERARCHY (clothRigName_clothRig_grp) ---
+
+clothRigName_clothRig_grp
+    clothRigName_geo_grp
+        clothRigName_skinGeo     (skinCluster-driven, bound to joints)
+        clothRigName_simGeo      (nCloth mesh)
+        clothRigName_bsGeo       (blendShape from simGeo; follicles read this)
+    clothRigName_nCloth_grp
+        clothRigName_nCloth1
+        nucleus node
+        clothRigName_dynamicConstraint1..N
+    clothRigName_follicles_grp
+        clothRigName_fol0, fol2, fol4...  (one per segment vertex pair)
+    clothRigName_aimChain_grp            (built by _buildAimChain on first preview)
+        clothRigName_aimRig_01_master_grp_01
+        clothRigName_aimRig_02_master_grp_01
+        ...
+    clothRigName_controlNames            (locator, visibility=0, stores ctrl names)
+    clothRigName_preview_grp             (empty group, acts as preview-active flag)
+
+
+--- PENDING / DEFERRED ---
+
+- The user mentioned "a couple more things to discuss" about the bake step —
+  deferred to a future session.
+
+- Installer rebuild status uncertain at end of session — user was not sure
+  the new version was deployed. May need to verify or re-run build_installer.py.

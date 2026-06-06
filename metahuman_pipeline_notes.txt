@@ -1,0 +1,84 @@
+Metahuman Pipeline Notes
+========================
+Date: 2026-06-06
+
+--- TOOL 1: Metahuman Facial Transfer (Port) ---
+
+Repo cloned: scriptDev/metahuman_facial_transfer/
+Source: https://github.com/swnolan/metahuman_facial_transfer
+
+Status: Blocked in Maya 2025 — both metahuman_api.py and metahuman_facial_transfer.py
+open with `import pymel.core as pm` and raise ImportError immediately.
+
+Port plan (tomorrow):
+- Create metahuman_api_25.py and metahuman_facial_transfer_25.py
+- ~50 PyMEL substitutions, all have direct maya.cmds equivalents
+- Controller.train_control_expressions() is most complex piece — uses PyMEL
+  attribute objects (.attr(), .set(), .get(), .isFreeToChange(), .isKeyable())
+- Namespace handling in _set_metahuman_name() uses pm.Namespace objects
+  -> replace with cmds.ls(..., type='embeddedNodeRL4') and string namespace parsing
+- pm.mel.FBXImport*() calls -> mel.eval('FBX...') strings
+- Reference file management (.referenceFile().remove()) -> cmds.file(rfn, removeReference=True)
+- PySide6 import already correct for Maya 2025 (tries PySide6 first)
+- retarget_metahuman_level_sequence is explicitly locked to specific Maya versions,
+  none of which include 2025 — only the Animation Sequence path matters
+
+Accuracy note: The original tool's Controller.train_control_expressions() method exists
+specifically for accuracy. It dynamically discovers which expression drives which control
+by setting controls to their limits and measuring what changes on CTRL_expressions.
+Do NOT replace this with a hardcoded lookup table — the complexity is load-bearing.
+
+
+--- TOOL 2: Blendshape Baking Pipeline (Future Build) ---
+
+Concept: Replace the full Metahuman DNA rig with a portable blendshape-only rig
+that can be animated using the same face controls, without requiring the Metahuman
+plugin, EmbeddedNodeRL4 node, or DNA file.
+
+Use case: Teaching pipeline — students animate face controls without needing the
+full Metahuman plugin. Rig works in any Maya scene.
+
+Step 1 — Single control shapes:
+- For each face control channel (tx/ty), drive to its extreme value
+- Duplicate the resulting mesh as a blendshape target
+- Reset and repeat for all ~80-100 control channels
+- Build blendshape deformer on neutral mesh with all targets
+- Connect original control values to drive blendshape weights
+
+Step 2 — Corrective shapes (key insight):
+- Use the ORIGINAL Metahuman rig as ground truth
+- For any combination pose (e.g. ctrl_smile_L + ctrl_cheekRaise_L both at max):
+  * Set BOTH rigs to identical control values
+  * Compare vertex world space positions mesh-by-mesh
+    (cmds.xform(vtx, q=True, ws=True, t=True) on every vertex of both meshes)
+  * Delta between original and blendshape rig IS the corrective
+  * If delta exceeds threshold, duplicate original mesh at that pose as corrective target
+  * Drive corrective with a combinationShape node tied to the two active controls
+
+Why vertex comparison beats mathematical subtraction:
+- Skips all linear-sum math
+- Original rig is ground truth — whatever DNA/correctives/nonlinear interactions
+  are happening internally, the vertex positions capture all of it automatically
+- Works regardless of what Epic changes internally between Metahuman versions
+
+Iterative refinement:
+- Add correctives from round 1
+- Recompare both rigs against the original
+- Residual delta gets smaller each pass
+- Stop when max deviation is below acceptable threshold (e.g. 0.1mm)
+- Can run headlessly in mayapy overnight
+
+Expected corrective count: ~30-60 in practice, clustering around mouth corners,
+nasolabial area, and eye corners. Full combinatorial search with threshold filtering
+keeps the count manageable automatically.
+
+
+--- DECISION TREE ---
+
+1. Port metahuman_facial_transfer tomorrow
+2. Test accuracy of 1:1 transfer from Unreal to Maya
+3. If accuracy is good -> use it as-is
+4. If accuracy issues -> investigate whether they're port errors or tool limitations
+5. If tool itself is insufficient -> build blendshape baking pipeline
+6. Blendshape pipeline is also worth building independently as a teaching tool
+   regardless of transfer tool outcome
