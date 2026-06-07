@@ -28,6 +28,41 @@ specifically for accuracy. It dynamically discovers which expression drives whic
 by setting controls to their limits and measuring what changes on CTRL_expressions.
 Do NOT replace this with a hardcoded lookup table — the complexity is load-bearing.
 
+--- UPDATE 2026-06-07: Port complete, headless validation passed ---
+
+metahuman_api_25.py and metahuman_facial_transfer_25.py are done (maya.cmds + mel,
+PySide6, no PyMEL). Added strip_namespace()/get_namespace() helpers to replace
+pm.Namespace. Fixed a latent bug from the original: blend_weighted_nodes was never
+appended to, leaving orphan blendWeighted nodes after a transfer — now fixed.
+
+Validated headlessly via mayapy against scoutPrevis013/scene_EYES_FIX_PREVIS_FINAL_003.mb
+(opened read-only, not saved): found both embeddedNodeRL4 nodes correctly,
+get_face_controls() -> 173 controls, get_controllers() -> 160 valid trained controllers,
+zero errors. Confirms train_control_expressions() works correctly ported to cmds.
+
+Still untested: FBX import/export/retarget + the UI itself (need an Unreal FBX export
+and an interactive Maya session — UI can't be driven headlessly).
+
+To launch the UI, paste into the Maya Script Editor (Python tab) with a Metahuman
+scene open:
+
+    import sys
+    sys.path.insert(0, r'C:\Users\patsa\OneDrive\Documents\maya\scriptDev\metahuman_facial_transfer')
+
+    import metahuman_facial_transfer_25
+    metahuman_facial_transfer_25.UI()
+
+If you edit the modules and want to re-launch without restarting Maya:
+
+    import importlib
+    importlib.reload(metahuman_api_25)
+    importlib.reload(metahuman_facial_transfer_25)
+    metahuman_facial_transfer_25.UI()
+
+Golden path to test: select anything on the Metahuman -> "Set Current Metahuman -->"
+-> "Select Facial Controls" / "Reset Facial Controls" -> "Import FBX Animation
+Sequence File..." (with an Unreal FBX export) -> "Export Facial FBX".
+
 
 --- TOOL 2: Blendshape Baking Pipeline (Future Build) ---
 
