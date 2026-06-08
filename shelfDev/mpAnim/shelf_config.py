@@ -8,6 +8,19 @@ EXTRA_SCRIPTS = [
     "shortCuts.py",
 ]
 
+# Scripts from timeManagementDev/jiffyPomoDev/ — all deployed flat to ~/maya/scripts/.
+JIFFYPOMO_SCRIPTS = [
+    "Jiffypomo.py",
+    "jiffyUtils.py",
+    "jiffyDialogs.py",
+    "jiffyWidgets.py",
+    "jiffyPromptsTab.py",
+    "jiffyNotepadTab.py",
+    "jiffyPomoTab.py",
+    "jiffySummaryTab.py",
+    "jiffySettingsTab.py",
+]
+
 # Scripts from animDev/multiTool/ — all deployed flat to ~/maya/scripts/.
 MULTITOOL_SCRIPTS = [
     "multiTool.py",
@@ -86,7 +99,6 @@ BUTTONS = [
         "label": "JiffyPomo",
         "tooltip": "Open JiffyPomo — Pomodoro timer and task tracker for Maya artists",
         "icon": "iconJiffy.png",
-        "script": "Jiffypomo.py",
         "command": (
             "import importlib\n"
             "import Jiffypomo\n"

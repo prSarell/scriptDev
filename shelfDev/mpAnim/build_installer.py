@@ -21,6 +21,7 @@ from datetime import datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS_DIR = os.path.join(HERE, "tools")
 MULTITOOL_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "animDev", "multiTool"))
+JIFFYPOMO_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "timeManagementDev", "jiffyPomoDev"))
 ICONS_DIR = os.path.join(HERE, "icons")
 DIST_DIR = os.path.join(HERE, "dist")
 STUDIOLIB_SRC = os.path.normpath(
@@ -56,6 +57,15 @@ def _bundle_scripts():
         path = os.path.join(MULTITOOL_DIR, name)
         if not os.path.exists(path):
             print(f"  WARNING: multiTool script not found — skipping: {path}")
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            bundled[name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
+
+    # timeManagementDev/jiffyPomoDev/ scripts
+    for name in getattr(config, "JIFFYPOMO_SCRIPTS", []):
+        path = os.path.join(JIFFYPOMO_DIR, name)
+        if not os.path.exists(path):
+            print(f"  WARNING: jiffyPomo script not found — skipping: {path}")
             continue
         with open(path, "r", encoding="utf-8") as fh:
             bundled[name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
