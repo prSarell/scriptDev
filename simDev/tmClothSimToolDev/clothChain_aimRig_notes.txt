@@ -1,0 +1,94 @@
+tlmClothChain - Aim Rig Work - Notes
+====================================
+Date: 2026-06-08
+
+--- GOAL ---
+
+Give the cloth chain rig a permanent aim-constraint chain that drives the
+controls off the follicles riding the simulated cloth surface - the same
+"chained aim" pattern as the mtAimRig tool in multiTool, except aiming off
+follicles instead of joints.
+
+Files (dual-copy mirror, edit both):
+  - simDev/tmClothSimToolDev/tlmClothChain.py   (dev copy)
+  - shelfDev/mpAnim/tools/tlmClothChain.py      (shelf-deployed copy)
+
+--- WHAT CHANGED TONIGHT ---
+
+1. Made the tool's UI scaleable
+   - Window was a fixed-size scrollLayout (470 x 762) inside a plain
+     columnLayout - resizing the window did nothing to the content.
+   - Wrapped the scrollLayout in a formLayout attached to all 4 sides
+     (attachForm top/bottom/left/right), gave the window a sensible
+     starting size (490 x 800). Content now stretches/shrinks with the
+     window border.
+   - Left the undoPreview() "shrink window to h=40" hack alone (line
+     ~815) - flagged as something to watch for odd behaviour now that
+     the layout is responsive, but nothing reported so far.
+
+2. Made _buildAimChain() run permanently at build time, not preview time
+   - It used to be lazily built inside previewSim() the first time you
+     hit "Preview on Rig" (temporary-feeling, and tied to a workflow step
+     rather than the rig itself).
+   - Now called directly from buildClothRig(), right after
+     self.createFollicles(), so <rigName>_aimChain_grp appears immediately
+     under <rigName>_clothRig_grp alongside _geo_grp/_nCloth_grp/_follicles_grp.
+   - previewSim() still has its `if not cmds.objExists(... _aimChain_grp)`
+     guard - now effectively a no-op for new rigs, but kept as a safety
+     net for any older rigs already built before this change.
+
+3. Got the aim chain orientation matching the mtAimRig convention
+   This took a few iterations - here's the path that worked:
+   - First attempt: pointed worldUpObject straight at the follicle with
+     worldUpType='objectrotation' - user said "not what I meant."
+   - User clarified their manual recipe for doing this by hand:
+       1) Build an aim rig with the existing mtAimRig tool
+       2) Snap it to a follicle
+       3) Add -90 degrees rotate X to make it point the correct way up
+          the chain
+   - Final, working setup in _buildAimChain():
+       - master_grp_01 gets parentConstraint(follicle, master1,
+         maintainOffset=False)   <- "snap it to a follicle"
+       - master_grp_02 gets a constant cmds.setAttr(master2+'.rotateX', -90)
+         baked in - the -90 X correction, applied as a fixed local offset
+         on the one pass-through group that nothing else drives
+       - aimConstraint on aim_grp restored to be byte-identical to
+         mtAimRig._build_single(): aimVector=(0,0,1), upVector=(0,1,0),
+         worldUpType='object', worldUpObject=up_loc (NOT 'objectrotation'
+         - that was the wrong turn; the -90 on master2 is the correction,
+         not a worldUp axis remap)
+   - up_grp/up_loc are back in the rig (were briefly removed mid-session)
+     - kept as a real, selectable locator matching mtAimRig's pattern.
+
+4. Fixed a latent doCreateGeometryCache bug surfaced while testing Preview
+   - previewSim() -> mel.eval('doCreateGeometryCache 6 {...}') was passing
+     a 16-element argument array; version 6 needs 17 (see Maya's own
+     doCreateGeometryCache.mel header comment, ~line 162-190, for the
+     full element-by-element layout).
+   - Missing element was [8] = useAsPrefix (0/1) - its absence shifted
+     everything after it back by one slot, so sampleMultiplier ended up
+     reading "0" instead of "1". MEL line 393 then divides by
+     (simulationRate * sampleMultiplier) = (1 * 0) = "Division by zero".
+   - Fix: inserted "0" for useAsPrefix between the empty fileName string
+     and the "add" action string. Array is now 17 elements and matches
+     the canonical layout. This was a pre-existing bug, unrelated to the
+     aim-rig changes, just never hit until Preview ran far enough to call it.
+
+--- TESTED TONIGHT, WORKING ---
+   - UI resizes/scales correctly with the window border.
+   - Aim chain builds immediately on "Build Cloth Rig" (permanent, not
+     lazy/preview-only).
+   - Aim chain orientation now matches the mtAimRig convention - chains
+     spread out correctly along the surface and point up the chain
+     correctly (confirmed against user's manual from-scratch build).
+   - doCreateGeometryCache argument fix applied (not yet re-tested live -
+     this was the last change made before wrapping up).
+
+--- TO PICK UP TOMORROW ---
+   - Re-run "Preview on Rig" end to end with the doCreateGeometryCache
+     fix in place and confirm the cache builds and the controls pick up
+     the aim chain cleanly with no twisting/flipping along the cloth.
+   - Keep an eye on the undoPreview() h=40 window-shrink hack (item 1)
+     now that the layout is responsive - flag if it behaves oddly.
+   - Both dev and shelf copies are in sync as of tonight; all changes
+     are uncommitted - check `git status` / diff and commit when ready.

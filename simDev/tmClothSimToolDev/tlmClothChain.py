@@ -75,6 +75,7 @@ class SimClothRig():
 			prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
 			master1 = cmds.group(em=True, name=prefix + '_master_grp_01', p=chain_grp)
 			master2 = cmds.group(em=True, name=prefix + '_master_grp_02', p=master1)
+			cmds.setAttr(master2 + '.rotateX', -90)
 			master3 = cmds.group(em=True, name=prefix + '_master_grp_03', p=master2)
 			up_grp = cmds.group(em=True, name=prefix + '_up_grp', p=master3)
 			up_loc = cmds.spaceLocator(name=prefix + '_up_loc')[0]
@@ -101,10 +102,19 @@ class SimClothRig():
 		if parent == 'clothChain_mainWindow':
 			if cmds.window("clothChain_mainWindow", exists=True):
 				cmds.deleteUI("clothChain_mainWindow")
-			cmds.window("clothChain_mainWindow", tlb=1, sizeable=True, mxb=False, title="SimClothRig")
+			cmds.window("clothChain_mainWindow", tlb=1, sizeable=True, mxb=False, title="SimClothRig", widthHeight=(490, 800))
 
-		cmds.columnLayout('SimClothRig', adjustableColumn=1, p=parent)
-		cmds.scrollLayout('scrollLayout', hst=15, vst=15, cr=True, w=470, h=762)
+		cmds.formLayout('SimClothRig_form', p=parent)
+		cmds.scrollLayout('scrollLayout', hst=15, vst=15, cr=True)
+		cmds.formLayout(
+			'SimClothRig_form', e=True,
+			attachForm=[
+				('scrollLayout', 'top', 0),
+				('scrollLayout', 'bottom', 0),
+				('scrollLayout', 'left', 0),
+				('scrollLayout', 'right', 0),
+			]
+		)
 		cmds.separator(st='none', h=5)
 
 		cmds.columnLayout('clothChain_frameLayout', adjustableColumn=2, columnAttach=('both', 5))
@@ -575,6 +585,9 @@ class SimClothRig():
 
 		self.createFollicles()
 
+		follicles = self._get_follicle_list(clothRigName)
+		self._buildAimChain(clothRigName, follicles)
+
 		# Delete only the base Geo group/node (use cmds.delete, not deleteUI)
 		if cmds.objExists(clothRigName + '_baseGeo_grp'):
 			cmds.delete(clothRigName + '_baseGeo_grp')
@@ -606,6 +619,8 @@ class SimClothRig():
 		cmds.textScrollList('joints_scrollList', e=True, ra=True)
 		cmds.textScrollList('controls_scrollList', e=True, ra=True)
 		cmds.setAttr(clothRigName + '_follicles_grp.visibility', 0)
+		cmds.setAttr(clothRigName + '_aimChain_grp.visibility', 0)
+		cmds.setAttr(clothRigName + '_bsGeo.visibility', 0)
 
 	def feedOptionMenu(self, mode, *args):
 		items = cmds.optionMenu(mode + '_list', q=True, ils=True)
@@ -732,7 +747,7 @@ class SimClothRig():
 
 		# 1. Geo cache _bsGeo — Maya plays through and bakes the sim into the cache
 		cmds.select(clothRigName + '_bsGeo')
-		mel.eval('doCreateGeometryCache 6 {"0", "%s", "%s", "OneFile", "1", "", "0", "", "add", "1", "1", "1", "0", "1", "mcx", "0"};' % (start_fr, end_fr))
+		mel.eval('doCreateGeometryCache 6 {"0", "%s", "%s", "OneFile", "1", "", "0", "", "0", "add", "1", "1", "1", "0", "1", "mcx", "0"};' % (start_fr, end_fr))
 
 		# 2. Orient each aim_loc to match its control before constraining
 		for i in range(len(self.controlsList) - 1):
@@ -777,6 +792,9 @@ class SimClothRig():
 		cmds.button('singleDropoff_button', l='Discrete Dropoff', c=partial(self.discreteDropoffUI, self.controlsList))
 		self.cacheCheckUI(clothRigName)
 		cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
+		cmds.setAttr(clothRigName + '_skinGeo.visibility', 0)
+		cmds.setAttr(clothRigName + '_simGeo.visibility', 0)
+		cmds.setAttr(clothRigName + '_bsGeo.visibility', 1)
 
 	def overAllDropoff(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -817,6 +835,9 @@ class SimClothRig():
 
 		self.cacheCheckUI(clothRigName)
 		cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 1)
+		cmds.setAttr(clothRigName + '_skinGeo.visibility', 1)
+		cmds.setAttr(clothRigName + '_simGeo.visibility', 1)
+		cmds.setAttr(clothRigName + '_bsGeo.visibility', 0)
 
 	def bakeFinalSim(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
