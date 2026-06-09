@@ -795,7 +795,7 @@ class JiffySchedule(QtWidgets.QWidget):
         return self.shots_page if self.tab_bar.currentIndex() == 0 else self.assets_page
 
     def _group_label_for_tab(self, index):
-        return "Scene" if index == 0 else "Category"
+        return "Scene" if index == 0 else "Asset"
 
     def _on_tab_changed(self, index):
         self.stack.setCurrentIndex(index)
