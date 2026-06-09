@@ -8,6 +8,11 @@ EXTRA_SCRIPTS = [
     "shortCuts.py",
 ]
 
+# Scripts from timeManagementDev/jiffyScheduleDev/ — deployed flat to ~/maya/scripts/.
+JIFFYSCHEDULE_SCRIPTS = [
+    "jiffySchedule.py",
+]
+
 # Scripts from timeManagementDev/jiffyPomoDev/ — all deployed flat to ~/maya/scripts/.
 JIFFYPOMO_SCRIPTS = [
     "Jiffypomo.py",
@@ -104,6 +109,20 @@ BUTTONS = [
             "import Jiffypomo\n"
             "importlib.reload(Jiffypomo)\n"
             "Jiffypomo.run_jiffypomo()"
+        ),
+    },
+    {
+        "label": "JiffySched",
+        "tooltip": "Open JiffySchedule — production schedule and asset tracker for Maya artists",
+        "icon": "iconJiffySchedule.png",
+        "command": (
+            "import importlib, sys\n"
+            "for mod in list(sys.modules.keys()):\n"
+            "    if 'jiffySchedule' in mod:\n"
+            "        del sys.modules[mod]\n"
+            "import jiffySchedule\n"
+            "importlib.reload(jiffySchedule)\n"
+            "jiffySchedule.run_jiffyschedule()"
         ),
     },
     {

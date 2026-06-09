@@ -23,10 +23,12 @@ from datetime import datetime
 HERE        = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR    = os.path.join(HERE, "dist")
 
-ANIM_DIR      = os.path.join(HERE, "mpAnim")
-ANIM_TOOLS    = os.path.join(ANIM_DIR, "tools")
-ANIM_ICONS    = os.path.join(ANIM_DIR, "icons")
-MULTITOOL_DIR = os.path.normpath(os.path.join(HERE, "..", "animDev", "multiTool"))
+ANIM_DIR           = os.path.join(HERE, "mpAnim")
+ANIM_TOOLS         = os.path.join(ANIM_DIR, "tools")
+ANIM_ICONS         = os.path.join(ANIM_DIR, "icons")
+MULTITOOL_DIR      = os.path.normpath(os.path.join(HERE, "..", "animDev", "multiTool"))
+JIFFYPOMO_DIR      = os.path.normpath(os.path.join(HERE, "..", "timeManagementDev", "jiffyPomoDev"))
+JIFFYSCHEDULE_DIR  = os.path.normpath(os.path.join(HERE, "..", "timeManagementDev", "jiffyScheduleDev"))
 STUDIOLIB_SRC = os.path.normpath(
     os.path.join(HERE, "..", "animDev", "studiolibrary-2.20.2", "src")
 )
@@ -72,6 +74,14 @@ def _bundle_scripts():
     # multiTool scripts
     for name in getattr(anim_cfg, "MULTITOOL_SCRIPTS", []):
         _read(os.path.join(MULTITOOL_DIR, name), name)
+
+    # JiffyPomo scripts
+    for name in getattr(anim_cfg, "JIFFYPOMO_SCRIPTS", []):
+        _read(os.path.join(JIFFYPOMO_DIR, name), name)
+
+    # JiffySchedule scripts
+    for name in getattr(anim_cfg, "JIFFYSCHEDULE_SCRIPTS", []):
+        _read(os.path.join(JIFFYSCHEDULE_DIR, name), name)
 
     # mpRig extra scripts + button scripts
     rig_scripts = list(rig_cfg.EXTRA_SCRIPTS)
