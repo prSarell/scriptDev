@@ -14,7 +14,6 @@ class SettingsTab(QtWidgets.QWidget):
         self.default_summary_file = self.get_default_summary_file()
         self.default_notes_file = self.get_default_notes_file()
         self.default_prompts_file = self.get_default_prompts_file()
-
         self.load_tasks_file = self.default_tasks_file
         self.load_summary_file = self.default_summary_file
         self.load_notes_file = self.default_notes_file
@@ -80,7 +79,6 @@ class SettingsTab(QtWidgets.QWidget):
         summary_browse.clicked.connect(self.browse_summary_file)
         notes_browse.clicked.connect(self.browse_notes_file)
         prompts_browse.clicked.connect(self.browse_prompts_file)
-
     def get_default_tasks_file(self):
         scene_path = cmds.file(query=True, sceneName=True)
         if not scene_path or scene_path == "":
@@ -189,3 +187,4 @@ class SettingsTab(QtWidgets.QWidget):
 
     def get_load_prompts_file_path(self):
         return self.load_prompts_file
+

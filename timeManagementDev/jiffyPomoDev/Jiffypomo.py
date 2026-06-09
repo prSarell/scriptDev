@@ -140,7 +140,6 @@ class JiffyPomo(QtWidgets.QWidget):
         if self.tabs.tabText(index) == "Tasks":
             self.update_date()
             self.prompts_display.random_prompt()
-
     def register_scene_callbacks(self):
         if self.scene_open_callback_id is not None:
             om.MEventMessage.removeCallback(self.scene_open_callback_id)

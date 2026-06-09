@@ -146,3 +146,4 @@ class TimerCircleWidget(QtWidgets.QWidget):
             )
         else:
             painter.drawEllipse(center, radius, radius)
+
