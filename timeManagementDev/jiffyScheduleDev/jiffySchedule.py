@@ -801,6 +801,9 @@ class JiffySchedule(QtWidgets.QWidget):
             try:
                 with open(path, "r") as f:
                     saved = json.load(f)
+                # Migrate old single-page format that had "data"/"projects" at the top level
+                if "shots" not in saved and "assets" not in saved:
+                    saved = {"shots": saved, "assets": {}}
                 self.shots_page.load_data(saved.get("shots", {}))
                 self.assets_page.load_data(saved.get("assets", {}))
             except Exception as e:
