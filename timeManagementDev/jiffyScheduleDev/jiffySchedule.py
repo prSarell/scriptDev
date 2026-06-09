@@ -19,14 +19,17 @@ TEXT       = "#ffffff"
 SUBTEXT    = "#aaaaaa"
 
 SHOT_STAGES  = ["Blocking", "Primary", "Final", "Rendered", "Omit"]
-ASSET_STAGES = ["Blocking", "Primary", "Final", "Omit"]
+ASSET_STAGES = ["WIP", "Testing", "Production Ready", "Omit"]
 
 STAGE_COLORS = {
-    "Blocking": "#7a93ad",
-    "Primary":  "#e0a030",
-    "Final":    "#4caf50",
-    "Rendered": "#9575cd",
-    "Omit":     "#e05050",
+    "Blocking":         "#7a93ad",
+    "Primary":          "#e0a030",
+    "Final":            "#4caf50",
+    "Rendered":         "#9575cd",
+    "Omit":             "#e05050",
+    "WIP":              "#7a93ad",
+    "Testing":          "#e0a030",
+    "Production Ready": "#4caf50",
 }
 
 THUMB_W, THUMB_H = 128, 72
@@ -297,8 +300,9 @@ class ItemDialog(QtWidgets.QDialog):
             self.stage_combo.addItem(s)
         self.stage_combo.setCurrentText(self._data.get("stage", self._stages[0]))
         layout.addRow(f"{self.item_label} Name:", self.name_edit)
-        layout.addRow("Frame Start:",             self.frame_start_edit)
-        layout.addRow("Frame End:",               self.frame_end_edit)
+        if self.item_label != "Asset":
+            layout.addRow("Frame Start:", self.frame_start_edit)
+            layout.addRow("Frame End:",   self.frame_end_edit)
         layout.addRow("Due Date:",                self.due_edit)
         layout.addRow("Artist:",                  self.artist_edit)
         layout.addRow("Stage:",                   self.stage_combo)
@@ -409,11 +413,10 @@ class ItemListPanel(QtWidgets.QWidget):
         self.vbox.insertWidget(self.vbox.count() - 1, row)
 
     def _add_item(self):
-        defaults = {
-            "frame_start": str(int(cmds.playbackOptions(q=True, minTime=True))),
-            "frame_end":   str(int(cmds.playbackOptions(q=True, maxTime=True))),
-        }
+        defaults = {}
         if self.item_label == "Shot":
+            defaults["frame_start"] = str(int(cmds.playbackOptions(q=True, minTime=True)))
+            defaults["frame_end"]   = str(int(cmds.playbackOptions(q=True, maxTime=True)))
             scene_path = cmds.file(query=True, sceneName=True)
             defaults["name"] = os.path.splitext(os.path.basename(scene_path))[0] if scene_path else ""
 
