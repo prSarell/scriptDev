@@ -18,10 +18,11 @@ BORDER     = "#444444"
 TEXT       = "#ffffff"
 SUBTEXT    = "#aaaaaa"
 
-SHOT_STAGES  = ["Blocking", "Primary", "Final", "Rendered", "Omit"]
+SHOT_STAGES  = ["Previs", "Blocking", "Primary", "Final", "Rendered", "Omit"]
 ASSET_STAGES = ["WIP", "Testing", "Production Ready", "Omit"]
 
 STAGE_COLORS = {
+    "Previs":           "#607d8b",
     "Blocking":         "#7a93ad",
     "Primary":          "#e0a030",
     "Final":            "#4caf50",
