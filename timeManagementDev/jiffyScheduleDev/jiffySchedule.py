@@ -548,6 +548,7 @@ class NavPanel(QtWidgets.QWidget):
         self._group_label = "Scene"
         self.setFixedWidth(170)
         self.setStyleSheet(f"background:{PANEL_BG};")
+        self._group_all_label = "All Scenes"
         self._build()
 
     def _build(self):
@@ -615,31 +616,29 @@ class NavPanel(QtWidgets.QWidget):
         return lw
 
     def _on_group_text_changed(self, t):
-        all_text = f"All {self._group_label}s"
-        self.group_changed.emit("" if t == all_text else (t or ""))
+        self.group_changed.emit("" if t == self._group_all_label else (t or ""))
 
     # --- public API ---
 
-    def set_groups(self, groups, group_label="Scene", enabled=True):
-        self._group_label = group_label
+    def set_groups(self, groups, group_label="Scene", all_label=None, enabled=True):
+        self._group_label     = group_label
+        self._group_all_label = all_label if all_label is not None else f"All {group_label}s"
         self._group_header_lbl.setText(f"{group_label.upper()}S")
         self._group_add_btn.setEnabled(enabled)
 
-        all_text = f"All {group_label}s"
         self.group_list.blockSignals(True)
         self.group_list.clear()
-        self.group_list.addItem(all_text)
+        self.group_list.addItem(self._group_all_label)
         for g in groups:
             self.group_list.addItem(g)
         self.group_list.setCurrentRow(0)
         self.group_list.blockSignals(False)
 
     def get_groups(self):
-        all_text = f"All {self._group_label}s"
         return [
             self.group_list.item(i).text()
             for i in range(self.group_list.count())
-            if self.group_list.item(i).text() != all_text
+            if self.group_list.item(i).text() != self._group_all_label
         ]
 
     def set_projects(self, projects):
@@ -688,7 +687,7 @@ class NavPanel(QtWidgets.QWidget):
 
     def _list_ctx(self, list_widget, pos, label):
         item = list_widget.itemAt(pos)
-        all_text = "All Projects" if label == "Project" else f"All {self._group_label}s"
+        all_text = "All Projects" if label == "Project" else self._group_all_label
         if not item or item.text() == all_text:
             return
         menu = QtWidgets.QMenu(self)
@@ -794,26 +793,28 @@ class JiffySchedule(QtWidgets.QWidget):
     def _active_page(self):
         return self.shots_page if self.tab_bar.currentIndex() == 0 else self.assets_page
 
-    def _group_label_for_tab(self, index):
-        return "Scene" if index == 0 else "Category"
+    def _group_meta_for_tab(self, index):
+        if index == 0:
+            return "Scene", "All Scenes"
+        return "Category", "Assets"
 
     def _on_tab_changed(self, index):
         self.stack.setCurrentIndex(index)
-        page  = self._active_page()
-        label = self._group_label_for_tab(index)
-        groups  = page.get_groups_for_project(self._active_project)
-        enabled = bool(self._active_project)
-        self.nav.set_groups(groups, group_label=label, enabled=enabled)
+        page           = self._active_page()
+        label, all_lbl = self._group_meta_for_tab(index)
+        groups         = page.get_groups_for_project(self._active_project)
+        enabled        = bool(self._active_project)
+        self.nav.set_groups(groups, group_label=label, all_label=all_lbl, enabled=enabled)
         page.select_group("")
 
     def _on_project_changed(self, project):
         self._active_project = project
         self.shots_page.set_project(project)
         self.assets_page.set_project(project)
-        label   = self._group_label_for_tab(self.tab_bar.currentIndex())
-        groups  = self._active_page().get_groups_for_project(project)
-        enabled = bool(project)
-        self.nav.set_groups(groups, group_label=label, enabled=enabled)
+        label, all_lbl = self._group_meta_for_tab(self.tab_bar.currentIndex())
+        groups         = self._active_page().get_groups_for_project(project)
+        enabled        = bool(project)
+        self.nav.set_groups(groups, group_label=label, all_label=all_lbl, enabled=enabled)
 
     def _on_project_added(self, name):
         self.shots_page.project_added(name)
