@@ -228,10 +228,6 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.badge.set_stage(d.get("stage", self._stages[0]))
         self.thumb.set_image(d.get("thumbnail", ""))
 
-    def refresh(self, item_data):
-        self.item_data = item_data
-        self._refresh_labels()
-
     def _do_capture(self):
         path = _capture_viewport(self.item_data.get("name", "item"))
         if path:
@@ -326,7 +322,7 @@ class ItemDialog(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------------------
-# Item list panel — scrollable rows, right half of a SchedulePage
+# Item list panel — scrollable rows, right pane of the tool
 # ---------------------------------------------------------------------------
 class ItemListPanel(QtWidgets.QWidget):
     data_changed = QtCore.Signal()
@@ -336,7 +332,6 @@ class ItemListPanel(QtWidgets.QWidget):
         self.item_label = item_label
         self._stages    = stages or SHOT_STAGES
         self.items      = []
-        self._readonly  = True
         self._build()
 
     def _build(self):
@@ -354,6 +349,7 @@ class ItemListPanel(QtWidgets.QWidget):
         hl.addWidget(self.header_lbl)
         hl.addStretch()
         self.add_btn = QtWidgets.QPushButton(f"+ Add {self.item_label}")
+        self.add_btn.setEnabled(False)
         self.add_btn.setStyleSheet(
             "QPushButton{background:#2e5a2e;color:white;border:none;padding:4px 14px;border-radius:3px;}"
             "QPushButton:hover{background:#3a7a3a;}"
@@ -391,11 +387,10 @@ class ItemListPanel(QtWidgets.QWidget):
         scroll.setWidget(self.container)
         layout.addWidget(scroll)
 
-    def set_group(self, label, items, readonly=False):
+    def set_content(self, label, items, writable=False):
         self.header_lbl.setText(label)
-        self.items     = list(items)
-        self._readonly = readonly
-        self.add_btn.setEnabled(not readonly)
+        self.items = list(items)
+        self.add_btn.setEnabled(writable)
         self._rebuild()
 
     def _rebuild(self):
@@ -410,7 +405,7 @@ class ItemListPanel(QtWidgets.QWidget):
         row = ItemRowWidget(item_data, item_label=self.item_label, stages=self._stages)
         row.edit_requested.connect(self._edit_item)
         row.delete_requested.connect(self._delete_item)
-        row.data_changed.connect(self._on_row_data_changed)
+        row.data_changed.connect(self._on_row_changed)
         self.vbox.insertWidget(self.vbox.count() - 1, row)
 
     def _add_item(self):
@@ -450,7 +445,7 @@ class ItemListPanel(QtWidgets.QWidget):
             self._rebuild()
             self.data_changed.emit()
 
-    def _on_row_data_changed(self, item_data):
+    def _on_row_changed(self, item_data):
         idx = next((i for i, s in enumerate(self.items) if s.get("name") == item_data.get("name")), None)
         if idx is not None:
             self.items[idx] = item_data
@@ -458,170 +453,40 @@ class ItemListPanel(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Groups panel — slim left list within a SchedulePage (Scenes or Categories)
-# ---------------------------------------------------------------------------
-class GroupsPanel(QtWidgets.QWidget):
-    group_changed = QtCore.Signal(str)   # group name, or "" for All
-
-    def __init__(self, group_label="Scene", parent=None):
-        super().__init__(parent)
-        self.group_label = group_label
-        self.setFixedWidth(160)
-        self.setStyleSheet(f"background:{PANEL_BG};")
-        self._build()
-
-    def _build(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        h = QtWidgets.QWidget()
-        h.setFixedHeight(38)
-        h.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
-        hl = QtWidgets.QHBoxLayout(h)
-        hl.setContentsMargins(12, 0, 8, 0)
-        lbl = QtWidgets.QLabel(f"{self.group_label.upper()}S")
-        lbl.setStyleSheet(f"font-size:10px; font-weight:bold; color:{SUBTEXT}; letter-spacing:1px;")
-        hl.addWidget(lbl)
-        hl.addStretch()
-        self.add_btn = QtWidgets.QPushButton("+")
-        self.add_btn.setFixedSize(22, 22)
-        self.add_btn.setEnabled(False)
-        self.add_btn.setStyleSheet(
-            "QPushButton{background:#2e5a2e;color:white;border:none;border-radius:3px;font-size:14px;}"
-            "QPushButton:hover{background:#3a7a3a;}"
-            "QPushButton:disabled{background:#333;color:#555;}"
-        )
-        self.add_btn.clicked.connect(self._add_group)
-        hl.addWidget(self.add_btn)
-        layout.addWidget(h)
-
-        self.list_widget = QtWidgets.QListWidget()
-        self.list_widget.setStyleSheet(_LIST_STYLE)
-        self.list_widget.currentTextChanged.connect(
-            lambda t: self.group_changed.emit("" if t == f"All {self.group_label}s" else (t or ""))
-        )
-        self.list_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.list_widget.customContextMenuRequested.connect(self._context_menu)
-        layout.addWidget(self.list_widget)
-
-        self._repopulate([])
-
-    def _repopulate(self, groups):
-        self.list_widget.blockSignals(True)
-        self.list_widget.clear()
-        self.list_widget.addItem(f"All {self.group_label}s")
-        for g in groups:
-            self.list_widget.addItem(g)
-        self.list_widget.setCurrentRow(0)
-        self.list_widget.blockSignals(False)
-
-    def set_groups(self, groups, enabled=True):
-        self.add_btn.setEnabled(enabled)
-        self._repopulate(groups)
-
-    def get_groups(self):
-        return [
-            self.list_widget.item(i).text()
-            for i in range(self.list_widget.count())
-            if self.list_widget.item(i).text() != f"All {self.group_label}s"
-        ]
-
-    def _add_group(self):
-        name, ok = QtWidgets.QInputDialog.getText(
-            self, f"Add {self.group_label}", f"{self.group_label} name:"
-        )
-        name = name.strip()
-        if not (ok and name):
-            return
-        existing = [self.list_widget.item(i).text() for i in range(self.list_widget.count())]
-        if name in existing:
-            QtWidgets.QMessageBox.warning(self, f"Add {self.group_label}", f"'{name}' already exists.")
-            return
-        self.list_widget.addItem(name)
-        self.list_widget.setCurrentRow(self.list_widget.count() - 1)
-
-    def _context_menu(self, pos):
-        item = self.list_widget.itemAt(pos)
-        if not item or item.text() == f"All {self.group_label}s":
-            return
-        menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
-        remove_act = menu.addAction(f"Remove {self.group_label}")
-        action = menu.exec_(self.list_widget.mapToGlobal(pos))
-        if action == remove_act:
-            reply = QtWidgets.QMessageBox.question(
-                self, f"Remove {self.group_label}",
-                f"Remove '{item.text()}' and all its contents?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            )
-            if reply == QtWidgets.QMessageBox.Yes:
-                self.list_widget.blockSignals(True)
-                self.list_widget.takeItem(self.list_widget.row(item))
-                self.list_widget.setCurrentRow(0)
-                self.list_widget.blockSignals(False)
-                self.group_changed.emit("")
-
-
-# ---------------------------------------------------------------------------
-# Schedule page — groups panel (left) + item list (right)
-# Projects are managed externally; call set_project() when selection changes.
+# Schedule page — data management + ItemListPanel
+# Groups are driven externally via select_group(); NavPanel owns the list UI.
 # ---------------------------------------------------------------------------
 class SchedulePage(QtWidgets.QWidget):
     data_changed = QtCore.Signal()
 
-    def __init__(self, item_label="Shot", group_label="Scene", stages=None, parent=None):
+    def __init__(self, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
         self.item_label       = item_label
-        self.group_label      = group_label
         self._stages          = stages or SHOT_STAGES
         self._data            = {}   # {project: {group: [items]}}
         self._current_project = ""
         self._active_group    = ""
-        self._build()
 
-    def _build(self):
-        layout = QtWidgets.QHBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self.item_panel = ItemListPanel(item_label=item_label, stages=self._stages)
+        self.item_panel.data_changed.connect(self._on_items_changed)
+        layout.addWidget(self.item_panel)
 
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        splitter.setHandleWidth(1)
-        splitter.setStyleSheet(f"QSplitter::handle{{background:{BORDER};}}")
+    # --- called by JiffySchedule ---
 
-        self.groups_panel = GroupsPanel(group_label=self.group_label)
-        self.item_panel   = ItemListPanel(item_label=self.item_label, stages=self._stages)
-
-        splitter.addWidget(self.groups_panel)
-        splitter.addWidget(self.item_panel)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-
-        self.groups_panel.group_changed.connect(self._on_group_changed)
-        self.item_panel.data_changed.connect(self._on_item_data_changed)
-
-        layout.addWidget(splitter)
-
-    def _flush(self):
-        if self._current_project and self._active_group:
-            self._data.setdefault(self._current_project, {})[self._active_group] = list(self.item_panel.items)
-
-    def set_project(self, project_name):
+    def set_project(self, project):
         self._flush()
-        self._current_project = project_name
+        self._current_project = project
         self._active_group    = ""
+        self._refresh_view()
 
-        if not project_name:
-            all_items = [i for p in self._data.values() for g in p.values() for i in g]
-            self.item_panel.set_group(f"All {self.item_label}s", all_items, readonly=True)
-            self.groups_panel.set_groups([], enabled=False)
-        else:
-            groups    = list(self._data.get(project_name, {}).keys())
-            all_items = [i for g in self._data.get(project_name, {}).values() for i in g]
-            self.groups_panel.set_groups(groups, enabled=True)
-            self.item_panel.set_group(
-                f"{project_name}  —  All {self.item_label}s", all_items, readonly=True
-            )
+    def select_group(self, group):
+        self._flush()
+        self._active_group = group
+        if group:
+            self._data.setdefault(self._current_project, {}).setdefault(group, [])
+        self._refresh_view()
 
     def project_added(self, name):
         self._data.setdefault(name, {})
@@ -629,22 +494,29 @@ class SchedulePage(QtWidgets.QWidget):
     def project_removed(self, name):
         self._data.pop(name, None)
 
-    def _on_group_changed(self, group):
-        self._flush()
-        self._active_group = group
-        if not group:
-            all_items = [i for g in self._data.get(self._current_project, {}).values() for i in g]
-            label = (
-                f"{self._current_project}  —  All {self.item_label}s"
-                if self._current_project else f"All {self.item_label}s"
-            )
-            self.item_panel.set_group(label, all_items, readonly=True)
-        else:
-            items = self._data.get(self._current_project, {}).get(group, [])
-            self.item_panel.set_group(group, items, readonly=False)
-            self._data.setdefault(self._current_project, {}).setdefault(group, [])
+    def get_groups_for_project(self, project):
+        return list(self._data.get(project, {}).keys())
 
-    def _on_item_data_changed(self):
+    # --- data ---
+
+    def _flush(self):
+        if self._current_project and self._active_group:
+            self._data.setdefault(self._current_project, {})[self._active_group] = list(self.item_panel.items)
+
+    def _refresh_view(self):
+        proj  = self._current_project
+        group = self._active_group
+        if not proj:
+            items = [i for p in self._data.values() for g in p.values() for i in g]
+            self.item_panel.set_content(f"All {self.item_label}s", items, writable=False)
+        elif not group:
+            items = [i for g in self._data.get(proj, {}).values() for i in g]
+            self.item_panel.set_content(f"{proj}  —  All {self.item_label}s", items, writable=False)
+        else:
+            items = self._data.get(proj, {}).get(group, [])
+            self.item_panel.set_content(group, items, writable=True)
+
+    def _on_items_changed(self):
         self._flush()
         self.data_changed.emit()
 
@@ -656,21 +528,25 @@ class SchedulePage(QtWidgets.QWidget):
         if any(isinstance(v, list) for v in data.values()):
             data = {}
         self._data = data
-        all_items = [i for p in self._data.values() for g in p.values() for i in g]
-        self.item_panel.set_group(f"All {self.item_label}s", all_items, readonly=True)
+        self._refresh_view()
 
 
 # ---------------------------------------------------------------------------
-# Universal projects panel — shared across all tabs
+# NavPanel — Projects (top) + Groups (bottom) stacked in one left panel.
+# The groups section label and content change when the active tab switches.
 # ---------------------------------------------------------------------------
-class ProjectsPanel(QtWidgets.QWidget):
+class NavPanel(QtWidgets.QWidget):
     project_changed = QtCore.Signal(str)   # "" = All Projects
     project_added   = QtCore.Signal(str)
     project_removed = QtCore.Signal(str)
+    group_changed   = QtCore.Signal(str)   # "" = All Groups
+    group_added     = QtCore.Signal(str)
+    group_removed   = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(160)
+        self._group_label = "Scene"
+        self.setFixedWidth(170)
         self.setStyleSheet(f"background:{PANEL_BG};")
         self._build()
 
@@ -679,12 +555,42 @@ class ProjectsPanel(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # --- Projects section ---
+        layout.addWidget(self._make_section_header("PROJECTS", self._add_project, store_lbl=False))
+        self.project_list = self._make_list()
+        self.project_list.addItem("All Projects")
+        self.project_list.setCurrentRow(0)
+        self.project_list.currentTextChanged.connect(
+            lambda t: self.project_changed.emit("" if t == "All Projects" else (t or ""))
+        )
+        self.project_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.project_list.customContextMenuRequested.connect(
+            lambda pos: self._list_ctx(self.project_list, pos, "Project")
+        )
+        layout.addWidget(self.project_list)
+
+        # --- Groups section ---
+        self._group_section_hdr = self._make_section_header("SCENES", self._add_group, store_lbl=True)
+        layout.addWidget(self._group_section_hdr)
+        self.group_list = self._make_list()
+        self.group_list.addItem("All Scenes")
+        self.group_list.setCurrentRow(0)
+        self.group_list.currentTextChanged.connect(self._on_group_text_changed)
+        self.group_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.group_list.customContextMenuRequested.connect(
+            lambda pos: self._list_ctx(self.group_list, pos, self._group_label)
+        )
+        layout.addWidget(self.group_list)
+
+    def _make_section_header(self, title, add_cb, store_lbl=False):
         h = QtWidgets.QWidget()
-        h.setFixedHeight(38)
-        h.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
+        h.setFixedHeight(32)
+        h.setStyleSheet(
+            f"background:{PANEL_BG}; border-top:1px solid {BORDER}; border-bottom:1px solid {BORDER};"
+        )
         hl = QtWidgets.QHBoxLayout(h)
         hl.setContentsMargins(12, 0, 8, 0)
-        lbl = QtWidgets.QLabel("PROJECTS")
+        lbl = QtWidgets.QLabel(title)
         lbl.setStyleSheet(f"font-size:10px; font-weight:bold; color:{SUBTEXT}; letter-spacing:1px;")
         hl.addWidget(lbl)
         hl.addStretch()
@@ -693,74 +599,120 @@ class ProjectsPanel(QtWidgets.QWidget):
         btn.setStyleSheet(
             "QPushButton{background:#2e5a2e;color:white;border:none;border-radius:3px;font-size:14px;}"
             "QPushButton:hover{background:#3a7a3a;}"
+            "QPushButton:disabled{background:#333;color:#555;}"
         )
-        btn.clicked.connect(self._add_project)
+        btn.clicked.connect(add_cb)
         hl.addWidget(btn)
-        layout.addWidget(h)
+        if store_lbl:
+            self._group_header_lbl = lbl
+            self._group_add_btn    = btn
+            btn.setEnabled(False)
+        return h
 
-        self.list_widget = QtWidgets.QListWidget()
-        self.list_widget.setStyleSheet(_LIST_STYLE)
-        self.list_widget.currentTextChanged.connect(
-            lambda t: self.project_changed.emit("" if t == "All Projects" else (t or ""))
-        )
-        self.list_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.list_widget.customContextMenuRequested.connect(self._context_menu)
-        layout.addWidget(self.list_widget)
+    def _make_list(self):
+        lw = QtWidgets.QListWidget()
+        lw.setStyleSheet(_LIST_STYLE)
+        return lw
 
-        self.list_widget.addItem("All Projects")
-        self.list_widget.setCurrentRow(0)
+    def _on_group_text_changed(self, t):
+        all_text = f"All {self._group_label}s"
+        self.group_changed.emit("" if t == all_text else (t or ""))
+
+    # --- public API ---
+
+    def set_groups(self, groups, group_label="Scene", enabled=True):
+        self._group_label = group_label
+        self._group_header_lbl.setText(f"{group_label.upper()}S")
+        self._group_add_btn.setEnabled(enabled)
+
+        all_text = f"All {group_label}s"
+        self.group_list.blockSignals(True)
+        self.group_list.clear()
+        self.group_list.addItem(all_text)
+        for g in groups:
+            self.group_list.addItem(g)
+        self.group_list.setCurrentRow(0)
+        self.group_list.blockSignals(False)
+
+    def get_groups(self):
+        all_text = f"All {self._group_label}s"
+        return [
+            self.group_list.item(i).text()
+            for i in range(self.group_list.count())
+            if self.group_list.item(i).text() != all_text
+        ]
+
+    def set_projects(self, projects):
+        self.project_list.blockSignals(True)
+        self.project_list.clear()
+        self.project_list.addItem("All Projects")
+        for p in projects:
+            self.project_list.addItem(p)
+        self.project_list.setCurrentRow(0)
+        self.project_list.blockSignals(False)
+
+    def get_projects(self):
+        return [
+            self.project_list.item(i).text()
+            for i in range(self.project_list.count())
+            if self.project_list.item(i).text() != "All Projects"
+        ]
 
     def _add_project(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Add Project", "Project name:")
         name = name.strip()
         if not (ok and name):
             return
-        existing = [self.list_widget.item(i).text() for i in range(self.list_widget.count())]
+        existing = [self.project_list.item(i).text() for i in range(self.project_list.count())]
         if name in existing:
             QtWidgets.QMessageBox.warning(self, "Add Project", f"'{name}' already exists.")
             return
-        self.list_widget.addItem(name)
+        self.project_list.addItem(name)
         self.project_added.emit(name)
-        self.list_widget.setCurrentRow(self.list_widget.count() - 1)
+        self.project_list.setCurrentRow(self.project_list.count() - 1)
 
-    def _context_menu(self, pos):
-        item = self.list_widget.itemAt(pos)
-        if not item or item.text() == "All Projects":
+    def _add_group(self):
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, f"Add {self._group_label}", f"{self._group_label} name:"
+        )
+        name = name.strip()
+        if not (ok and name):
+            return
+        existing = [self.group_list.item(i).text() for i in range(self.group_list.count())]
+        if name in existing:
+            QtWidgets.QMessageBox.warning(self, f"Add {self._group_label}", f"'{name}' already exists.")
+            return
+        self.group_list.addItem(name)
+        self.group_added.emit(name)
+        self.group_list.setCurrentRow(self.group_list.count() - 1)
+
+    def _list_ctx(self, list_widget, pos, label):
+        item = list_widget.itemAt(pos)
+        all_text = "All Projects" if label == "Project" else f"All {self._group_label}s"
+        if not item or item.text() == all_text:
             return
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        remove_act = menu.addAction("Remove Project")
-        action = menu.exec_(self.list_widget.mapToGlobal(pos))
+        remove_act = menu.addAction(f"Remove {label}")
+        action = menu.exec_(list_widget.mapToGlobal(pos))
         if action == remove_act:
             reply = QtWidgets.QMessageBox.question(
-                self, "Remove Project",
+                self, f"Remove {label}",
                 f"Remove '{item.text()}' and all its contents?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             )
             if reply == QtWidgets.QMessageBox.Yes:
                 name = item.text()
-                self.list_widget.blockSignals(True)
-                self.list_widget.takeItem(self.list_widget.row(item))
-                self.list_widget.setCurrentRow(0)
-                self.list_widget.blockSignals(False)
-                self.project_removed.emit(name)
-                self.project_changed.emit("")
-
-    def set_projects(self, projects):
-        self.list_widget.blockSignals(True)
-        self.list_widget.clear()
-        self.list_widget.addItem("All Projects")
-        for p in projects:
-            self.list_widget.addItem(p)
-        self.list_widget.setCurrentRow(0)
-        self.list_widget.blockSignals(False)
-
-    def get_projects(self):
-        return [
-            self.list_widget.item(i).text()
-            for i in range(self.list_widget.count())
-            if self.list_widget.item(i).text() != "All Projects"
-        ]
+                list_widget.blockSignals(True)
+                list_widget.takeItem(list_widget.row(item))
+                list_widget.setCurrentRow(0)
+                list_widget.blockSignals(False)
+                if label == "Project":
+                    self.project_removed.emit(name)
+                    self.project_changed.emit("")
+                else:
+                    self.group_removed.emit(name)
+                    self.group_changed.emit("")
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +725,7 @@ class JiffySchedule(QtWidgets.QWidget):
         self.setWindowTitle("JiffySchedule")
         self.resize(1080, 720)
         self.setStyleSheet(f"QWidget{{background:{DARK_BG};color:white;}}")
+        self._active_project = ""
         self._build()
         self._make_dockable()
         self.load_data()
@@ -782,7 +735,7 @@ class JiffySchedule(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Title bar — app name + tabs on the same row
+        # Title bar — "JiffySchedule"  Shots  Assets  (all on one line)
         title_bar = QtWidgets.QWidget()
         title_bar.setFixedHeight(42)
         title_bar.setStyleSheet(f"background:#1a1a1a; border-bottom:1px solid {BORDER};")
@@ -808,21 +761,23 @@ class JiffySchedule(QtWidgets.QWidget):
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
         tl.addWidget(self.tab_bar)
         tl.addStretch()
-
         layout.addWidget(title_bar)
 
-        # Body: universal projects (left) + stacked pages (right)
+        # Body — NavPanel (left) + stacked pages (right)
         body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         body.setHandleWidth(1)
         body.setStyleSheet(f"QSplitter::handle{{background:{BORDER};}}")
 
-        self.projects_panel = ProjectsPanel()
-        self.projects_panel.project_changed.connect(self._on_project_changed)
-        self.projects_panel.project_added.connect(self._on_project_added)
-        self.projects_panel.project_removed.connect(self._on_project_removed)
+        self.nav = NavPanel()
+        self.nav.project_changed.connect(self._on_project_changed)
+        self.nav.project_added.connect(self._on_project_added)
+        self.nav.project_removed.connect(self._on_project_removed)
+        self.nav.group_changed.connect(self._on_group_changed)
+        self.nav.group_added.connect(self._on_group_added)
+        self.nav.group_removed.connect(self._on_group_removed)
 
-        self.shots_page  = SchedulePage(item_label="Shot",  group_label="Scene",    stages=SHOT_STAGES)
-        self.assets_page = SchedulePage(item_label="Asset", group_label="Category", stages=ASSET_STAGES)
+        self.shots_page  = SchedulePage(item_label="Shot",  stages=SHOT_STAGES)
+        self.assets_page = SchedulePage(item_label="Asset", stages=ASSET_STAGES)
         self.shots_page.data_changed.connect(self.save_data)
         self.assets_page.data_changed.connect(self.save_data)
 
@@ -830,19 +785,35 @@ class JiffySchedule(QtWidgets.QWidget):
         self.stack.addWidget(self.shots_page)
         self.stack.addWidget(self.assets_page)
 
-        body.addWidget(self.projects_panel)
+        body.addWidget(self.nav)
         body.addWidget(self.stack)
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
-
         layout.addWidget(body)
+
+    def _active_page(self):
+        return self.shots_page if self.tab_bar.currentIndex() == 0 else self.assets_page
+
+    def _group_label_for_tab(self, index):
+        return "Scene" if index == 0 else "Category"
 
     def _on_tab_changed(self, index):
         self.stack.setCurrentIndex(index)
+        page  = self._active_page()
+        label = self._group_label_for_tab(index)
+        groups  = page.get_groups_for_project(self._active_project)
+        enabled = bool(self._active_project)
+        self.nav.set_groups(groups, group_label=label, enabled=enabled)
+        page.select_group("")
 
     def _on_project_changed(self, project):
+        self._active_project = project
         self.shots_page.set_project(project)
         self.assets_page.set_project(project)
+        label   = self._group_label_for_tab(self.tab_bar.currentIndex())
+        groups  = self._active_page().get_groups_for_project(project)
+        enabled = bool(project)
+        self.nav.set_groups(groups, group_label=label, enabled=enabled)
 
     def _on_project_added(self, name):
         self.shots_page.project_added(name)
@@ -854,12 +825,26 @@ class JiffySchedule(QtWidgets.QWidget):
         self.assets_page.project_removed(name)
         self.save_data()
 
+    def _on_group_changed(self, group):
+        self._active_page().select_group(group)
+
+    def _on_group_added(self, name):
+        self._active_page().project_added(self._active_project)  # ensure slot exists
+        self._active_page().select_group(name)
+        self.save_data()
+
+    def _on_group_removed(self, name):
+        page = self._active_page()
+        page._data.get(self._active_project, {}).pop(name, None)
+        page.select_group("")
+        self.save_data()
+
     def save_data(self):
         path = self._save_path()
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             payload = {
-                "projects": self.projects_panel.get_projects(),
+                "projects": self.nav.get_projects(),
                 "shots":    self.shots_page.get_data(),
                 "assets":   self.assets_page.get_data(),
             }
@@ -877,7 +862,7 @@ class JiffySchedule(QtWidgets.QWidget):
             with open(path, "r") as f:
                 saved = json.load(f)
 
-            # Migrate: previous format wrapped page data with "data"/"projects" sub-keys
+            # Migrate: old format had "data"/"projects" inside "shots"
             if "shots" in saved and isinstance(saved["shots"], dict) and "data" in saved["shots"]:
                 saved = {
                     "projects": saved["shots"].get("projects", []),
@@ -885,7 +870,6 @@ class JiffySchedule(QtWidgets.QWidget):
                     "assets":   saved.get("assets", {}).get("data", {})
                         if isinstance(saved.get("assets"), dict) else {},
                 }
-            # Very old format: top-level had "data"/"projects" directly
             elif "data" in saved and "shots" not in saved:
                 saved = {
                     "projects": saved.get("projects", []),
@@ -894,7 +878,7 @@ class JiffySchedule(QtWidgets.QWidget):
                 }
 
             projects = saved.get("projects", [])
-            self.projects_panel.set_projects(projects)
+            self.nav.set_projects(projects)
             for p in projects:
                 self.shots_page.project_added(p)
                 self.assets_page.project_added(p)
