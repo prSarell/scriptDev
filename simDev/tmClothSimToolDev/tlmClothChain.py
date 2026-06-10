@@ -70,6 +70,34 @@ class SimClothRig():
 	def _buildAimChain(self, clothRigName, follicles):
 		chain_grp = cmds.group(em=True, name=clothRigName + '_aimChain_grp', p=clothRigName + '_clothRig_grp')
 		cmds.addAttr(chain_grp, ln='isInverted', at='bool', dv=0)
+
+		# Master aim rig (aimRig_00): full chain span — bottom follicle to top follicle
+		pfx = '%s_aimRig_00' % clothRigName
+		m1 = cmds.group(em=True, name=pfx + '_master_grp_01', p=chain_grp)
+		m2 = cmds.group(em=True, name=pfx + '_master_grp_02', p=m1)
+		cmds.setAttr(m2 + '.rotateX', -90)
+		m3 = cmds.group(em=True, name=pfx + '_master_grp_03', p=m2)
+		up_grp = cmds.group(em=True, name=pfx + '_up_grp', p=m3)
+		up_loc = cmds.spaceLocator(name=pfx + '_up_loc')[0]
+		cmds.parent(up_loc, up_grp)
+		cmds.setAttr(up_grp + '.ty', 5)
+		aim_grp = cmds.group(em=True, name=pfx + '_aim_grp', p=m3)
+		aim_loc = cmds.spaceLocator(name=pfx + '_aim_loc')[0]
+		cmds.parent(aim_loc, aim_grp)
+		tgt_grp = cmds.group(em=True, name=pfx + '_target_grp', p=m3)
+		tgt_loc = cmds.spaceLocator(name=pfx + '_target_loc')[0]
+		cmds.parent(tgt_loc, tgt_grp)
+		cmds.parentConstraint(follicles[0], m1, maintainOffset=False)
+		cmds.pointConstraint(follicles[-1], tgt_grp, maintainOffset=False)
+		cmds.aimConstraint(
+			tgt_loc, aim_grp,
+			aimVector=(0, 0, 1),
+			upVector=(0, 1, 0),
+			worldUpType='object',
+			worldUpObject=up_loc,
+			maintainOffset=False,
+		)
+
 		for i in range(len(follicles) - 1):
 			fol = follicles[i]
 			next_fol = follicles[i + 1]
@@ -523,6 +551,12 @@ class SimClothRig():
 				cmds.scaleConstraint(objName + '_shape_%s_CTRL' % str(i), objName + '_cluster_%s_Handle' % str(i))
 				cmds.setAttr(objName + '_cluster_%s_Handle.visibility' % str(i), 0)
 
+			bottom_shapes = cmds.listRelatives(objName + '_shape_0_CTRL', shapes=True) or []
+			if bottom_shapes:
+				cmds.setAttr(bottom_shapes[0] + '.overrideEnabled', 1)
+				cmds.setAttr(bottom_shapes[0] + '.overrideRGBColors', 1)
+				cmds.setAttr(bottom_shapes[0] + '.overrideColorRGB', 0.6, 0.05, 0.05)
+
 			self.feedOptionMenu('baseGeo')
 			cmds.parent(objName + '_baseGeo_grp', 'allBaseGeo_grp')
 			cmds.select(objName + '_main_CTRL', r=True)
@@ -784,7 +818,7 @@ class SimClothRig():
 			cmds.setKeyframe(ctrl)
 			cmds.setAttr(ctrl + '.blendParent1', 1)
 
-		# Last control parent-constrained to the anchor follicle (respects inversion)
+		# Last control driven by the master full-span aim rig (aimRig_00) for chain orientation
 		aim_chain_grp = clothRigName + '_aimChain_grp'
 		is_inverted = (cmds.objExists(aim_chain_grp)
 			and cmds.attributeQuery('isInverted', node=aim_chain_grp, exists=True)
@@ -792,7 +826,11 @@ class SimClothRig():
 		anchor_fol = follicles[0] if is_inverted else follicles[-1]
 		last_ctrl = self.controlsList[-1]
 		st, sr = self._locked_axes(last_ctrl)
-		cmds.parentConstraint(anchor_fol, last_ctrl, sr=sr, st=st, mo=True)
+		master_aim_loc = clothRigName + '_aimRig_00_aim_loc'
+		if cmds.objExists(master_aim_loc):
+			cmds.parentConstraint(master_aim_loc, last_ctrl, sr=sr, st=st, mo=True)
+		else:
+			cmds.parentConstraint(anchor_fol, last_ctrl, sr=sr, st=st, mo=True)
 		cmds.setKeyframe(last_ctrl)
 		cmds.setAttr(last_ctrl + '.blendParent1', 1)
 
