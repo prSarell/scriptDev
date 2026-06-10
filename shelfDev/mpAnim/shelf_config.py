@@ -1,6 +1,12 @@
 SHELF_NAME = "mpAnim"
 SHELF_VERSION = "1.0"
 
+# Scripts from metahuman_facial_transfer/ — deployed flat to ~/maya/scripts/.
+METAHUMAN_SCRIPTS = [
+    "metahuman_facial_transfer_25.py",
+    "metahuman_api_25.py",
+]
+
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 # Listed as filenames inside tools/ or multitool/.
 EXTRA_SCRIPTS = [
@@ -123,6 +129,17 @@ BUTTONS = [
             "import jiffySchedule\n"
             "importlib.reload(jiffySchedule)\n"
             "jiffySchedule.run_jiffyschedule()"
+        ),
+    },
+    {
+        "label": "MHTransfer",
+        "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
+        "icon": "iconMetahuman.png",
+        "command": (
+            "import importlib\n"
+            "import metahuman_facial_transfer_25 as mh\n"
+            "importlib.reload(mh)\n"
+            "mh.UI()"
         ),
     },
     {

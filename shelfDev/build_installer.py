@@ -36,7 +36,8 @@ STUDIOLIB_SRC = os.path.normpath(
 RIG_DIR    = os.path.join(HERE, "mpRig")
 RIG_TOOLS  = os.path.join(RIG_DIR, "tools")
 RIG_ICONS  = os.path.join(RIG_DIR, "icons")
-RIGDEV_DIR = os.path.normpath(os.path.join(HERE, "..", "rigDev"))
+RIGDEV_DIR      = os.path.normpath(os.path.join(HERE, "..", "rigDev"))
+METAHUMAN_DIR   = os.path.normpath(os.path.join(HERE, "..", "metahuman_facial_transfer"))
 
 
 def _load_config(shelf_dir):
@@ -82,6 +83,10 @@ def _bundle_scripts():
     # JiffySchedule scripts
     for name in getattr(anim_cfg, "JIFFYSCHEDULE_SCRIPTS", []):
         _read(os.path.join(JIFFYSCHEDULE_DIR, name), name)
+
+    # Metahuman scripts
+    for name in getattr(anim_cfg, "METAHUMAN_SCRIPTS", []):
+        _read(os.path.join(METAHUMAN_DIR, name), name)
 
     # mpRig extra scripts + button scripts
     rig_scripts = list(rig_cfg.EXTRA_SCRIPTS)

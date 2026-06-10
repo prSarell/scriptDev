@@ -28,6 +28,7 @@ def _install():
         "jiffyschedule": os.path.join(root, "timeManagementDev", "jiffyScheduleDev"),
         "clothchain":    os.path.join(root, "simDev", "tmClothSimToolDev"),
         "rigdev":        os.path.join(root, "rigDev"),
+        "metahuman":     os.path.join(root, "metahuman_facial_transfer"),
         "studiolib":     os.path.join(root, "animDev", "studiolibrary-2.20.2", "src"),
     }
 
@@ -111,6 +112,15 @@ def _install():
                         "import jiffySchedule\n"
                         "importlib.reload(jiffySchedule)\n"
                         "jiffySchedule.run_jiffyschedule()"),
+                },
+                {
+                    "label":   "MHTransfer",
+                    "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
+                    "icon":    "iconMetahuman.png",
+                    "command": _cmd(P["metahuman"], ["metahuman_facial_transfer_25"],
+                        "import metahuman_facial_transfer_25 as mh\n"
+                        "importlib.reload(mh)\n"
+                        "mh.UI()"),
                 },
                 {
                     "label":   "shortCuts",
