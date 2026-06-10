@@ -27,6 +27,7 @@ def _install():
         "jiffypomo":     os.path.join(root, "timeManagementDev", "jiffyPomoDev"),
         "jiffyschedule": os.path.join(root, "timeManagementDev", "jiffyScheduleDev"),
         "clothchain":    os.path.join(root, "simDev", "tmClothSimToolDev"),
+        "correctivebs":  os.path.join(root, "rigDev", "correctiveBSToolDev"),
         "rigdev":        os.path.join(root, "rigDev"),
         "metahuman":     os.path.join(root, "metahuman_facial_transfer"),
         "studiolib":     os.path.join(root, "animDev", "studiolibrary-2.20.2", "src"),
@@ -154,6 +155,16 @@ def _install():
                         "importlib.reload(follicleRig_api)\n"
                         "importlib.reload(follicleRig_ui)\n"
                         "follicleRig_ui.show()"),
+                },
+                {
+                    "label":   "CorrectiveBS",
+                    "tooltip": "Open Corrective Blendshape Tool — add corrective and performance blendshape targets to skinned rigs",
+                    "icon":    "iconCorrectiveBS.png",
+                    "command": _cmd(P["correctivebs"], ["tlmCorrectiveBS_api", "tlmCorrectiveBS_ui"],
+                        "import tlmCorrectiveBS_api, tlmCorrectiveBS_ui\n"
+                        "importlib.reload(tlmCorrectiveBS_api)\n"
+                        "importlib.reload(tlmCorrectiveBS_ui)\n"
+                        "tlmCorrectiveBS_ui.show()"),
                 },
             ],
         },
