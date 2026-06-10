@@ -5,6 +5,23 @@ import maya.cmds as cmds
 
 import follicleRig_api as api
 
+
+def _adj(hex_color, amt):
+    h = hex_color.lstrip('#')
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    clamp = lambda v: max(0, min(255, v + amt))
+    return '#{:02x}{:02x}{:02x}'.format(clamp(r), clamp(g), clamp(b))
+
+
+def _btn(bg, fg='white'):
+    return (
+        'QPushButton {{ background-color:{bg}; color:{fg}; border:none; '
+        'padding:3px 6px; font-size:11px; }}'
+        'QPushButton:hover {{ background-color:{light}; }}'
+        'QPushButton:pressed {{ background-color:{dark}; }}'
+        'QPushButton:disabled {{ background-color:#333; color:#666; }}'
+    ).format(bg=bg, fg=fg, light=_adj(bg, 25), dark=_adj(bg, -30))
+
 WINDOW_NAME = 'follicleRigTool'
 _win = None
 
@@ -25,34 +42,235 @@ def show():
     _win.show()
 
 
-class _NodeField(QtWidgets.QWidget):
-    '''Label + line edit + "<<" button that loads the first selected node.'''
+def _addControllersFromSelection(setStatus):
+    nodes = cmds.ls(selection=True) or []
+    if not nodes:
+        setStatus('Select follicles or their joints first', error=True)
+        return
+    try:
+        results = api.addControllersForSelection(nodes)
+    except api.FollicleRigError as err:
+        setStatus(str(err), error=True)
+        return
+    except Exception as err:
+        setStatus('Error: ' + str(err), error=True)
+        return
+    setStatus('Added controllers for %d follicle(s)' % len(results))
 
-    def __init__(self, label, parent=None):
-        super(_NodeField, self).__init__(parent)
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QtWidgets.QLabel(label))
-        self.field = QtWidgets.QLineEdit()
-        layout.addWidget(self.field)
-        loadBtn = QtWidgets.QPushButton('<<')
-        loadBtn.setFixedWidth(28)
-        loadBtn.setToolTip('Load first selected node')
-        loadBtn.clicked.connect(self._loadSelected)
-        layout.addWidget(loadBtn)
 
-    def _loadSelected(self):
+# ── tabs ──────────────────────────────────────────────────────────────────────
+
+class _NurbsGridTab(QtWidgets.QWidget):
+    def __init__(self, setStatus, parent=None):
+        super().__init__(parent)
+        self._setStatus = setStatus
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        form = QtWidgets.QFormLayout()
+        self.uSpin = QtWidgets.QSpinBox()
+        self.uSpin.setRange(1, 100)
+        self.uSpin.setValue(5)
+        self.vSpin = QtWidgets.QSpinBox()
+        self.vSpin.setRange(1, 100)
+        self.vSpin.setValue(5)
+        form.addRow('U Count', self.uSpin)
+        form.addRow('V Count', self.vSpin)
+        layout.addLayout(form)
+
+        layout.addSpacing(8)
+        createBtn = QtWidgets.QPushButton('Create Follicles')
+        createBtn.setStyleSheet(_btn('#2A5E6B'))
+        createBtn.clicked.connect(self._onCreate)
+        layout.addWidget(createBtn)
+
+        ctrlBtn = QtWidgets.QPushButton('Add Controllers')
+        ctrlBtn.setStyleSheet(_btn('#6B4A2A'))
+        ctrlBtn.clicked.connect(lambda: _addControllersFromSelection(self._setStatus))
+        layout.addWidget(ctrlBtn)
+
+        layout.addStretch()
+
+    def _onCreate(self):
         sel = cmds.ls(selection=True) or []
-        if sel:
-            self.field.setText(sel[0])
+        if not sel:
+            self._setStatus('Select a NURBS surface first', error=True)
+            return
+        try:
+            group, pairs = api.createNurbsGridFollicles(sel[0], self.uSpin.value(), self.vSpin.value())
+        except api.FollicleRigError as err:
+            self._setStatus(str(err), error=True)
+            return
+        except Exception as err:
+            self._setStatus('Error: ' + str(err), error=True)
+            return
+        self._setStatus('Created %d follicle(s) in %s' % (len(pairs), group))
 
-    def text(self):
-        return self.field.text().strip()
 
+class _PolyVerticesTab(QtWidgets.QWidget):
+    def __init__(self, setStatus, parent=None):
+        super().__init__(parent)
+        self._setStatus = setStatus
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        note = QtWidgets.QLabel(
+            'Select a polygon mesh and click Enter Vertex Mode,\n'
+            'then pick vertices in the order you want follicles created.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        layout.addSpacing(8)
+        vertBtn = QtWidgets.QPushButton('Enter Vertex Mode')
+        vertBtn.setStyleSheet(_btn('#3D5A3A'))
+        vertBtn.clicked.connect(self._onEnterVertexMode)
+        layout.addWidget(vertBtn)
+
+        layout.addSpacing(8)
+        createBtn = QtWidgets.QPushButton('Create Follicles')
+        createBtn.setStyleSheet(_btn('#2A5E6B'))
+        createBtn.clicked.connect(self._onCreate)
+        layout.addWidget(createBtn)
+
+        ctrlBtn = QtWidgets.QPushButton('Add Controllers')
+        ctrlBtn.setStyleSheet(_btn('#6B4A2A'))
+        ctrlBtn.clicked.connect(lambda: _addControllersFromSelection(self._setStatus))
+        layout.addWidget(ctrlBtn)
+
+        layout.addStretch()
+
+    def _onEnterVertexMode(self):
+        sel = cmds.ls(selection=True) or []
+        if not sel:
+            self._setStatus('Select a polygon mesh first', error=True)
+            return
+        try:
+            api.enterVertexMode(sel[0])
+        except api.FollicleRigError as err:
+            self._setStatus(str(err), error=True)
+            return
+        self._setStatus('Vertex mode active — pick vertices in order')
+
+    def _onCreate(self):
+        vertices = [v for v in (cmds.ls(selection=True, flatten=True) or []) if '.vtx[' in v]
+        if not vertices:
+            self._setStatus('Select polygon vertices first', error=True)
+            return
+        try:
+            group, pairs = api.createPolyVertexFollicles(vertices)
+        except api.FollicleRigError as err:
+            self._setStatus(str(err), error=True)
+            return
+        except Exception as err:
+            self._setStatus('Error: ' + str(err), error=True)
+            return
+        self._setStatus('Created %d follicle(s) in %s' % (len(pairs), group))
+
+
+class _CurveOnSurfaceTab(QtWidgets.QWidget):
+    def __init__(self, setStatus, parent=None):
+        super().__init__(parent)
+        self._setStatus = setStatus
+        self._original = None
+        self._duplicate = None
+        self._preExistingCurves = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        note = QtWidgets.QLabel(
+            'Select a surface and click Create Curve. Draw your path\n'
+            'with the EP curve tool, then click Create Follicles.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        layout.addSpacing(8)
+        self._createCurveBtn = QtWidgets.QPushButton('Create Curve')
+        self._createCurveBtn.setStyleSheet(_btn('#7A5C2A'))
+        self._createCurveBtn.clicked.connect(self._onCreateCurve)
+        layout.addWidget(self._createCurveBtn)
+
+        self._stateLabel = QtWidgets.QLabel('')
+        self._stateLabel.setWordWrap(True)
+        self._stateLabel.setStyleSheet('color: #aaaaaa; font-style: italic;')
+        layout.addWidget(self._stateLabel)
+
+        layout.addSpacing(8)
+        self._createFolliclesBtn = QtWidgets.QPushButton('Create Follicles')
+        self._createFolliclesBtn.setStyleSheet(_btn('#2A5E6B'))
+        self._createFolliclesBtn.clicked.connect(self._onCreate)
+        self._createFolliclesBtn.setEnabled(False)
+        layout.addWidget(self._createFolliclesBtn)
+
+        ctrlBtn = QtWidgets.QPushButton('Add Controllers')
+        ctrlBtn.setStyleSheet(_btn('#6B4A2A'))
+        ctrlBtn.clicked.connect(lambda: _addControllersFromSelection(self._setStatus))
+        layout.addWidget(ctrlBtn)
+
+        layout.addStretch()
+
+    def _onCreateCurve(self):
+        # Clean up any previous session
+        if self._duplicate is not None:
+            try:
+                if cmds.objExists(self._duplicate):
+                    cmds.delete(self._duplicate)
+                if self._original and cmds.objExists(self._original):
+                    cmds.showHidden(self._original)
+            except Exception:
+                pass
+        self._original = self._duplicate = self._preExistingCurves = None
+        self._createFolliclesBtn.setEnabled(False)
+        self._stateLabel.setText('')
+
+        sel = cmds.ls(selection=True) or []
+        if not sel:
+            self._setStatus('Select a surface first', error=True)
+            return
+        try:
+            original, duplicate, preExisting = api.setupCurveOnSurface(sel[0])
+        except api.FollicleRigError as err:
+            self._setStatus(str(err), error=True)
+            return
+        except Exception as err:
+            self._setStatus('Error: ' + str(err), error=True)
+            return
+
+        self._original = original
+        self._duplicate = duplicate
+        self._preExistingCurves = preExisting
+        self._createFolliclesBtn.setEnabled(True)
+
+        if duplicate is not None:
+            self._stateLabel.setText('Drawing on duplicate of: ' + original)
+        else:
+            self._stateLabel.setText('Drawing on: ' + original)
+        self._setStatus('Surface ready — activate the EP Curve Tool, draw your path, then click Create Follicles')
+
+    def _onCreate(self):
+        if self._original is None:
+            self._setStatus('Click Create Curve first', error=True)
+            return
+        try:
+            group, pairs = api.createFolliclesFromCurveSetup(
+                self._original, self._duplicate, self._preExistingCurves)
+        except api.FollicleRigError as err:
+            self._setStatus(str(err), error=True)
+            return
+        except Exception as err:
+            self._setStatus('Error: ' + str(err), error=True)
+            return
+
+        self._original = self._duplicate = self._preExistingCurves = None
+        self._createFolliclesBtn.setEnabled(False)
+        self._stateLabel.setText('')
+        self._setStatus('Created %d follicle(s) in %s' % (len(pairs), group))
+
+
+# ── main window ───────────────────────────────────────────────────────────────
 
 class FollicleRigUI(QtWidgets.QDialog):
     def __init__(self, parent=None):
-        super(FollicleRigUI, self).__init__(parent)
+        super().__init__(parent)
         self.setObjectName(WINDOW_NAME)
         self.setWindowTitle('Follicle Rig Tools')
         self.setWindowFlags(QtCore.Qt.Window)
@@ -61,209 +279,14 @@ class FollicleRigUI(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         tabs = QtWidgets.QTabWidget()
         layout.addWidget(tabs)
-        tabs.addTab(self._buildCreateTab(), 'Create Follicles')
-        tabs.addTab(self._buildControlsTab(), 'Animation Controls')
+
+        tabs.addTab(_NurbsGridTab(self._setStatus), 'NURBS Grid')
+        tabs.addTab(_PolyVerticesTab(self._setStatus), 'Poly Vertices')
+        tabs.addTab(_CurveOnSurfaceTab(self._setStatus), 'Curve on Surface')
 
         self.status = QtWidgets.QLabel('')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-
-    # ── Create Follicles tab ──────────────────────────────────────────────
-
-    def _buildCreateTab(self):
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(page)
-
-        self.modeCombo = QtWidgets.QComboBox()
-        self.modeCombo.addItems(['NURBS Grid', 'Polygon Vertices', 'Curve on Surface'])
-        layout.addWidget(self.modeCombo)
-
-        self.modeStack = QtWidgets.QStackedWidget()
-        self.modeStack.addWidget(self._buildNurbsGridPage())
-        self.modeStack.addWidget(self._buildPolyVertexPage())
-        self.modeStack.addWidget(self._buildCurvePage())
-        layout.addWidget(self.modeStack)
-        self.modeCombo.currentIndexChanged.connect(self.modeStack.setCurrentIndex)
-
-        layout.addSpacing(8)
-        nameLayout = QtWidgets.QHBoxLayout()
-        nameLayout.addWidget(QtWidgets.QLabel('Custom Name (optional)'))
-        self.createNameField = QtWidgets.QLineEdit()
-        nameLayout.addWidget(self.createNameField)
-        layout.addLayout(nameLayout)
-
-        createBtn = QtWidgets.QPushButton('Create Follicles')
-        createBtn.clicked.connect(self._onCreateFollicles)
-        layout.addWidget(createBtn)
-        layout.addStretch()
-        return page
-
-    def _buildNurbsGridPage(self):
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(page)
-        self.gridSurfaceField = _NodeField('Surface')
-        layout.addRow(self.gridSurfaceField)
-        self.uCountSpin = QtWidgets.QSpinBox()
-        self.uCountSpin.setRange(1, 100)
-        self.uCountSpin.setValue(5)
-        layout.addRow('U Count', self.uCountSpin)
-        self.vCountSpin = QtWidgets.QSpinBox()
-        self.vCountSpin.setRange(1, 100)
-        self.vCountSpin.setValue(5)
-        layout.addRow('V Count', self.vCountSpin)
-        return page
-
-    def _buildPolyVertexPage(self):
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(page)
-        note = QtWidgets.QLabel(
-            'Select polygon vertices in the viewport, in the order\n'
-            'you want follicles created, then click Create Follicles.')
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        layout.addStretch()
-        return page
-
-    def _buildCurvePage(self):
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(page)
-        self.curveField = _NodeField('Curve')
-        layout.addRow(self.curveField)
-        self.curveSurfaceField = _NodeField('Surface')
-        layout.addRow(self.curveSurfaceField)
-        self.toleranceSpin = QtWidgets.QDoubleSpinBox()
-        self.toleranceSpin.setRange(0.0001, 10.0)
-        self.toleranceSpin.setDecimals(4)
-        self.toleranceSpin.setValue(0.01)
-        layout.addRow('Tolerance', self.toleranceSpin)
-        return page
-
-    def _onCreateFollicles(self):
-        customName = self.createNameField.text().strip() or None
-        mode = self.modeCombo.currentIndex()
-        try:
-            if mode == 0:
-                surface = self.gridSurfaceField.text()
-                if not surface:
-                    raise api.FollicleRigError('Load a NURBS surface first')
-                pairs = api.createNurbsGridFollicles(
-                    surface, self.uCountSpin.value(), self.vCountSpin.value(), customName=customName)
-            elif mode == 1:
-                vertices = cmds.ls(selection=True, flatten=True) or []
-                vertices = [v for v in vertices if '.vtx[' in v]
-                pairs = api.createPolyVertexFollicles(vertices, customName=customName)
-            else:
-                curve = self.curveField.text()
-                surface = self.curveSurfaceField.text()
-                if not curve or not surface:
-                    raise api.FollicleRigError('Load both a curve and a surface first')
-                pairs = api.createCurveOnSurfaceFollicles(
-                    curve, surface, customName=customName, tolerance=self.toleranceSpin.value())
-        except api.FollicleRigError as err:
-            self._setStatus(str(err), error=True)
-            return
-        except Exception as err:
-            self._setStatus('Error: ' + str(err), error=True)
-            return
-
-        self._setStatus('Created %d follicle/joint pair(s).' % len(pairs))
-
-    # ── Animation Controls tab ────────────────────────────────────────────
-
-    def _buildControlsTab(self):
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(page)
-        layout.addWidget(self._buildUVControlGroup())
-        layout.addWidget(self._buildJointControlGroup())
-        layout.addStretch()
-        return page
-
-    def _buildUVControlGroup(self):
-        group = QtWidgets.QGroupBox('UV Driver Control')
-        layout = QtWidgets.QFormLayout(group)
-
-        self.uvFollicleField = _NodeField('Follicle')
-        layout.addRow(self.uvFollicleField)
-        self.uvSurfaceField = _NodeField('Surface')
-        layout.addRow(self.uvSurfaceField)
-
-        self.sensitivitySpin = QtWidgets.QDoubleSpinBox()
-        self.sensitivitySpin.setRange(0.01, 100.0)
-        self.sensitivitySpin.setValue(1.0)
-        layout.addRow('Sensitivity', self.sensitivitySpin)
-
-        self.uvArrowCheck = QtWidgets.QCheckBox('Use arrow control shape')
-        self.uvArrowCheck.setChecked(True)
-        layout.addRow(self.uvArrowCheck)
-
-        self.uvNameField = QtWidgets.QLineEdit()
-        layout.addRow('Custom Name (optional)', self.uvNameField)
-
-        addBtn = QtWidgets.QPushButton('Add UV Driver Control')
-        addBtn.clicked.connect(self._onAddUVControl)
-        layout.addRow(addBtn)
-        return group
-
-    def _buildJointControlGroup(self):
-        group = QtWidgets.QGroupBox('Joint Driver Control')
-        layout = QtWidgets.QFormLayout(group)
-
-        self.jointFollicleField = _NodeField('Follicle')
-        layout.addRow(self.jointFollicleField)
-        self.jointField = _NodeField('Joint')
-        layout.addRow(self.jointField)
-
-        self.jointStopSignCheck = QtWidgets.QCheckBox('Use stop-sign control shape')
-        self.jointStopSignCheck.setChecked(True)
-        layout.addRow(self.jointStopSignCheck)
-
-        self.jointNameField = QtWidgets.QLineEdit()
-        layout.addRow('Custom Name (optional)', self.jointNameField)
-
-        addBtn = QtWidgets.QPushButton('Add Joint Driver Control')
-        addBtn.clicked.connect(self._onAddJointControl)
-        layout.addRow(addBtn)
-        return group
-
-    def _onAddUVControl(self):
-        follicle = self.uvFollicleField.text()
-        surface = self.uvSurfaceField.text()
-        if not follicle or not surface:
-            self._setStatus('Load both a follicle and a surface first', error=True)
-            return
-        customName = self.uvNameField.text().strip() or None
-        try:
-            ctrl = api.createUVDriverControl(
-                follicle, surface, customName=customName,
-                sensitivity=self.sensitivitySpin.value(), useArrowShape=self.uvArrowCheck.isChecked())
-        except api.FollicleRigError as err:
-            self._setStatus(str(err), error=True)
-            return
-        except Exception as err:
-            self._setStatus('Error: ' + str(err), error=True)
-            return
-        self._setStatus('Created UV driver control: ' + ctrl)
-
-    def _onAddJointControl(self):
-        follicle = self.jointFollicleField.text()
-        joint = self.jointField.text()
-        if not follicle or not joint:
-            self._setStatus('Load both a follicle and a joint first', error=True)
-            return
-        customName = self.jointNameField.text().strip() or None
-        try:
-            ctrl = api.createJointDriverControl(
-                follicle, joint, customName=customName,
-                useStopSignShape=self.jointStopSignCheck.isChecked())
-        except api.FollicleRigError as err:
-            self._setStatus(str(err), error=True)
-            return
-        except Exception as err:
-            self._setStatus('Error: ' + str(err), error=True)
-            return
-        self._setStatus('Created joint driver control: ' + ctrl)
-
-    # ── status ────────────────────────────────────────────────────────────
 
     def _setStatus(self, message, error=False):
         self.status.setText(message)

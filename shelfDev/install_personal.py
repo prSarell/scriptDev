@@ -145,6 +145,16 @@ def _install():
                         "importlib.reload(ps_spine)\n"
                         "ps_spine.show()"),
                 },
+                {
+                    "label":   "Follicle Rig",
+                    "tooltip": "Open Follicle Rig Tools — scatter follicles across NURBS or poly surfaces",
+                    "icon":    "iconFollicleRig.png",
+                    "command": _cmd(P["rigdev"], ["follicleRig_api", "follicleRig_ui"],
+                        "import follicleRig_api, follicleRig_ui\n"
+                        "importlib.reload(follicleRig_api)\n"
+                        "importlib.reload(follicleRig_ui)\n"
+                        "follicleRig_ui.show()"),
+                },
             ],
         },
     }

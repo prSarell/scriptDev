@@ -1,4 +1,5 @@
 import math
+import re
 
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
@@ -16,14 +17,11 @@ def stripNamespace(name):
 
 
 def resolveBaseName(sourceNode, customName=None):
-    '''
-    Returns the base name to build follicle/joint names from.
-    customName always wins; otherwise derive from sourceNode
-    (the surface for NURBS/poly modes, the curve for curve-on-surface mode).
-    '''
-    if customName:
-        return customName
-    return stripNamespace(sourceNode)
+    name = customName if customName else stripNamespace(sourceNode)
+    name = re.sub(r'[^A-Za-z0-9_]', '_', name)
+    if name and name[0].isdigit():
+        name = '_' + name
+    return name
 
 
 # ── shape helpers ─────────────────────────────────────────────────────────────
@@ -48,17 +46,23 @@ def getSurfaceShape(node):
     raise FollicleRigError(node + ' has no nurbsSurface or mesh shape')
 
 
+def getCurveShape(node):
+    if cmds.nodeType(node) == 'nurbsCurve':
+        return node
+    shapes = cmds.listRelatives(node, shapes=True, noIntermediate=True) or []
+    for shape in shapes:
+        if cmds.nodeType(shape) == 'nurbsCurve':
+            return shape
+    raise FollicleRigError(node + ' has no nurbsCurve shape')
+
+
 # ── follicle + joint creation ─────────────────────────────────────────────────
 
 def createFollicle(surface, u, v, name):
-    '''
-    Build a follicle on surface at parameterU/V (u, v), wired up the same way
-    Maya's own Hair tool wires one, then renamed to <name>_FOL / <name>_FOLShape.
-    Returns the follicle transform name.
-    '''
     surfaceShape = getSurfaceShape(surface)
     shapeType = cmds.nodeType(surfaceShape)
 
+    cmds.select(clear=True)
     folShape = cmds.createNode('follicle')
     folXform = cmds.listRelatives(folShape, parent=True)[0]
 
@@ -68,8 +72,8 @@ def createFollicle(surface, u, v, name):
         cmds.connectAttr(surfaceShape + '.outMesh', folShape + '.inputMesh')
 
     cmds.connectAttr(surfaceShape + '.worldMatrix[0]', folShape + '.inputWorldMatrix')
-    cmds.connectAttr(folShape + '.outTranslate', folXform + '.translate')
-    cmds.connectAttr(folShape + '.outRotate', folXform + '.rotate')
+    cmds.connectAttr(folShape + '.outTranslate', folXform + '.translate', force=True)
+    cmds.connectAttr(folShape + '.outRotate', folXform + '.rotate', force=True)
 
     cmds.setAttr(folShape + '.parameterU', u)
     cmds.setAttr(folShape + '.parameterV', v)
@@ -82,10 +86,6 @@ def createFollicle(surface, u, v, name):
 
 
 def createJointUnderFollicle(follicle, name):
-    '''
-    Creates a joint, parents it under follicle and zeroes its transforms so it
-    sits exactly on the follicle's pivot. Returns the joint name.
-    '''
     cmds.select(clear=True)
     joint = cmds.joint(name=name + '_JNT')
     cmds.parent(joint, follicle)
@@ -96,11 +96,9 @@ def createJointUnderFollicle(follicle, name):
     return joint
 
 
+# ── UV helpers ────────────────────────────────────────────────────────────────
+
 def nurbsGridUVs(uCount, vCount):
-    '''
-    Evenly spaced (u, v) grid across the full 0-1 surface range, edge to edge,
-    in row-major order (each V row scanned left-to-right across U).
-    '''
     if uCount < 1 or vCount < 1:
         raise FollicleRigError('U and V counts must each be at least 1')
 
@@ -109,68 +107,20 @@ def nurbsGridUVs(uCount, vCount):
             return [0.5]
         return [i / float(count - 1) for i in range(count)]
 
-    uValues = steps(uCount)
-    vValues = steps(vCount)
-
-    return [(u, v) for v in vValues for u in uValues]
-
-
-def createNurbsGridFollicles(surface, uCount, vCount, customName=None):
-    '''
-    Builds a follicle + driven joint grid (uCount x vCount) across a NURBS
-    surface, named from the surface unless customName is given.
-    '''
-    surfaceShape = getSurfaceShape(surface)
-    if cmds.nodeType(surfaceShape) != 'nurbsSurface':
-        raise FollicleRigError(surface + ' is not a NURBS surface')
-
-    uvList = nurbsGridUVs(uCount, vCount)
-    return buildFollicleRig(surface, uvList, customName=customName)
+    return [(u, v) for v in steps(vCount) for u in steps(uCount)]
 
 
 def getVertexUV(vertex):
-    '''
-    Returns the (u, v) for a single polygon vertex. If the vertex sits on a
-    UV seam and maps to more than one UV, the first is used.
-    '''
     uvs = cmds.ls(cmds.polyListComponentConversion(vertex, fromVertex=True, toUV=True), flatten=True)
     if not uvs:
-        raise FollicleRigError(vertex + ' has no UVs - mesh must be UV mapped to place follicles on vertices')
+        raise FollicleRigError(vertex + ' has no UVs - mesh must be UV mapped')
     return tuple(cmds.polyEditUV(uvs[0], query=True))
 
 
-def createPolyVertexFollicles(vertices, customName=None):
-    '''
-    Builds a follicle + driven joint at each selected polygon vertex's UV
-    location, in selection order. All vertices must belong to the same mesh.
-    Named from the mesh unless customName is given.
-    '''
-    if not vertices:
-        raise FollicleRigError('No vertices selected')
-
-    meshes = sorted(set(vtx.split('.')[0] for vtx in vertices))
-    if len(meshes) > 1:
-        raise FollicleRigError('Selected vertices belong to more than one mesh: ' + ', '.join(meshes))
-
-    uvList = [getVertexUV(vtx) for vtx in vertices]
-    return buildFollicleRig(meshes[0], uvList, customName=customName)
-
-
-def getCurveShape(node):
-    if cmds.nodeType(node) == 'nurbsCurve':
-        return node
-    shapes = cmds.listRelatives(node, shapes=True, noIntermediate=True) or []
-    for shape in shapes:
-        if cmds.nodeType(shape) == 'nurbsCurve':
-            return shape
-    raise FollicleRigError(node + ' has no nurbsCurve shape')
-
-
 def getCurveCVPositions(curve):
-    '''Returns world-space CV positions of curve, in CV order.'''
     curveShape = getCurveShape(curve)
     cvCount = cmds.getAttr(curveShape + '.degree') + cmds.getAttr(curveShape + '.spans')
-    return [tuple(cmds.xform('%s.cv[%d]' % (curveShape, i), q=True, ws=True, t=True))
+    return [tuple(cmds.pointPosition('%s.cv[%d]' % (curve, i), world=True))
             for i in range(cvCount)]
 
 
@@ -183,19 +133,13 @@ def _transformPoint(transform, attr, point):
 def closestUVOnSurface(surface, point):
     '''
     One-shot closest-point query: builds a closestPointOnSurface/Mesh node,
-    reads back (u, v) and the distance from world-space `point` to that
-    closest point, then deletes the node immediately.
+    reads back (u, v) and the distance, then deletes the node immediately.
+    See original comments for why this is build-time-only.
 
-    This is deliberately a build-time-only, one-shot use of these nodes -
-    left connected and evaluated every frame they are an iterative search
-    that can jitter near seams/poles and cost real performance, which is why
-    they are not used for the live UV-driver control rig (see [[Tool 5]]).
-    Here the node exists just long enough to answer one question and is gone.
-
-    closestPointOnSurface has no inputMatrix (it works in the surface's own
-    object space), while closestPointOnMesh does (it works in world space) -
-    so the NURBS path converts the query point into object space and the
-    result back out to world space for the distance check.
+    NURBS: closestPointOnSurface outputs raw parameter values in the surface's
+    native domain (e.g. 0-8 for a default sphere), not 0-1. Follicle
+    parameterU/V expects 0-1, so we normalize using minValueU/maxValueU/V.
+    Poly: closestPointOnMesh already outputs 0-1 UV values — no normalization.
     '''
     surfaceShape = getSurfaceShape(surface)
     shapeType = cmds.nodeType(surfaceShape)
@@ -204,9 +148,17 @@ def closestUVOnSurface(surface, point):
         node = cmds.createNode('closestPointOnSurface')
         cmds.connectAttr(surfaceShape + '.local', node + '.inputSurface')
         cmds.setAttr(node + '.inPosition', *_transformPoint(surfaceShape, 'worldInverseMatrix[0]', point))
-        u = cmds.getAttr(node + '.parameterU')
-        v = cmds.getAttr(node + '.parameterV')
+        u_raw = cmds.getAttr(node + '.parameterU')
+        v_raw = cmds.getAttr(node + '.parameterV')
         closest = _transformPoint(surfaceShape, 'worldMatrix[0]', cmds.getAttr(node + '.position')[0])
+        cmds.delete(node)
+
+        minU = cmds.getAttr(surfaceShape + '.minValueU')
+        maxU = cmds.getAttr(surfaceShape + '.maxValueU')
+        minV = cmds.getAttr(surfaceShape + '.minValueV')
+        maxV = cmds.getAttr(surfaceShape + '.maxValueV')
+        u = (u_raw - minU) / (maxU - minU) if (maxU - minU) > 0 else 0.5
+        v = (v_raw - minV) / (maxV - minV) if (maxV - minV) > 0 else 0.5
     else:
         node = cmds.createNode('closestPointOnMesh')
         cmds.connectAttr(surfaceShape + '.outMesh', node + '.inMesh')
@@ -215,79 +167,291 @@ def closestUVOnSurface(surface, point):
         u = cmds.getAttr(node + '.parameterU')
         v = cmds.getAttr(node + '.parameterV')
         closest = cmds.getAttr(node + '.position')[0]
-
-    cmds.delete(node)
+        cmds.delete(node)
 
     distance = sum((a - b) ** 2 for a, b in zip(point, closest)) ** 0.5
     return (u, v), distance
 
 
-def createCurveOnSurfaceFollicles(curve, surface, customName=None, tolerance=0.01):
-    '''
-    Walks curve's CVs in order, finds each one's closest UV on surface
-    (one-shot query - see closestUVOnSurface), and builds a follicle + driven
-    joint at each, in CV order. Named from the curve (not the surface) unless
-    customName is given - so a hand-drawn "battWingPath" curve produces
-    battWingPath_00_FOL, battWingPath_01_FOL, etc.
-
-    Warns (without failing) if any CV sits farther than `tolerance` from the
-    surface - usually a sign the curve was not drawn live/snapped onto it.
-    '''
-    positions = getCurveCVPositions(curve)
-    if not positions:
-        raise FollicleRigError(curve + ' has no CVs')
-
-    uvList = []
-    for index, point in enumerate(positions):
-        uv, distance = closestUVOnSurface(surface, point)
-        if distance > tolerance:
-            cmds.warning('%s.cv[%d] is %.4f units from %s - was the curve drawn live on the surface?'
-                         % (curve, index, distance, surface))
-        uvList.append(uv)
-
-    return buildFollicleRig(surface, uvList, customName=customName, nameSource=curve)
-
+# ── rig building ──────────────────────────────────────────────────────────────
 
 def buildFollicleRig(surface, uvList, customName=None, nameSource=None):
     '''
-    Creates one follicle + driven joint per (u, v) pair in uvList.
-
-    surface    - NURBS surface or polygon mesh (transform or shape) to attach to
-    uvList     - list of (u, v) tuples, normalized 0-1 parameter coordinates
-    customName - optional user override for the base name
-    nameSource - node to derive the default base name from when customName is
-                 not given (defaults to surface; pass the curve in curve-on-
-                 surface mode so follicles are named from the curve, not the surface)
-
-    Returns a list of (follicle, joint) name pairs, in uvList order.
+    Creates one follicle + driven joint per (u, v) pair, all under one group.
+    Returns (group, [(follicle, joint), ...]).
     '''
+    cmds.makeLive(none=True)
     base = resolveBaseName(nameSource if nameSource else surface, customName)
 
+    group = cmds.group(empty=True, name=base + '_FOL_GRP')
     pairs = []
     for index, (u, v) in enumerate(uvList):
         follicleName = base + '_' + str(index).zfill(2)
         follicle = createFollicle(surface, u, v, follicleName)
         joint = createJointUnderFollicle(follicle, follicleName)
+        cmds.parent(follicle, group)
         pairs.append((follicle, joint))
 
-    return pairs
+    return group, pairs
+
+
+def createNurbsGridFollicles(surface, uCount, vCount, customName=None):
+    surfaceShape = getSurfaceShape(surface)
+    if cmds.nodeType(surfaceShape) != 'nurbsSurface':
+        raise FollicleRigError(surface + ' is not a NURBS surface')
+    uvList = nurbsGridUVs(uCount, vCount)
+    return buildFollicleRig(surface, uvList, customName=customName)
+
+
+def createPolyVertexFollicles(vertices, customName=None):
+    if not vertices:
+        raise FollicleRigError('No vertices selected')
+    meshes = sorted(set(vtx.split('.')[0] for vtx in vertices))
+    if len(meshes) > 1:
+        raise FollicleRigError('Selected vertices belong to more than one mesh: ' + ', '.join(meshes))
+    uvList = [getVertexUV(vtx) for vtx in vertices]
+    return buildFollicleRig(meshes[0], uvList, customName=customName)
+
+
+# ── curve on surface workflow ─────────────────────────────────────────────────
+
+def setupCurveOnSurface(surface):
+    '''
+    Prepares the scene for curve-on-surface follicle placement.
+
+    NURBS: duplicates the surface, hides the original, makes the duplicate
+    live, activates the EP curve tool. The user draws on the duplicate so the
+    original stays clean (drawn curves embed under the surface shape node).
+    Returns (original, duplicate, None).
+
+    Poly: records existing curve shapes, makes the surface live, activates the
+    EP curve tool. No duplicate needed - curves drawn on a live poly go to the
+    world root, not embedded under the shape.
+    Returns (original, None, frozenset_of_pre_existing_curve_shapes).
+    '''
+    surfaceShape = getSurfaceShape(surface)
+    shapeType = cmds.nodeType(surfaceShape)
+    cmds.makeLive(none=True)
+
+    if shapeType == 'nurbsSurface':
+        duplicate = cmds.duplicate(surface)[0]
+        cmds.hide(surface)
+        cmds.makeLive(duplicate)
+        return surface, duplicate, None
+    else:
+        preExisting = frozenset(cmds.ls(type='nurbsCurve') or [])
+        cmds.makeLive(surface)
+        return surface, None, preExisting
+
+
+def _cosShapeToNormalizedUVs(cosShape, surfaceShape):
+    '''
+    Reads CVs from a curveOnSurface shape and returns normalized (0-1) UV pairs.
+    COS CVs are stored as (u, v) in the surface's native parameter domain;
+    we normalize using the surface's minValue/maxValue attributes.
+    '''
+    degree = cmds.getAttr(cosShape + '.degree')
+    spans = cmds.getAttr(cosShape + '.spans')
+    minU = cmds.getAttr(surfaceShape + '.minValueU')
+    maxU = cmds.getAttr(surfaceShape + '.maxValueU')
+    minV = cmds.getAttr(surfaceShape + '.minValueV')
+    maxV = cmds.getAttr(surfaceShape + '.maxValueV')
+    rangeU = (maxU - minU) or 1.0
+    rangeV = (maxV - minV) or 1.0
+    uvList = []
+    for i in range(degree + spans):
+        raw = cmds.getAttr('%s.cv[%d]' % (cosShape, i))
+        u_raw = raw[0][0] if isinstance(raw[0], (list, tuple)) else raw[0]
+        v_raw = raw[0][1] if isinstance(raw[0], (list, tuple)) else raw[1]
+        uvList.append(((u_raw - minU) / rangeU, (v_raw - minV) / rangeV))
+    return uvList
+
+
+def createFolliclesFromCurveSetup(original, duplicate, preExistingCurves=None):
+    '''
+    Called after setupCurveOnSurface once the user has drawn their curve.
+    Finds the curve, projects its CVs onto the original surface, builds the
+    follicle rig, then cleans up (deletes duplicate or drawn curve).
+    Returns (group, [(follicle, joint), ...]).
+    '''
+    cmds.makeLive(none=True)
+
+    if duplicate is not None:
+        dupShape = getSurfaceShape(duplicate)
+        curveTransform = None
+        cosShape = None
+        for child in (cmds.listRelatives(dupShape, children=True) or []):
+            childShapes = cmds.listRelatives(child, shapes=True, noIntermediate=True) or []
+            for s in childShapes:
+                if cmds.nodeType(s) in ('nurbsCurve', 'curveOnSurface'):
+                    curveTransform = child
+                    cosShape = s
+                    break
+            if curveTransform:
+                break
+
+        if curveTransform is None:
+            cmds.delete(duplicate)
+            cmds.showHidden(original)
+            raise FollicleRigError(
+                'No curve found on the surface. Draw a curve on it first.')
+
+        nameSource = curveTransform
+        origShape = getSurfaceShape(original)
+        try:
+            if cmds.nodeType(cosShape) == 'curveOnSurface':
+                # EP curve tool on a live NURBS surface creates a curveOnSurface
+                # node whose CVs are stored in the surface's native UV parameter
+                # space — read and normalize directly, no world-space projection.
+                uvList = _cosShapeToNormalizedUVs(cosShape, origShape)
+            else:
+                positions = getCurveCVPositions(curveTransform)
+                if not positions:
+                    raise FollicleRigError('Curve has no CVs')
+                uvList = []
+                for index, point in enumerate(positions):
+                    uv, distance = closestUVOnSurface(original, point)
+                    if distance > 0.01:
+                        cmds.warning('cv[%d] is %.4f units from surface' % (index, distance))
+                    uvList.append(uv)
+            result = buildFollicleRig(original, uvList, nameSource=nameSource)
+        finally:
+            if cmds.objExists(duplicate):
+                cmds.delete(duplicate)
+            cmds.showHidden(original)
+
+        return result
+
+    else:
+        currentShapes = set(cmds.ls(type='nurbsCurve') or [])
+        newShapes = currentShapes - set(preExistingCurves or [])
+
+        if not newShapes:
+            raise FollicleRigError('No new curve found. Draw a curve on the surface first.')
+
+        newCurves = []
+        seen = set()
+        for shape in newShapes:
+            parents = cmds.listRelatives(shape, parent=True) or []
+            if parents and parents[0] not in seen:
+                seen.add(parents[0])
+                newCurves.append(parents[0])
+
+        if len(newCurves) > 1:
+            raise FollicleRigError(
+                '%d new curves found. Undo extra curves and try again.' % len(newCurves))
+
+        curveTransform = newCurves[0]
+        positions = getCurveCVPositions(curveTransform)
+        if not positions:
+            raise FollicleRigError('Curve has no CVs')
+
+        uvList = []
+        for index, point in enumerate(positions):
+            uv, distance = closestUVOnSurface(original, point)
+            if distance > 0.01:
+                cmds.warning('cv[%d] is %.4f units from %s' % (index, distance, original))
+            uvList.append(uv)
+
+        result = buildFollicleRig(original, uvList, nameSource=curveTransform)
+        cmds.delete(curveTransform)
+        return result
+
+
+# ── vertex mode ───────────────────────────────────────────────────────────────
+
+def enterVertexMode(geo):
+    getSurfaceShape(geo)
+    cmds.select(geo)
+    cmds.selectMode(component=True)
+    cmds.selectType(vertex=True)
+
+
+# ── controller helpers ────────────────────────────────────────────────────────
+
+def getSurfaceFromFollicle(follicle):
+    folShape = getFollicleShape(follicle)
+    src = cmds.listConnections(folShape + '.inputSurface', source=True, destination=False) or []
+    if src:
+        return src[0]
+    src = cmds.listConnections(folShape + '.inputMesh', source=True, destination=False) or []
+    if src:
+        return src[0]
+    raise FollicleRigError('No surface connected to ' + follicle)
+
+
+def getJointUnderFollicle(follicle):
+    children = cmds.listRelatives(follicle, children=True, type='joint') or []
+    if not children:
+        raise FollicleRigError('No joint found under ' + follicle)
+    return children[0]
+
+
+def resolveToFollicle(node):
+    if cmds.nodeType(node) == 'joint':
+        parent = (cmds.listRelatives(node, parent=True) or [None])[0]
+        if parent:
+            try:
+                getFollicleShape(parent)
+                return parent
+            except FollicleRigError:
+                pass
+        raise FollicleRigError(node + ' is not parented under a follicle')
+    try:
+        getFollicleShape(node)
+        return node
+    except FollicleRigError:
+        raise FollicleRigError(node + ' is not a follicle or follicle-parented joint')
+
+
+def addControllersForSelection(nodes):
+    '''
+    Builds a UV driver control + joint driver control for each unique follicle
+    in `nodes`. Accepts follicle transforms and/or their child joints.
+    Deduplicates so selecting a follicle and its own child joint counts as one.
+    Anchor follicles for UV controls are parented into the same group as
+    their driven follicle.
+    Returns [(uv_ctrl, jnt_ctrl), ...].
+    '''
+    follicles = []
+    seen = set()
+    for node in nodes:
+        try:
+            fol = resolveToFollicle(node)
+        except FollicleRigError:
+            cmds.warning('Skipping ' + node + ': not a follicle or follicle-parented joint')
+            continue
+        if fol not in seen:
+            seen.add(fol)
+            follicles.append(fol)
+
+    if not follicles:
+        raise FollicleRigError('No follicles found in selection')
+
+    results = []
+    for follicle in follicles:
+        surface = getSurfaceFromFollicle(follicle)
+        joint = getJointUnderFollicle(follicle)
+        group = (cmds.listRelatives(follicle, parent=True) or [None])[0]
+
+        uvCtrl, anchor = createUVDriverControl(follicle, surface)
+        if group:
+            cmds.parent(anchor, group)
+
+        jntCtrl = createJointDriverControl(follicle, joint)
+        results.append((uvCtrl, jntCtrl))
+
+    return results
 
 
 # ── UV-driver control ─────────────────────────────────────────────────────────
 #
-# Fixed convention: control.translateX always drives parameterU and
-# control.translateY always drives parameterV; translateZ is left open so the
-# control can be lifted off the surface. This matches a follicle transform's
-# natural local-axis alignment - local X along the surface's U-tangent, Y
-# along its V-tangent, Z along its normal (see [[createUVDriverControl]]) -
-# which is why the control is built flat in the XY plane (normal +Z).
+# Fixed convention: control.translateX drives parameterU, translateY drives
+# parameterV. The control is built flat in the XY plane (normal +Z) so it
+# lies flat in the surface's tangent plane once parented under its anchor
+# follicle, where local X = U-tangent and local Y = V-tangent.
 
 def _fourArrowCurve(name):
-    '''
-    A flat 4-pointed arrow/cross outline in the XY plane (normal +Z) - lies
-    flat in the surface's tangent plane once parented under its anchor
-    follicle, where local X = U-tangent and local Y = V-tangent.
-    '''
     tip, shoulder, inner = 1.5, 0.9, 0.3
     points = [
         (0, tip, 0), (inner, shoulder, 0), (inner, inner, 0),
@@ -301,21 +465,6 @@ def _fourArrowCurve(name):
 
 
 def _calibrationSpan(surface, anchorPos, u, v, axis, epsilon=0.01):
-    '''
-    One-shot finite-difference calibration: builds a temporary follicle offset
-    by `epsilon` in parameter space along `axis` ('u' or 'v') from (u, v) -
-    backing off from the far edge instead when u/v sits within epsilon of 1.0
-    - measures the world-space distance from `anchorPos` to it, and divides by
-    epsilon to estimate "world units moved per unit change in U or V" at that
-    point: exactly the slope the linear remap chain needs so a given drag
-    distance maps to a consistent parameter change. Built, queried and deleted
-    immediately - a build-time measurement, not a live node, in the same
-    one-shot spirit as [[closestUVOnSurface]].
-
-    Sampling through createFollicle (rather than a NURBS-only node such as
-    pointOnSurfaceInfo, which has no mesh equivalent) means this works
-    identically for NURBS surfaces and polygon meshes.
-    '''
     value = u if axis == 'u' else v
     delta = epsilon if value + epsilon <= 1.0 else -epsilon
     sampleU, sampleV = (u + delta, v) if axis == 'u' else (u, v + delta)
@@ -329,26 +478,12 @@ def _calibrationSpan(surface, anchorPos, u, v, axis, epsilon=0.01):
 
 
 def _linearUVChain(controlAttr, axisSpan, startingValue, sensitivityAttr, baseName, axisLabel):
-    '''
-    Calibrated linear remap chain for one axis. The control sits at local
-    origin under its anchor follicle (see [[createUVDriverControl]]), so its
-    rest translate is exactly zero and the control's raw value is usable
-    directly - no delta-from-rest subtraction needed:
-
-        multiplyDivide (x sensitivity)
-          -> multiplyDivide (/ axisSpan - world units per unit U or V at the
-             follicle's location, measured via [[_calibrationSpan]])
-          -> plusMinusAverage (+ starting U or V)
-          -> clamp (0-1)
-
-    Returns the clamp output attribute, ready to drive follicle.parameterU/V.
-    '''
     mdSensitivity = cmds.createNode('multiplyDivide', name=baseName + '_' + axisLabel + 'Sens_MDV')
     cmds.connectAttr(controlAttr, mdSensitivity + '.input1X')
     cmds.connectAttr(sensitivityAttr, mdSensitivity + '.input2X')
 
     mdSpan = cmds.createNode('multiplyDivide', name=baseName + '_' + axisLabel + 'Span_MDV')
-    cmds.setAttr(mdSpan + '.operation', 2)  # divide
+    cmds.setAttr(mdSpan + '.operation', 2)
     cmds.connectAttr(mdSensitivity + '.outputX', mdSpan + '.input1X')
     cmds.setAttr(mdSpan + '.input2X', axisSpan)
 
@@ -365,37 +500,11 @@ def _linearUVChain(controlAttr, axisSpan, startingValue, sensitivityAttr, baseNa
 
 def createUVDriverControl(follicle, surface, customName=None, sensitivity=1.0, useArrowShape=True):
     '''
-    Builds a control whose translateX/translateY drive a follicle's
-    parameterU/parameterV through a calibrated linear remap, so dragging the
-    control across surfaces of very different scales still feels 1:1 -
-    consistent, not racing ahead of or lagging behind the follicle.
-    translateX -> U, translateY -> V always; translateZ is left free so the
-    control can be lifted off the surface.
-
-    Orientation is solved by building a second, static "anchor" follicle at
-    the driven follicle's exact (u, v) and parenting the control under it at
-    local origin. A follicle transform is always oriented with local X along
-    the surface's U-tangent, Y along its V-tangent and Z along its normal -
-    Maya's own mechanism for keeping groomed hair aligned to a surface as it
-    deforms - so the anchor hands the control that frame for free, correctly
-    aligned regardless of the surface's own object-space axis layout or world
-    orientation. Nothing connects to the anchor's outputs; it exists purely to
-    hold this frame, and because the control sits at its local origin, the
-    control's rest translate is exactly (0, 0, 0) - which is what lets
-    [[_linearUVChain]] use the control's raw translate without first
-    subtracting a rest value.
-
-    Per driven axis: multiplyDivide(x sensitivity) -> multiplyDivide(/ a
-    calibration span - world units moved per unit change in U or V at the
-    follicle's location, measured once at build time via [[_calibrationSpan]])
-    -> plusMinusAverage(+ the follicle's starting U or V) -> clamp(0-1) ->
-    follicle.parameterU/V. See [[closestUVOnSurface]] for why a per-frame
-    closest-point approach was rejected instead (jitter + cost at runtime).
-
-    Rotates are locked, hidden and unkeyable; translateZ is left open.
-    `sensitivity` is added as a non-keyable, channel-box-only rigger tuning
-    knob - lock and hide it once tuned, before handing off to animators.
+    Builds a calibrated UV driver control for the follicle.
+    Returns (ctrl, anchor) — the anchor follicle should be parented into the
+    rig group by the caller (see addControllersForSelection).
     '''
+    cmds.makeLive(none=True)
     base = customName if customName else stripNamespace(follicle)
     if not customName and base.endswith('_FOL'):
         base = base[:-len('_FOL')]
@@ -429,30 +538,12 @@ def createUVDriverControl(follicle, surface, customName=None, sensitivity=1.0, u
     for axis in ('X', 'Y', 'Z'):
         cmds.setAttr(ctrl + '.rotate' + axis, lock=True, keyable=False, channelBox=False)
 
-    return ctrl
+    return ctrl, anchor
 
 
 # ── joint-driver control ──────────────────────────────────────────────────────
-#
-# The chain in a rig like a bat wing: surface drives follicle -> follicle
-# drives joint -> joint drives character (e.g. a NURBS wing membrane skinned
-# to the rig's wing joints, with follicles scattered across its surface and
-# the joints under those follicles managing the membrane's secondary motion).
-# This control sits between the follicle and the joint, giving the animator
-# extra translate/rotate offset at very low cost - both control and joint
-# share the follicle as their parent and coincide with its pivot at rest, so a
-# parent constraint simply mirrors the control's local transform onto the
-# joint. No remap network, no calibration - nothing fancy happening at all.
 
 def _stopSignCurve(name, height=2.0, radius=0.6, sides=8):
-    '''
-    A "stop sign on a pole": a straight line from the local origin up along
-    local Z (the surface normal once parented under a follicle), capped with
-    an octagon lying flat across the top - tall enough to lift it clear of the
-    surface and large enough to be an easy, unambiguous click target. Built as
-    two curve shapes parented under one transform, so either part selects the
-    control.
-    '''
     pole = cmds.curve(name=name, degree=1, point=[(0, 0, 0), (0, 0, height)])
 
     angle = 2.0 * math.pi / sides
@@ -467,15 +558,7 @@ def _stopSignCurve(name, height=2.0, radius=0.6, sides=8):
 
 
 def createJointDriverControl(follicle, joint, customName=None, useStopSignShape=True):
-    '''
-    Builds a control that drives `joint` through a parent constraint, parented
-    as a sibling of the joint under `follicle` and sitting at its local origin
-    - so at rest, control and joint coincide exactly with the follicle's pivot
-    and orientation, and the constraint reduces to a plain mirror of the
-    control's local transform onto the joint's. All channels (translate and
-    rotate) are left open, keyable and unlocked - there is no calibration math
-    here, the animator just grabs the control and moves/rotates it.
-    '''
+    cmds.makeLive(none=True)
     base = customName if customName else stripNamespace(follicle)
     if not customName and base.endswith('_FOL'):
         base = base[:-len('_FOL')]
