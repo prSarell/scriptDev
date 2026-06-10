@@ -66,7 +66,7 @@ BUTTONS = [
     {
         "label": "CamPreset",
         "tooltip": "Open the Camera Preset Manager — save and apply named camera/render presets",
-        "icon": "camera.png",
+        "icon": "iconCamPreset.png",
         "script": "ps_cam_preset_simple.py",
         "command": (
             "import importlib\n"

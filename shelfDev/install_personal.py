@@ -65,7 +65,7 @@ def _install():
                 {
                     "label":   "CamPreset",
                     "tooltip": "Open the Camera Preset Manager — save and apply named camera/render presets",
-                    "icon":    "camera.png",
+                    "icon":    "iconCamPreset.png",
                     "command": _cmd(P["anim_tools"], ["ps_cam_preset_simple"],
                         "import ps_cam_preset_simple as ps\n"
                         "importlib.reload(ps)\n"
@@ -181,10 +181,22 @@ def _install():
         with open(usersetup_path, "r", encoding="utf-8") as fh:
             existing = fh.read()
 
+    # Remove our managed block if present
     if MARKER in existing and END_MARKER in existing:
         start = existing.index(MARKER)
         end   = existing.index(END_MARKER, start) + len(END_MARKER)
         existing = existing[:start].rstrip() + existing[end:]
+
+    # Strip stale animMultiTool lines left by older installers
+    _stale = [
+        "# animMultiTool auto-load (mpAnim installer)",
+        "# multiTool auto-load (mpAnim installer)",
+        "import animMultiTool; animMultiTool.show()",
+        "import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool.show()')",
+    ]
+    for line in _stale:
+        existing = existing.replace(line, "")
+    existing = "\n".join(ln for ln in existing.splitlines() if ln.strip())
 
     with open(usersetup_path, "w", encoding="utf-8") as fh:
         fh.write(existing.rstrip() + usersetup_block)
