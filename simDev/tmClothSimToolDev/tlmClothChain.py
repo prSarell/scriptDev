@@ -529,24 +529,48 @@ class SimClothRig():
 				cmds.setAttr(bottom_shapes[0] + '.overrideColor', 12)
 
 			# Proxy aim rig — spans bottom to top shape ctrl, parented under baseGeo_grp
-			top_ctrl = objName + '_shape_%s_CTRL' % str(segmentsNumber)
 			pfx = objName + '_aimRig_00'
-			m1 = cmds.group(em=True, name=pfx + '_master_grp_01', p=objName + '_baseGeo_grp')
+
+			# Master control — snapped to bottom shape ctrl, drives the whole aim rig
+			master_ctrl = cmds.circle(n=pfx + '_master_CTRL', nr=[0, 1, 0], r=2)[0]
+			cmds.parent(master_ctrl, objName + '_baseGeo_grp')
+			bot_pos = cmds.xform(objName + '_shape_0_CTRL', q=True, ws=True, t=True)
+			bot_rot = cmds.xform(objName + '_shape_0_CTRL', q=True, ws=True, ro=True)
+			cmds.xform(master_ctrl, ws=True, t=bot_pos, ro=bot_rot)
+
+			m1 = cmds.group(em=True, name=pfx + '_master_grp_01', p=master_ctrl)
 			m2 = cmds.group(em=True, name=pfx + '_master_grp_02', p=m1)
 			cmds.setAttr(m2 + '.rotateX', -90)
 			m3 = cmds.group(em=True, name=pfx + '_master_grp_03', p=m2)
+
+			# Up group: arrow curve pointing +Y (up vector direction)
 			up_grp = cmds.group(em=True, name=pfx + '_up_grp', p=m3)
-			up_loc = cmds.spaceLocator(name=pfx + '_up_loc')[0]
+			cmds.setAttr(up_grp + '.ty', 6.3436406353103205)
+			up_loc = cmds.curve(n=pfx + '_up_loc', d=1, p=[
+				(-0.2, 0, 0), (-0.2, 0.6, 0), (-0.5, 0.6, 0), (0, 1.2, 0),
+				(0.5, 0.6, 0), (0.2, 0.6, 0), (0.2, 0, 0), (-0.2, 0, 0)
+			])
 			cmds.parent(up_loc, up_grp)
-			cmds.setAttr(up_grp + '.ty', 5)
+
+			# Aim group and locator — rx=90 aligns aim_loc local Y to world +Y so
+			# main_CTRL ty=7.5 re-centres it at the chain midpoint after re-parenting
 			aim_grp = cmds.group(em=True, name=pfx + '_aim_grp', p=m3)
 			aim_loc = cmds.spaceLocator(name=pfx + '_aim_loc')[0]
 			cmds.parent(aim_loc, aim_grp)
+			cmds.setAttr(aim_loc + '.rotateX', 90)
+
+			# Target group: local tz=plane height puts it at the top of the chain in
+			# m3's frame (local Z = world +Y); rx=-90/+90 pair cancels the frame twist
 			tgt_grp = cmds.group(em=True, name=pfx + '_target_grp', p=m3)
-			tgt_loc = cmds.spaceLocator(name=pfx + '_target_loc')[0]
+			tgt_loc = cmds.curve(n=pfx + '_target_loc', d=1, p=[
+				(-0.2, 0, 0), (-0.2, 0, 0.6), (-0.5, 0, 0.6), (0, 0, 1.2),
+				(0.5, 0, 0.6), (0.2, 0, 0.6), (0.2, 0, 0), (-0.2, 0, 0)
+			])
 			cmds.parent(tgt_loc, tgt_grp)
-			cmds.parentConstraint(objName + '_shape_0_CTRL', m1, maintainOffset=False)
-			cmds.pointConstraint(top_ctrl, tgt_grp, maintainOffset=False)
+			cmds.setAttr(tgt_grp + '.translateZ', 15)
+			cmds.setAttr(tgt_grp + '.rotateX', -90)
+			cmds.setAttr(tgt_loc + '.rotateX', 90)
+
 			cmds.aimConstraint(
 				tgt_loc, aim_grp,
 				aimVector=(0, 0, 1),
@@ -555,6 +579,8 @@ class SimClothRig():
 				worldUpObject=up_loc,
 				maintainOffset=False,
 			)
+			cmds.parent(objName + '_main_CTRL', aim_loc)
+			cmds.setAttr(objName + '_main_CTRL.translateY', 7.5)
 
 			self.feedOptionMenu('baseGeo')
 			cmds.parent(objName + '_baseGeo_grp', 'allBaseGeo_grp')

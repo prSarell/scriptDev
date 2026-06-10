@@ -1,0 +1,104 @@
+CORRECTIVE BLENDSHAPE TOOL — BRIEF
+====================================
+Date: 2026-06-10
+
+
+PURPOSE
+-------
+A tool for students to add corrective and performance blendshape targets to
+skinned rigs. Handles delta extraction automatically so students focus on
+sculpting, not math. Works with both external sculpting (ZBrush, Blender)
+and in-Maya workflows.
+
+
+PRIMARY USE CASES
+-----------------
+- Adding performance shapes to face rigs (stronger expressions, personalised
+  shapes on joint-driven face rigs including Metahuman)
+- Fixing body deformation at specific poses (shoulder collapse, cloth pinching)
+
+All student rigs have joint-driven (skinned) faces, so delta extraction is
+required in all cases — not just body correctives.
+
+
+CORE WORKFLOW
+-------------
+1. Student selects the mesh and names the corrective
+2. Poses the rig to the problem position
+3. Tool exports the posed deformed mesh (for external sculpting) OR duplicates
+   it in Maya for in-Maya sculpting
+4. Student sculpts the fix in ZBrush / Blender / Maya
+5. Student imports / points the tool to the corrected mesh
+6. Tool detects the skin cluster, extracts the delta, creates the blendshape target
+7. Student picks a driver (joint rotation channel or control attribute) and
+   sets the drive range
+8. Tool wires the SDK
+
+
+FEATURES
+--------
+
+Mesh
+  - Target mesh picker
+  - Auto-detect skin cluster and existing blendshape nodes
+  - Add target to existing blendshape node or create a new one
+
+Sculpt
+  - Export posed mesh button (sends deformed mesh out for external sculpting)
+  - Import corrected mesh button
+  - Duplicate in Maya option (for in-Maya sculpting)
+
+Delta Extraction
+  - Runs automatically when a skin cluster is detected upstream of the
+    blendshape node
+  - Identifies correct skin cluster position in deformation history (handles
+    multiple deformers / double skin cluster setups)
+  - No student-facing controls — happens invisibly
+
+Driver Setup
+  - Driver picker — any node attribute (joint rotation, control slider,
+    custom attr)
+  - Drive range input (e.g. 0 to 90 for a joint, 0 to 1 for a face control)
+  - Creates SDK on the blendshape weight
+
+Target Management
+  - Named target list per mesh
+  - Select, rename, delete targets
+  - Update path — re-import a revised sculpt and replace the target without
+    breaking the SDK wiring
+
+
+OUT OF SCOPE (for now)
+-----------------------
+- Multi-joint / pose reader drivers (dot product, angle between vectors)
+- Mirroring correctives left to right
+- Corrective layering / in-betweens
+
+
+TECH NOTES
+----------
+- maya.cmds only, PySide6 UI
+- Delta extraction: invert the skin cluster matrix per vertex at the current
+  pose to find the pre-skin blendshape delta
+- Must correctly identify blendshape position in deformation history when
+  multiple deformers are present
+- Module name: tlmCorrectiveBS.py
+
+
+DELTA EXTRACTION — CONCEPT NOTE
+---------------------------------
+When a mesh is skinned, every vertex is transformed by a weighted combination
+of joint matrices. If you add a blendshape target without correcting for this,
+the delta is applied AND THEN the skin transforms it again — double transform,
+wrong result.
+
+Delta extraction inverts the skin deformation per vertex:
+  corrective_target_vtx = inv_skin_matrix * (sculpted_posed_vtx - posed_vtx)
+                          + base_vtx
+
+This gives a pre-skin offset that, once the skin runs at the same pose,
+produces exactly the sculpted result. Students never see this — they just
+bring in their sculpt and it works.
+
+The extraction is only as good as the skin weights. If weights are messy the
+corrective will have small residual errors — useful diagnostic for students.
