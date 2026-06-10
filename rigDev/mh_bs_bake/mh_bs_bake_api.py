@@ -198,7 +198,10 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
     bs_node = cmds.blendShape(
         target_meshes + [bs_base], name='mhBsRig', frontOfChain=True
     )[0]
-    cmds.delete(target_meshes)
+
+    # Group targets at world root, visible and ready for sculpting
+    targets_grp = cmds.group(target_meshes, name='mhBsTargets_GRP')
+    cmds.parent(targets_grp, world=True)
 
     # Wire each weight to its control channel via set-driven key
     for i, (ctrl, channel, direction, val) in enumerate(extremes):

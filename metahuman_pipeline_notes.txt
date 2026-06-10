@@ -64,48 +64,36 @@ Golden path to test: select anything on the Metahuman -> "Set Current Metahuman 
 Sequence File..." (with an Unreal FBX export) -> "Export Facial FBX".
 
 
---- TOOL 2: Blendshape Baking Pipeline (Future Build) ---
+--- TOOL 2: Blendshape Baking Pipeline ---
 
-Concept: Replace the full Metahuman DNA rig with a portable blendshape-only rig
-that can be animated using the same face controls, without requiring the Metahuman
-plugin, EmbeddedNodeRL4 node, or DNA file.
+Status: BUILT (2026-06-10) — untested in Maya, ready for in-scene test.
+Files: rigDev/mh_bs_bake/mh_bs_bake_api.py + mh_bs_bake_ui.py
 
-Use case: Teaching pipeline — students animate face controls without needing the
-full Metahuman plugin. Rig works in any Maya scene.
+Launch in Maya Script Editor (Python tab) with a Metahuman scene open:
 
-Step 1 — Single control shapes:
-- For each face control channel (tx/ty), drive to its extreme value
-- Duplicate the resulting mesh as a blendshape target
-- Reset and repeat for all ~80-100 control channels
-- Build blendshape deformer on neutral mesh with all targets
-- Connect original control values to drive blendshape weights
+    import sys
+    sys.path.insert(0, r'C:\Users\patsa\OneDrive\Documents\maya\scriptDev\rigDev\mh_bs_bake')
+    import mh_bs_bake_ui
+    mh_bs_bake_ui.show()
 
-Step 2 — Corrective shapes (key insight):
-- Use the ORIGINAL Metahuman rig as ground truth
-- For any combination pose (e.g. ctrl_smile_L + ctrl_cheekRaise_L both at max):
-  * Set BOTH rigs to identical control values
-  * Compare vertex world space positions mesh-by-mesh
-    (cmds.xform(vtx, q=True, ws=True, t=True) on every vertex of both meshes)
-  * Delta between original and blendshape rig IS the corrective
-  * If delta exceeds threshold, duplicate original mesh at that pose as corrective target
-  * Drive corrective with a combinationShape node tied to the two active controls
+Workflow:
+    1. Open a Metahuman scene with face controls visible
+    2. Set namespace (or leave ':' for root)
+    3. Click Auto to detect the face mesh (head_lod0_mesh / Face_mesh)
+    4. Phase 1 — Bake Single Shapes: creates mh_bs_base + mhBsRig blendShape,
+       wires all weights to controls via SDK
+    5. Phase 2 — Find & Apply Correctives: enumerate all positive-direction pairs,
+       compare vs original mesh, bake residual correctives, wire via combinationShape
 
-Why vertex comparison beats mathematical subtraction:
-- Skips all linear-sum math
-- Original rig is ground truth — whatever DNA/correctives/nonlinear interactions
-  are happening internally, the vertex positions capture all of it automatically
-- Works regardless of what Epic changes internally between Metahuman versions
+Corrective math (proper residual, not just raw gt capture):
+    corr_target[i] = neutral[i] + (gt[i] - bs_current[i])
+    Result: neutral + (tA-neutral) + (tB-neutral) + (corr-neutral) = gt exactly
 
-Iterative refinement:
-- Add correctives from round 1
-- Recompare both rigs against the original
-- Residual delta gets smaller each pass
-- Stop when max deviation is below acceptable threshold (e.g. 0.1mm)
-- Can run headlessly in mayapy overnight
+Corrective wiring: combinationShape inputs connect FROM the single-shape
+blendShape weights (already 0->1 via SDK) — no extra remap nodes needed.
 
-Expected corrective count: ~30-60 in practice, clustering around mouth corners,
-nasolabial area, and eye corners. Full combinatorial search with threshold filtering
-keeps the count manageable automatically.
+Expected: ~30-60 correctives, mouth corners / nasolabial / eye corners.
+Phase 2 is O(N^2) on positive channels, safe to run overnight in mayapy.
 
 
 --- DECISION TREE ---

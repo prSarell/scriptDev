@@ -39,8 +39,8 @@ def _install():
         lines = [
             "import importlib, sys",
             f"_p = r'{path}'",
-            "if _p not in sys.path:",
-            "    sys.path.insert(0, _p)",
+            "if _p in sys.path: sys.path.remove(_p)",
+            "sys.path.insert(0, _p)",
         ]
         if clear_tags:
             tags = ", ".join(f"'{t}'" for t in clear_tags)
