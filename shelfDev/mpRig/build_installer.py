@@ -46,11 +46,12 @@ def _bundle_scripts():
 
     for name in getattr(config, "RIGTOOL_SCRIPTS", []):
         path = os.path.join(RIGTOOL_DIR, name)
+        deploy_name = os.path.basename(name)
         if not os.path.exists(path):
             print(f"  WARNING: rigDev script not found — skipping: {name}")
             continue
         with open(path, "r", encoding="utf-8") as fh:
-            bundled[name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
+            bundled[deploy_name] = base64.b64encode(fh.read().encode("utf-8")).decode("ascii")
 
     return bundled
 

@@ -28,6 +28,7 @@ def _install():
         "jiffyschedule": os.path.join(root, "timeManagementDev", "jiffyScheduleDev"),
         "clothchain":    os.path.join(root, "simDev", "tmClothSimToolDev"),
         "correctivebs":  os.path.join(root, "rigDev", "correctiveBSToolDev"),
+        "mhbsbake":      os.path.join(root, "rigDev", "mh_bs_bake"),
         "rigdev":        os.path.join(root, "rigDev"),
         "metahuman":     os.path.join(root, "metahuman_facial_transfer"),
         "studiolib":     os.path.join(root, "animDev", "studiolibrary-2.20.2", "src"),
@@ -165,6 +166,16 @@ def _install():
                         "importlib.reload(tlmCorrectiveBS_api)\n"
                         "importlib.reload(tlmCorrectiveBS_ui)\n"
                         "tlmCorrectiveBS_ui.show()"),
+                },
+                {
+                    "label":   "MH BS Bake",
+                    "tooltip": "Open MH Blendshape Baker — bake Metahuman RigLogic face rig into a portable blendshape rig",
+                    "icon":    "iconMhBsBake.png",
+                    "command": _cmd(P["mhbsbake"], ["mh_bs_bake_api", "mh_bs_bake_ui"],
+                        "import mh_bs_bake_api, mh_bs_bake_ui\n"
+                        "importlib.reload(mh_bs_bake_api)\n"
+                        "importlib.reload(mh_bs_bake_ui)\n"
+                        "mh_bs_bake_ui.show()"),
                 },
             ],
         },
