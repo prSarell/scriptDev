@@ -114,15 +114,6 @@ def _install():
                         "jiffySchedule.run_jiffyschedule()"),
                 },
                 {
-                    "label":   "MHTransfer",
-                    "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
-                    "icon":    "iconMetahuman.png",
-                    "command": _cmd(P["metahuman"], ["metahuman_facial_transfer_25"],
-                        "import metahuman_facial_transfer_25 as mh\n"
-                        "importlib.reload(mh)\n"
-                        "mh.UI()"),
-                },
-                {
                     "label":   "shortCuts",
                     "tooltip": "Open shortCuts — manage and switch hotkey presets per workflow",
                     "icon":    "iconShortCuts.png",
@@ -130,6 +121,15 @@ def _install():
                         "import shortCuts\n"
                         "importlib.reload(shortCuts)\n"
                         "shortCuts.show()"),
+                },
+                {
+                    "label":   "MHTransfer",
+                    "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
+                    "icon":    "iconMetahuman.png",
+                    "command": _cmd(P["metahuman"], ["metahuman_facial_transfer_25"],
+                        "import metahuman_facial_transfer_25 as mh\n"
+                        "importlib.reload(mh)\n"
+                        "mh.UI()"),
                 },
             ],
         },

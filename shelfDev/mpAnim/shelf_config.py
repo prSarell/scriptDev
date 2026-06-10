@@ -132,17 +132,6 @@ BUTTONS = [
         ),
     },
     {
-        "label": "MHTransfer",
-        "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
-        "icon": "iconMetahuman.png",
-        "command": (
-            "import importlib\n"
-            "import metahuman_facial_transfer_25 as mh\n"
-            "importlib.reload(mh)\n"
-            "mh.UI()"
-        ),
-    },
-    {
         "label": "shortCuts",
         "tooltip": "Open shortCuts — manage and switch hotkey presets per workflow",
         "icon": "iconShortCuts.png",
@@ -152,6 +141,17 @@ BUTTONS = [
             "import shortCuts\n"
             "importlib.reload(shortCuts)\n"
             "shortCuts.show()"
+        ),
+    },
+    {
+        "label": "MHTransfer",
+        "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
+        "icon": "iconMetahuman.png",
+        "command": (
+            "import importlib\n"
+            "import metahuman_facial_transfer_25 as mh\n"
+            "importlib.reload(mh)\n"
+            "mh.UI()"
         ),
     },
 ]
