@@ -69,6 +69,7 @@ class SimClothRig():
 
 	def _buildAimChain(self, clothRigName, follicles):
 		chain_grp = cmds.group(em=True, name=clothRigName + '_aimChain_grp', p=clothRigName + '_clothRig_grp')
+		cmds.addAttr(chain_grp, ln='isInverted', at='bool', dv=0)
 		for i in range(len(follicles) - 1):
 			fol = follicles[i]
 			next_fol = follicles[i + 1]
@@ -285,6 +286,25 @@ class SimClothRig():
 			textFieldName = 'segment_' + str(i + 1) + '_textField'
 			cmds.textField(textFieldName, e=True, tx=values[((i + 1) * -1)])
 			cmds.setAttr(clothRigName + '_dynamicConstraint' + str(i + 1) + '.str', float(values[((i + 1) * -1)]))
+
+		aim_chain_grp = clothRigName + '_aimChain_grp'
+		if cmds.objExists(aim_chain_grp):
+			if not cmds.attributeQuery('isInverted', node=aim_chain_grp, exists=True):
+				cmds.addAttr(aim_chain_grp, ln='isInverted', at='bool', dv=0)
+			follicles = self._get_follicle_list(clothRigName)
+			is_inverted = cmds.getAttr(aim_chain_grp + '.isInverted')
+			fol_order = list(reversed(follicles)) if not is_inverted else follicles
+			for i in range(len(follicles) - 1):
+				prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
+				master1 = prefix + '_master_grp_01'
+				target_grp = prefix + '_target_grp'
+				for c in cmds.listRelatives(master1, type='parentConstraint') or []:
+					cmds.delete(c)
+				for c in cmds.listRelatives(target_grp, type='pointConstraint') or []:
+					cmds.delete(c)
+				cmds.parentConstraint(fol_order[i], master1, maintainOffset=False)
+				cmds.pointConstraint(fol_order[i + 1], target_grp, maintainOffset=False)
+			cmds.setAttr(aim_chain_grp + '.isInverted', not is_inverted)
 
 	def discreteDropoffUI(self, controlsList, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -764,10 +784,15 @@ class SimClothRig():
 			cmds.setKeyframe(ctrl)
 			cmds.setAttr(ctrl + '.blendParent1', 1)
 
-		# Last control parent-constrained directly to last follicle
+		# Last control parent-constrained to the anchor follicle (respects inversion)
+		aim_chain_grp = clothRigName + '_aimChain_grp'
+		is_inverted = (cmds.objExists(aim_chain_grp)
+			and cmds.attributeQuery('isInverted', node=aim_chain_grp, exists=True)
+			and cmds.getAttr(aim_chain_grp + '.isInverted'))
+		anchor_fol = follicles[0] if is_inverted else follicles[-1]
 		last_ctrl = self.controlsList[-1]
 		st, sr = self._locked_axes(last_ctrl)
-		cmds.parentConstraint(follicles[-1], last_ctrl, sr=sr, st=st, mo=True)
+		cmds.parentConstraint(anchor_fol, last_ctrl, sr=sr, st=st, mo=True)
 		cmds.setKeyframe(last_ctrl)
 		cmds.setAttr(last_ctrl + '.blendParent1', 1)
 
