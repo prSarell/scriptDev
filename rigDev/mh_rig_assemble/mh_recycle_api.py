@@ -53,15 +53,21 @@ def _find_rl_meshes():
 
 
 def _find_display_layers_for_meshes(meshes):
-    """Return display layers (excluding defaultLayer) connected to any of the meshes."""
+    """Return display layers (excluding defaultLayer) connected to any of the meshes
+    or their shape nodes."""
     layers = set()
     for mesh in meshes:
-        conns = cmds.listConnections(
-            mesh + '.drawOverride', type='displayLayer', source=True
-        ) or []
-        for layer in conns:
-            if layer != 'defaultLayer':
-                layers.add(layer)
+        nodes = [mesh] + (cmds.listRelatives(mesh, shapes=True, fullPath=True) or [])
+        for node in nodes:
+            try:
+                conns = cmds.listConnections(
+                    node + '.drawOverride', type='displayLayer', source=True
+                ) or []
+                for layer in conns:
+                    if layer != 'defaultLayer':
+                        layers.add(layer)
+            except Exception:
+                pass
     return list(layers)
 
 
@@ -149,7 +155,24 @@ def remove_rl_nodes():
 
 
 # ---------------------------------------------------------------------------
-# Button 4 — Export Standalone Scene
+# Button 4 — Delete Face Joints
+# ---------------------------------------------------------------------------
+
+def delete_face_joints(namespace=':'):
+    """
+    Delete all FACIAL_ joints except eye joints (head, neck, body and eye
+    joints are unaffected). Returns count of deleted joints.
+    """
+    prefix = '' if namespace in (':', '') else namespace
+    all_joints = cmds.ls('{}FACIAL_*'.format(prefix), type='joint') or []
+    to_delete = [j for j in all_joints if 'eye' not in j.lower()]
+    if to_delete:
+        cmds.delete(to_delete)
+    return len(to_delete)
+
+
+# ---------------------------------------------------------------------------
+# Button 5 — Export Standalone Scene
 # ---------------------------------------------------------------------------
 
 def export_standalone(export_path):
@@ -166,11 +189,13 @@ def export_standalone(export_path):
 
 def delete_bake_targets():
     """
-    Delete mhBsTargets_GRP and all child baked target meshes.
-    Returns True if the group was found and deleted.
+    Delete all mhBs*Targets_GRP groups (face, teeth, tongue, etc.)
+    and their child baked target meshes. Returns count of groups deleted.
     """
-    grp = 'mhBsTargets_GRP'
-    if cmds.objExists(grp):
-        cmds.delete(grp)
-        return True
-    return False
+    grps = cmds.ls('mhBs*Targets_GRP') or []
+    count = 0
+    for grp in grps:
+        if cmds.objExists(grp):
+            cmds.delete(grp)
+            count += 1
+    return count

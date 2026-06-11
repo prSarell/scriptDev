@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.4"
+SHELF_VERSION = "1.5"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -16,6 +16,7 @@ RIGTOOL_SCRIPTS = [
     "mh_bs_bake/mh_bs_bake_ui.py",
     "mh_rig_assemble/mh_recycle_api.py",
     "mh_rig_assemble/mh_recycle_ui.py",
+    "mh_rig_assemble/mh_dna_repair.py",
     "correctiveBSToolDev/tlmCorrectiveBS_api.py",
     "correctiveBSToolDev/tlmCorrectiveBS_ui.py",
 ]
@@ -79,6 +80,17 @@ BUTTONS = [
             "importlib.reload(mh_recycle_api)\n"
             "importlib.reload(mh_recycle_ui)\n"
             "mh_recycle_ui.show()"
+        ),
+    },
+    {
+        "label": "MH DNA Repair",
+        "tooltip": "Repair a broken Metahuman DNA file path — finds the dnaFileNode, shows the current path, and lets you browse to the correct .dna file",
+        "icon": "commandButton.png",
+        "command": (
+            "import importlib\n"
+            "import mh_dna_repair\n"
+            "importlib.reload(mh_dna_repair)\n"
+            "mh_dna_repair.show()"
         ),
     },
 ]

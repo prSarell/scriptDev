@@ -144,6 +144,15 @@ class MhRecycleUI(QtWidgets.QDialog):
         self._btn_del_rl.clicked_connect(self._remove_rl_nodes)
         root.addWidget(self._btn_del_rl)
 
+        self._btn_del_joints = _ActionButton(
+            'Delete Face Joints',
+            'Deletes all FACIAL_ joints except eye joints. Head, neck, body '
+            'and eye joints are preserved.',
+            danger=True,
+        )
+        self._btn_del_joints.clicked_connect(self._delete_face_joints)
+        root.addWidget(self._btn_del_joints)
+
         self._btn_export = _ActionButton(
             'Export Standalone Scene',
             'Opens a save dialog and exports a new .ma file containing the '
@@ -251,6 +260,16 @@ class MhRecycleUI(QtWidgets.QDialog):
         except Exception as e:
             self._log_msg('ERROR: {}'.format(e))
 
+    def _delete_face_joints(self):
+        try:
+            count = api.delete_face_joints(self._get_namespace())
+            if count:
+                self._log_msg('Deleted {} face joint(s).'.format(count))
+            else:
+                self._log_msg('No FACIAL_ joints found in scene.')
+        except Exception as e:
+            self._log_msg('ERROR: {}'.format(e))
+
     def _export_standalone(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
@@ -270,11 +289,11 @@ class MhRecycleUI(QtWidgets.QDialog):
 
     def _delete_bake_targets(self):
         try:
-            found = api.delete_bake_targets()
-            if found:
-                self._log_msg('Deleted mhBsTargets_GRP.')
+            count = api.delete_bake_targets()
+            if count:
+                self._log_msg('Deleted {} bake target group(s).'.format(count))
             else:
-                self._log_msg('mhBsTargets_GRP not found in scene.')
+                self._log_msg('No bake target groups found in scene.')
         except Exception as e:
             self._log_msg('ERROR: {}'.format(e))
 

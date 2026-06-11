@@ -93,18 +93,13 @@ def _max_delta_mm(pts_a, pts_b):
 
 
 def find_face_mesh(namespace=':'):
-    """
-    Try to auto-detect the Metahuman face mesh in the scene.
-    Returns the transform name, or None if not found.
-    """
+    """Auto-detect the Metahuman head mesh. Returns transform name or None."""
     candidates = ['head_lod0_mesh', 'Face_mesh', 'face_mesh', 'Head_mesh']
     prefix = '' if namespace in (':', '') else namespace
     for name in candidates:
         full = '{}{}'.format(prefix, name)
         if cmds.objExists(full):
             return full
-
-    # Fall back: find the mesh driven by a rigLogic deformer
     rl_nodes = cmds.ls(type='rigLogic') or []
     for rl in rl_nodes:
         future = cmds.listHistory(rl, future=True, pruneDagObjects=False) or []
@@ -114,6 +109,35 @@ def find_face_mesh(namespace=':'):
             if parents:
                 return parents[0]
     return None
+
+
+def find_teeth_mesh(namespace=':'):
+    """Auto-detect the Metahuman teeth mesh. Returns transform name or None."""
+    prefix = '' if namespace in (':', '') else namespace
+    for name in ('teeth_lod0_mesh', 'teeth_upper_lod0_mesh', 'Teeth_mesh', 'teeth_mesh'):
+        full = '{}{}'.format(prefix, name)
+        if cmds.objExists(full):
+            return full
+    return None
+
+
+
+def _derive_bs_names(face_mesh):
+    """
+    Derive blendShape node, base mesh, and targets group names from the
+    source mesh name. Preserves legacy names for the head mesh.
+    """
+    short = strip_namespace(face_mesh).lower()
+    if 'head' in short:
+        return 'mh_bs_base', 'mhBsRig', 'mhBsTargets_GRP'
+    for tag in ('teeth', 'tongue', 'saliva'):
+        if tag in short:
+            cap = tag.capitalize()
+            return 'mh_bs_{}_base'.format(tag), 'mhBs{}Rig'.format(cap), 'mhBs{}Targets_GRP'.format(cap)
+    # Generic fallback — derive from mesh name
+    tag = short.split('_lod')[0].rstrip('_')
+    cap = tag.replace('_', ' ').title().replace(' ', '')
+    return 'mh_bs_{}_base'.format(tag), 'mhBs{}Rig'.format(cap), 'mhBs{}Targets_GRP'.format(cap)
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +186,12 @@ def bake_single_shapes(face_mesh, namespace=':', progress_cb=None):
 
 
 def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
+    bs_base_name, bs_node_name, targets_grp_name = _derive_bs_names(face_mesh)
+
     zero_out_face_controls(namespace)
     _force_eval(face_mesh)
 
-    bs_base = cmds.duplicate(face_mesh, name='mh_bs_base')[0]
+    bs_base = cmds.duplicate(face_mesh, name=bs_base_name)[0]
     cmds.delete(bs_base, constructionHistory=True)
 
     extremes = collect_channel_extremes(face_controls)
@@ -196,11 +222,11 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
         progress_cb(total, total, 'Building blendShape node...')
 
     bs_node = cmds.blendShape(
-        target_meshes + [bs_base], name='mhBsRig', frontOfChain=True
+        target_meshes + [bs_base], name=bs_node_name, frontOfChain=True
     )[0]
 
     # Group targets at world root, visible and ready for sculpting
-    targets_grp = cmds.group(target_meshes, name='mhBsTargets_GRP')
+    targets_grp = cmds.group(target_meshes, name=targets_grp_name)
     cmds.parent(targets_grp, world=True)
 
     # Wire each weight to its control channel via set-driven key

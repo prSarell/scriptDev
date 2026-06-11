@@ -60,21 +60,29 @@ class MhBsBakeUI(QtWidgets.QDialog):
         ns_row.addWidget(self._ns_field)
         setup_layout.addRow('Namespace:', ns_row)
 
-        mesh_row = QtWidgets.QHBoxLayout()
-        self._mesh_field = QtWidgets.QLineEdit()
-        self._mesh_field.setPlaceholderText('e.g. head_lod0_mesh')
-        auto_btn = QtWidgets.QPushButton('Auto')
-        auto_btn.setFixedWidth(42)
-        auto_btn.setToolTip('Try to auto-detect the face mesh')
-        auto_btn.clicked.connect(self._auto_detect_mesh)
-        sel_btn = QtWidgets.QPushButton('From Sel')
-        sel_btn.setFixedWidth(60)
-        sel_btn.setToolTip('Use the currently selected mesh')
-        sel_btn.clicked.connect(self._mesh_from_selection)
-        mesh_row.addWidget(self._mesh_field)
-        mesh_row.addWidget(auto_btn)
-        mesh_row.addWidget(sel_btn)
+        def _mesh_row(placeholder, auto_slot, sel_slot):
+            row = QtWidgets.QHBoxLayout()
+            field = QtWidgets.QLineEdit()
+            field.setPlaceholderText(placeholder)
+            a_btn = QtWidgets.QPushButton('Auto')
+            a_btn.setFixedWidth(42)
+            a_btn.clicked.connect(auto_slot)
+            s_btn = QtWidgets.QPushButton('From Sel')
+            s_btn.setFixedWidth(60)
+            s_btn.clicked.connect(sel_slot)
+            row.addWidget(field)
+            row.addWidget(a_btn)
+            row.addWidget(s_btn)
+            return field, row
+
+        self._mesh_field, mesh_row = _mesh_row(
+            'e.g. head_lod0_mesh', self._auto_detect_mesh, self._mesh_from_selection)
         setup_layout.addRow('Face Mesh:', mesh_row)
+
+        self._teeth_field, teeth_row = _mesh_row(
+            'e.g. teeth_lod0_mesh', self._auto_detect_teeth, self._teeth_from_selection)
+        setup_layout.addRow('Teeth Mesh:', teeth_row)
+
 
         root.addWidget(setup_box)
 
@@ -158,9 +166,6 @@ class MhBsBakeUI(QtWidgets.QDialog):
             ns += ':'
         return ns or ':'
 
-    def _get_face_mesh(self):
-        return self._mesh_field.text().strip()
-
     def _auto_detect_mesh(self):
         ns = self._get_namespace()
         mesh = api.find_face_mesh(ns)
@@ -168,7 +173,7 @@ class MhBsBakeUI(QtWidgets.QDialog):
             self._mesh_field.setText(mesh)
             self._log_msg('Auto-detected face mesh: {}'.format(mesh))
         else:
-            self._log_msg('Could not auto-detect face mesh. Select it manually.')
+            self._log_msg('Could not auto-detect face mesh.')
 
     def _mesh_from_selection(self):
         sel = cmds.ls(selection=True, transforms=True)
@@ -176,7 +181,25 @@ class MhBsBakeUI(QtWidgets.QDialog):
             self._mesh_field.setText(sel[0])
             self._log_msg('Set face mesh: {}'.format(sel[0]))
         else:
-            self._log_msg('Nothing selected — select the face mesh transform first.')
+            self._log_msg('Nothing selected.')
+
+    def _auto_detect_teeth(self):
+        ns = self._get_namespace()
+        mesh = api.find_teeth_mesh(ns)
+        if mesh:
+            self._teeth_field.setText(mesh)
+            self._log_msg('Auto-detected teeth mesh: {}'.format(mesh))
+        else:
+            self._log_msg('Could not auto-detect teeth mesh.')
+
+    def _teeth_from_selection(self):
+        sel = cmds.ls(selection=True, transforms=True)
+        if sel:
+            self._teeth_field.setText(sel[0])
+            self._log_msg('Set teeth mesh: {}'.format(sel[0]))
+        else:
+            self._log_msg('Nothing selected.')
+
 
     def _make_progress_cb(self, bar):
         bar.setVisible(True)
@@ -194,28 +217,43 @@ class MhBsBakeUI(QtWidgets.QDialog):
     # Actions
     # ------------------------------------------------------------------
 
+    def _get_face_mesh(self):
+        return self._mesh_field.text().strip()
+
     def _run_phase1(self):
-        face_mesh = self._get_face_mesh()
         namespace = self._get_namespace()
 
-        if not face_mesh:
-            self._log_msg('ERROR: No face mesh set. Use Auto or From Sel.')
-            return
-        if not cmds.objExists(face_mesh):
-            self._log_msg('ERROR: "{}" does not exist in the scene.'.format(face_mesh))
-            return
+        meshes = [
+            (self._mesh_field.text().strip(),  'face'),
+            (self._teeth_field.text().strip(), 'teeth'),
+        ]
+        meshes = [(m, label) for m, label in meshes if m]
 
-        self._log_msg('--- Phase 1 start ---')
+        if not meshes:
+            self._log_msg('ERROR: No meshes set. Use Auto or From Sel.')
+            return
+        for mesh, _ in meshes:
+            if not cmds.objExists(mesh):
+                self._log_msg('ERROR: "{}" does not exist in the scene.'.format(mesh))
+                return
+
+        self._log_msg('--- Phase 1 start ({} mesh(es)) ---'.format(len(meshes)))
         self._p1_btn.setEnabled(False)
+        self._phase1_result = None
         cb = self._make_progress_cb(self._p1_progress)
 
         try:
-            self._phase1_result = api.bake_single_shapes(face_mesh, namespace, cb)
-            self._log_msg('Phase 1 complete: {} targets baked. bs_node={}, bs_base={}'.format(
-                len(self._phase1_result['extremes']),
-                self._phase1_result['bs_node'],
-                self._phase1_result['bs_base'],
-            ))
+            for mesh, label in meshes:
+                self._log_msg('Baking {}...'.format(label))
+                result = api.bake_single_shapes(mesh, namespace, cb)
+                self._log_msg('{} done: {} targets, bs_node={}, bs_base={}'.format(
+                    label,
+                    len(result['extremes']),
+                    result['bs_node'],
+                    result['bs_base'],
+                ))
+                if label == 'face':
+                    self._phase1_result = result
         except Exception as e:
             self._log_msg('ERROR: {}'.format(e))
         finally:
