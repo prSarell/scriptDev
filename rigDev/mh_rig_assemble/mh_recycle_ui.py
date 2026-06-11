@@ -209,8 +209,7 @@ class MhRecycleUI(QtWidgets.QDialog):
             self._log_msg('Auto-detected: {}'.format(mesh))
 
     def _sync_compare_label(self):
-        face_mesh = self._get_face_mesh()
-        if face_mesh and api.comparison_is_on(face_mesh):
+        if api.comparison_is_on():
             self._btn_compare.set_label('Disable Comparison')
 
     def _mesh_from_selection(self):
@@ -226,16 +225,15 @@ class MhRecycleUI(QtWidgets.QDialog):
     # ------------------------------------------------------------------
 
     def _toggle_comparison(self):
-        face_mesh = self._get_face_mesh()
-        if not face_mesh:
-            self._log_msg('ERROR: No face mesh set.')
-            return
         try:
-            is_on = api.toggle_comparison(face_mesh)
+            is_on = api.toggle_comparison()
             self._btn_compare.set_label(
                 'Disable Comparison' if is_on else 'Preview Comparison'
             )
-            self._log_msg('Comparison {}.'.format('ON' if is_on else 'OFF'))
+            self._log_msg('Comparison {} — {} mesh(es) templated.'.format(
+                'ON' if is_on else 'OFF',
+                len(api._find_rl_meshes()),
+            ))
         except Exception as e:
             self._log_msg('ERROR: {}'.format(e))
 

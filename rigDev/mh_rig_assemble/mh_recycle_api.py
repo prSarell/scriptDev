@@ -21,7 +21,7 @@ except ImportError:
 
 
 BS_BASE_NAME = 'mh_bs_base'
-_COMPARISON_ATTR = 'overrideDisplayType'
+_COMPARE_MARKER = '_mhCompareActive'
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +38,11 @@ def find_bs_base():
 
 def _find_rl_meshes():
     """
-    Return all transform nodes whose mesh shape has a rigLogic node in its
-    deformer history. Catches all head LODs, teeth, eyes, saliva, etc.
+    Return all transform nodes whose mesh shape is driven by a rigLogic node,
+    directly (head LODs, eyes, saliva) or via joint-driven skinClusters (teeth,
+    tongue). Teeth are not in rigLogic's direct future history because the chain
+    is rigLogic → FACIAL joint → skinCluster → mesh, which listHistory doesn't
+    traverse through joints, so we do an explicit name-pattern fallback.
     """
     rl_nodes = cmds.ls(type='rigLogic') or []
     meshes = set()
@@ -49,6 +52,14 @@ def _find_rl_meshes():
         for shape in shapes:
             parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
             meshes.update(parents)
+
+        # Teeth / tongue / saliva: driven by joints, missed by listHistory.
+        # Derive namespace from the rigLogic node name.
+        ns = (rl.rsplit(':', 1)[0] + ':') if ':' in rl else ''
+        for pattern in (ns + '*teeth*lod0*', ns + '*tongue*lod0*', ns + '*saliva*lod0*'):
+            for m in (cmds.ls(pattern, type='transform') or []):
+                meshes.add(m)
+
     return list(meshes)
 
 
@@ -75,37 +86,49 @@ def _find_display_layers_for_meshes(meshes):
 # Button 1 — Preview Comparison (toggle)
 # ---------------------------------------------------------------------------
 
-def toggle_comparison(face_mesh):
+def toggle_comparison():
     """
-    Toggle template display on the RL face mesh so it overlays mh_bs_base
-    as a grey wireframe. Returns True if comparison is now ON, False if OFF.
+    Toggle template display on ALL RL-driven face meshes (head LODs, teeth,
+    eyes, etc.) so they overlay mh_bs_base as grey wireframes simultaneously.
+
+    Works on shape-node overrides rather than transform overrides so that
+    display-layer connections on the transforms are not disturbed.
+    Uses a marker attribute on each shape to track toggle state reliably.
+
+    Returns True if comparison is now ON, False if OFF.
     """
-    if not cmds.objExists(face_mesh):
-        raise RuntimeError('Face mesh not found: {}'.format(face_mesh))
+    meshes = _find_rl_meshes()
+    if not meshes:
+        raise RuntimeError('No RigLogic-driven meshes found in scene.')
 
-    currently_on = (
-        cmds.getAttr(face_mesh + '.overrideEnabled') and
-        cmds.getAttr(face_mesh + '.overrideDisplayType') == 1
-    )
+    shapes = []
+    for mesh in meshes:
+        shapes += cmds.listRelatives(mesh, shapes=True) or []
 
-    if currently_on:
-        cmds.setAttr(face_mesh + '.overrideEnabled', False)
-        cmds.setAttr(face_mesh + '.overrideDisplayType', 0)
-        return False
-    else:
-        cmds.setAttr(face_mesh + '.overrideEnabled', True)
-        cmds.setAttr(face_mesh + '.overrideDisplayType', 1)  # Template
-        return True
+    currently_on = any(cmds.objExists(s + '.' + _COMPARE_MARKER) for s in shapes)
+
+    for shape in shapes:
+        if currently_on:
+            cmds.setAttr(shape + '.overrideEnabled', False)
+            cmds.setAttr(shape + '.overrideDisplayType', 0)
+            if cmds.objExists(shape + '.' + _COMPARE_MARKER):
+                cmds.deleteAttr(shape + '.' + _COMPARE_MARKER)
+        else:
+            cmds.setAttr(shape + '.overrideEnabled', True)
+            cmds.setAttr(shape + '.overrideDisplayType', 1)  # Template
+            if not cmds.objExists(shape + '.' + _COMPARE_MARKER):
+                cmds.addAttr(shape, longName=_COMPARE_MARKER, attributeType='bool')
+
+    return not currently_on
 
 
-def comparison_is_on(face_mesh):
-    """Return True if the face mesh is currently templated for comparison."""
-    if not cmds.objExists(face_mesh):
-        return False
-    return (
-        cmds.getAttr(face_mesh + '.overrideEnabled') and
-        cmds.getAttr(face_mesh + '.overrideDisplayType') == 1
-    )
+def comparison_is_on():
+    """Return True if comparison mode is active (marker attribute present on any RL shape)."""
+    for mesh in _find_rl_meshes():
+        for shape in (cmds.listRelatives(mesh, shapes=True) or []):
+            if cmds.objExists(shape + '.' + _COMPARE_MARKER):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
