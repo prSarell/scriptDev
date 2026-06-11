@@ -85,7 +85,7 @@ BUTTONS = [
     {
         "label": "MH DNA Repair",
         "tooltip": "Repair a broken Metahuman DNA file path — finds the dnaFileNode, shows the current path, and lets you browse to the correct .dna file",
-        "icon": "commandButton.png",
+        "icon": "iconMhDnaRepair.png",
         "command": (
             "import importlib\n"
             "import mh_dna_repair\n"
