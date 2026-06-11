@@ -1,5 +1,5 @@
 SHELF_NAME = "mpAnim"
-SHELF_VERSION = "1.0"
+SHELF_VERSION = "1.1"
 
 # Scripts from metahuman_facial_transfer/ — deployed flat to ~/maya/scripts/.
 METAHUMAN_SCRIPTS = [
@@ -145,6 +145,18 @@ BUTTONS = [
             "import shortCuts\n"
             "importlib.reload(shortCuts)\n"
             "shortCuts.show()"
+        ),
+    },
+    {
+        "label": "PbTempo",
+        "tooltip": "Open Playback Tempo Tool — keyframe variable playback speed across a shot and bake the result into rig animation",
+        "icon": "commandButton.png",
+        "script": "PlaybackTempoTool.py",
+        "command": (
+            "import importlib\n"
+            "import PlaybackTempoTool\n"
+            "importlib.reload(PlaybackTempoTool)\n"
+            "PlaybackTempoTool.show()"
         ),
     },
     {
