@@ -150,7 +150,7 @@ BUTTONS = [
     {
         "label": "PbTempo",
         "tooltip": "Open Playback Tempo Tool — keyframe variable playback speed across a shot and bake the result into rig animation",
-        "icon": "commandButton.png",
+        "icon": "iconPbTempo.png",
         "script": "PlaybackTempoTool.py",
         "command": (
             "import importlib\n"
