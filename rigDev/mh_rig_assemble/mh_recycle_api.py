@@ -126,18 +126,29 @@ def toggle_comparison():
 
     currently_on = any(cmds.objExists(s + '.' + _COMPARE_MARKER) for s in shapes)
 
+    modified = 0
     for shape in shapes:
-        if currently_on:
-            cmds.setAttr(shape + '.overrideEnabled', False)
-            cmds.setAttr(shape + '.overrideDisplayType', 0)
-            if cmds.objExists(shape + '.' + _COMPARE_MARKER):
-                cmds.deleteAttr(shape + '.' + _COMPARE_MARKER)
-        else:
-            cmds.setAttr(shape + '.overrideEnabled', True)
-            cmds.setAttr(shape + '.overrideDisplayType', 1)  # Template
-            if not cmds.objExists(shape + '.' + _COMPARE_MARKER):
-                cmds.addAttr(shape, longName=_COMPARE_MARKER, attributeType='bool')
+        try:
+            if currently_on:
+                cmds.setAttr(shape + '.overrideEnabled', False)
+                cmds.setAttr(shape + '.overrideDisplayType', 0)
+                if cmds.objExists(shape + '.' + _COMPARE_MARKER):
+                    cmds.deleteAttr(shape + '.' + _COMPARE_MARKER)
+            else:
+                cmds.setAttr(shape + '.overrideEnabled', True)
+                cmds.setAttr(shape + '.overrideDisplayType', 1)  # Template
+                if not cmds.objExists(shape + '.' + _COMPARE_MARKER):
+                    cmds.addAttr(shape, longName=_COMPARE_MARKER, attributeType='bool')
+            modified += 1
+        except Exception:
+            # Shape has a connected or locked override (e.g. MH visibility switching).
+            # Skip it — the visible LOD0 meshes are the ones that matter.
+            pass
 
+    if modified == 0:
+        raise RuntimeError(
+            'Could not modify overrides on any mesh shape — all are locked or connected.'
+        )
     return not currently_on
 
 
