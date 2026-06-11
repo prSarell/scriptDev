@@ -337,7 +337,7 @@ def buildSpine(prefix, surface_spans=3):
         cmds.group(em=True, name=(prefix + '_All001_GRP'))
         cmds.group(em=True, name=(prefix + '_All002_GRP'))
 
-        cmds.curve(name=(prefix + '_All000_CTL'), degree=3,
+        all000_ctl = cmds.curve(name=(prefix + '_All000_CTL'), degree=3,
                    point=[(-2.587e-15, 5.448e-36, 8.4899356232051044),
                           (4.086088758749157, 5.448e-36, 4.8693000688131338),
                           (6.8101479312486024, 5.448e-36, 1.2486645144211457),
@@ -351,11 +351,11 @@ def buildSpine(prefix, surface_spans=3):
                      attributeType='long')
         cmds.addAttr(longName='subControlTwoVisibility', keyable=True, min=0, max=1,
                      attributeType='long')
-        cmds.rename('curveShape1', prefix + '_All000_CTLShape')
+        cmds.rename(cmds.listRelatives(all000_ctl, shapes=True)[0], prefix + '_All000_CTLShape')
         cmds.setAttr(prefix + '_All000_CTL.subControlOneVisibility', keyable=False, channelBox=True)
         cmds.setAttr(prefix + '_All000_CTL.subControlTwoVisibility', keyable=False, channelBox=True)
 
-        cmds.curve(name=(prefix + '_All001_CTL'), degree=3,
+        all001_ctl = cmds.curve(name=(prefix + '_All001_CTL'), degree=3,
                    point=[(-2.412e-15, 4.223e-35, 7.9372176682272988),
                           (3.8185271911283234, 4.223e-35, 4.5536652958006165),
                           (6.3642119852138777, 4.223e-35, 1.170112923373918),
@@ -365,9 +365,9 @@ def buildSpine(prefix, surface_spans=3):
                           (-6.364211985213875, 4.223e-35, 1.1701129233739136),
                           (-3.8185271911283292, 4.223e-35, 4.553665295800605),
                           (-1.606e-15, 1.911e-32, 7.9372176682272988)])
-        cmds.rename('curveShape1', prefix + '_All001_CTLShape')
+        cmds.rename(cmds.listRelatives(all001_ctl, shapes=True)[0], prefix + '_All001_CTLShape')
 
-        cmds.curve(name=(prefix + '_All002_CTL'), degree=3,
+        all002_ctl = cmds.curve(name=(prefix + '_All002_CTL'), degree=3,
                    point=[(-2.195e-15, 8.120e-35, 7.246874953712628),
                           (3.4846338500471794, 8.120e-35, 4.1591815734589863),
                           (5.80772308341197, 8.120e-35, 1.0714881932053306),
@@ -377,7 +377,7 @@ def buildSpine(prefix, surface_spans=3):
                           (-5.8077230834119673, 8.120e-35, 1.0714881932053264),
                           (-3.4846338500471838, 8.120e-35, 4.1591815734589765),
                           (-1.460e-15, 1.748e-32, 7.246874953712628)])
-        cmds.rename('curveShape1', prefix + '_All002_CTLShape')
+        cmds.rename(cmds.listRelatives(all002_ctl, shapes=True)[0], prefix + '_All002_CTLShape')
 
         cmds.parent(prefix + '_All000_CTL', prefix + '_All000_GRP')
         cmds.parent(prefix + '_All001_CTL', prefix + '_All001_GRP')
