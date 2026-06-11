@@ -104,10 +104,15 @@ def _find_display_layers_for_meshes(meshes):
 # Button 1 — Preview Comparison (toggle)
 # ---------------------------------------------------------------------------
 
+_TARGET_GRPS = ('mhBsTargets_GRP', 'mhBsTeethTargets_GRP')
+
+
 def toggle_comparison():
     """
     Toggle template display on all RL-driven face meshes using transform.template —
     a standard DAG attribute that is never connected or locked by display layers.
+    Also hides/shows the bake target groups so only the templated original and
+    mh_bs_base are visible during comparison.
     Returns True if comparison is now ON, False if OFF.
     """
     meshes = [m for m in _find_rl_meshes() if cmds.objExists(m)]
@@ -117,6 +122,11 @@ def toggle_comparison():
     currently_on = any(cmds.getAttr(m + '.template') for m in meshes)
     for mesh in meshes:
         cmds.setAttr(mesh + '.template', not currently_on)
+
+    for grp in _TARGET_GRPS:
+        if cmds.objExists(grp):
+            cmds.setAttr(grp + '.visibility', currently_on)  # hide on, show off
+
     return not currently_on
 
 
