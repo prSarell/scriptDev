@@ -36,27 +36,46 @@ def find_bs_base():
     return matches[0] if matches else None
 
 
+# Name patterns used when the Metahuman plugin is not loaded (or rigLogic has
+# already been deleted). Covers all standard MH mesh names.
+_MH_MESH_PATTERNS = (
+    '*head_lod*_mesh',
+    '*teeth_lod0_mesh*',
+    '*tongue_lod0_mesh*',
+    '*saliva_lod0_mesh*',
+    '*eyeLeft_lod0_mesh*',
+    '*eyeRight_lod0_mesh*',
+)
+
+
 def _find_rl_meshes():
     """
     Return all transform nodes whose mesh shape is driven by a rigLogic node,
     directly (head LODs, eyes, saliva) or via joint-driven skinClusters (teeth,
-    tongue). Teeth are not in rigLogic's direct future history because the chain
-    is rigLogic → FACIAL joint → skinCluster → mesh, which listHistory doesn't
-    traverse through joints, so we do an explicit name-pattern fallback.
+    tongue).
+
+    When the Metahuman plugin is not loaded (rigLogic nodes appear as unknownPlugin
+    or have already been removed), falls back to searching by standard MH mesh
+    name patterns so that Preview Comparison still works.
     """
     rl_nodes = cmds.ls(type='rigLogic') or []
     meshes = set()
-    for rl in rl_nodes:
-        future = cmds.listHistory(rl, future=True, pruneDagObjects=False) or []
-        shapes = cmds.ls(future, type='mesh') or []
-        for shape in shapes:
-            parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
-            meshes.update(parents)
 
-        # Teeth / tongue / saliva: driven by joints, missed by listHistory.
-        # Derive namespace from the rigLogic node name.
-        ns = (rl.rsplit(':', 1)[0] + ':') if ':' in rl else ''
-        for pattern in (ns + '*teeth*lod0*', ns + '*tongue*lod0*', ns + '*saliva*lod0*'):
+    if rl_nodes:
+        for rl in rl_nodes:
+            future = cmds.listHistory(rl, future=True, pruneDagObjects=False) or []
+            shapes = cmds.ls(future, type='mesh') or []
+            for shape in shapes:
+                parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+                meshes.update(parents)
+            # Teeth / tongue / saliva are joint-driven and missed by listHistory.
+            ns = (rl.rsplit(':', 1)[0] + ':') if ':' in rl else ''
+            for pattern in (ns + '*teeth*lod0*', ns + '*tongue*lod0*', ns + '*saliva*lod0*'):
+                for m in (cmds.ls(pattern, type='transform') or []):
+                    meshes.add(m)
+    else:
+        # Plugin not loaded or rigLogic already removed — use name patterns.
+        for pattern in _MH_MESH_PATTERNS:
             for m in (cmds.ls(pattern, type='transform') or []):
                 meshes.add(m)
 
