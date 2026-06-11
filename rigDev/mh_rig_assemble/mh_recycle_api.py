@@ -21,7 +21,6 @@ except ImportError:
 
 
 BS_BASE_NAME = 'mh_bs_base'
-_COMPARE_MARKER = '_mhCompareActive'
 
 
 # ---------------------------------------------------------------------------
@@ -107,58 +106,26 @@ def _find_display_layers_for_meshes(meshes):
 
 def toggle_comparison():
     """
-    Toggle template display on ALL RL-driven face meshes (head LODs, teeth,
-    eyes, etc.) so they overlay mh_bs_base as grey wireframes simultaneously.
-
-    Works on shape-node overrides rather than transform overrides so that
-    display-layer connections on the transforms are not disturbed.
-    Uses a marker attribute on each shape to track toggle state reliably.
-
+    Toggle template display on all RL-driven face meshes using transform.template —
+    a standard DAG attribute that is never connected or locked by display layers.
     Returns True if comparison is now ON, False if OFF.
     """
-    meshes = _find_rl_meshes()
+    meshes = [m for m in _find_rl_meshes() if cmds.objExists(m)]
     if not meshes:
         raise RuntimeError('No RigLogic-driven meshes found in scene.')
 
-    shapes = []
+    currently_on = any(cmds.getAttr(m + '.template') for m in meshes)
     for mesh in meshes:
-        shapes += cmds.listRelatives(mesh, shapes=True) or []
-
-    currently_on = any(cmds.objExists(s + '.' + _COMPARE_MARKER) for s in shapes)
-
-    modified = 0
-    for shape in shapes:
-        try:
-            if currently_on:
-                cmds.setAttr(shape + '.overrideEnabled', False)
-                cmds.setAttr(shape + '.overrideDisplayType', 0)
-                if cmds.objExists(shape + '.' + _COMPARE_MARKER):
-                    cmds.deleteAttr(shape + '.' + _COMPARE_MARKER)
-            else:
-                cmds.setAttr(shape + '.overrideEnabled', True)
-                cmds.setAttr(shape + '.overrideDisplayType', 1)  # Template
-                if not cmds.objExists(shape + '.' + _COMPARE_MARKER):
-                    cmds.addAttr(shape, longName=_COMPARE_MARKER, attributeType='bool')
-            modified += 1
-        except Exception:
-            # Shape has a connected or locked override (e.g. MH visibility switching).
-            # Skip it — the visible LOD0 meshes are the ones that matter.
-            pass
-
-    if modified == 0:
-        raise RuntimeError(
-            'Could not modify overrides on any mesh shape — all are locked or connected.'
-        )
+        cmds.setAttr(mesh + '.template', not currently_on)
     return not currently_on
 
 
 def comparison_is_on():
-    """Return True if comparison mode is active (marker attribute present on any RL shape)."""
-    for mesh in _find_rl_meshes():
-        for shape in (cmds.listRelatives(mesh, shapes=True) or []):
-            if cmds.objExists(shape + '.' + _COMPARE_MARKER):
-                return True
-    return False
+    """Return True if any RL mesh transform is currently templated."""
+    return any(
+        cmds.objExists(m) and cmds.getAttr(m + '.template')
+        for m in _find_rl_meshes()
+    )
 
 
 # ---------------------------------------------------------------------------
