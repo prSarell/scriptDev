@@ -85,6 +85,17 @@ BUTTONS = [
         ),
     },
     {
+        "label": "MH DNA Repair",
+        "tooltip": "Repair a broken Metahuman DNA file path — finds the dnaFileNode, shows the current path, and lets you browse to the correct .dna file",
+        "icon": "iconMhDnaRepair.png",
+        "command": (
+            "import importlib\n"
+            "import mh_dna_repair\n"
+            "importlib.reload(mh_dna_repair)\n"
+            "mh_dna_repair.show()"
+        ),
+    },
+    {
         "label": "DoubleSkin",
         "tooltip": "Open Double Skin Face Rig — build a two-cluster face rig with blendshape layer and surface-riding uvPin joints",
         "icon": "iconDsfr.png",
@@ -94,17 +105,6 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
-        ),
-    },
-    {
-        "label": "MH DNA Repair",
-        "tooltip": "Repair a broken Metahuman DNA file path — finds the dnaFileNode, shows the current path, and lets you browse to the correct .dna file",
-        "icon": "iconMhDnaRepair.png",
-        "command": (
-            "import importlib\n"
-            "import mh_dna_repair\n"
-            "importlib.reload(mh_dna_repair)\n"
-            "mh_dna_repair.show()"
         ),
     },
 ]

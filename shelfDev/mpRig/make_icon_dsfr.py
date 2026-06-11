@@ -17,7 +17,7 @@ canvas = Image.new('RGBA', (SIZE, SIZE), (255, 255, 255, 255))
 draw   = ImageDraw.Draw(canvas)
 
 # ── Face oval ─────────────────────────────────────────────────────────────────
-FACE_W, FACE_H = 240, 300
+FACE_W, FACE_H = 360, 440
 face_box = [
     CX - FACE_W // 2, CY - FACE_H // 2,
     CX + FACE_W // 2, CY + FACE_H // 2,
