@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.5"
+SHELF_VERSION = "1.6"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -19,6 +19,8 @@ RIGTOOL_SCRIPTS = [
     "mh_rig_assemble/mh_dna_repair.py",
     "correctiveBSToolDev/tlmCorrectiveBS_api.py",
     "correctiveBSToolDev/tlmCorrectiveBS_ui.py",
+    "doubleSkinFaceRig/dsfr_api.py",
+    "doubleSkinFaceRig/dsfr_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -80,6 +82,18 @@ BUTTONS = [
             "importlib.reload(mh_recycle_api)\n"
             "importlib.reload(mh_recycle_ui)\n"
             "mh_recycle_ui.show()"
+        ),
+    },
+    {
+        "label": "DoubleSkin",
+        "tooltip": "Open Double Skin Face Rig — build a two-cluster face rig with blendshape layer and surface-riding uvPin joints",
+        "icon": "iconDsfr.png",
+        "command": (
+            "import importlib\n"
+            "import dsfr_api, dsfr_ui\n"
+            "importlib.reload(dsfr_api)\n"
+            "importlib.reload(dsfr_ui)\n"
+            "dsfr_ui.show()"
         ),
     },
     {
