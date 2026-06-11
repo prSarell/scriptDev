@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.2"
+SHELF_VERSION = "1.4"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -14,6 +14,10 @@ RIGTOOL_SCRIPTS = [
     "../metahuman_facial_transfer/metahuman_api_25.py",
     "mh_bs_bake/mh_bs_bake_api.py",
     "mh_bs_bake/mh_bs_bake_ui.py",
+    "mh_rig_assemble/mh_recycle_api.py",
+    "mh_rig_assemble/mh_recycle_ui.py",
+    "correctiveBSToolDev/tlmCorrectiveBS_api.py",
+    "correctiveBSToolDev/tlmCorrectiveBS_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -51,6 +55,30 @@ BUTTONS = [
             "importlib.reload(mh_bs_bake_api)\n"
             "importlib.reload(mh_bs_bake_ui)\n"
             "mh_bs_bake_ui.show()"
+        ),
+    },
+    {
+        "label": "Corrective BS",
+        "tooltip": "Open Corrective Blendshape Editor — add corrective shapes to fix deformation errors",
+        "icon": "iconCorrectiveBS.png",
+        "command": (
+            "import importlib\n"
+            "import tlmCorrectiveBS_api, tlmCorrectiveBS_ui\n"
+            "importlib.reload(tlmCorrectiveBS_api)\n"
+            "importlib.reload(tlmCorrectiveBS_ui)\n"
+            "tlmCorrectiveBS_ui.show()"
+        ),
+    },
+    {
+        "label": "MH Recycle",
+        "tooltip": "Open MH Rig Recycle — strip Metahuman plugin dependency and export a standalone blendshape face rig",
+        "icon": "iconMhRecycle.png",
+        "command": (
+            "import importlib\n"
+            "import mh_recycle_api, mh_recycle_ui\n"
+            "importlib.reload(mh_recycle_api)\n"
+            "importlib.reload(mh_recycle_ui)\n"
+            "mh_recycle_ui.show()"
         ),
     },
 ]

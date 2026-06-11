@@ -32,6 +32,11 @@ JIFFYPOMO_SCRIPTS = [
     "jiffySettingsTab.py",
 ]
 
+# Scripts from simDev/ — deployed flat to ~/maya/scripts/.
+SIMTOOL_SCRIPTS = [
+    "tmClothSimToolDev/tlmClothChain.py",
+]
+
 # Scripts from animDev/multiTool/ — all deployed flat to ~/maya/scripts/.
 MULTITOOL_SCRIPTS = [
     "multiTool.py",
@@ -85,7 +90,6 @@ BUTTONS = [
         "label": "ClothChain",
         "tooltip": "Open the Cloth Chain Sim tool — build and control nCloth chain rigs",
         "icon": "iconClothChain.png",
-        "script": "tlmClothChain.py",
         "command": (
             "import importlib\n"
             "import tlmClothChain\n"

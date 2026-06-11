@@ -1,24 +1,25 @@
 """
-make_icon_follicle.py — generates iconFollicleRig.png from a source image.
-Run with: python make_icon_follicle.py  (requires Pillow)
+make_icon_recycle.py — generates iconMhRecycle.png
+Run with: mayapy make_icon_recycle.py  (requires Pillow)
 """
 from PIL import Image, ImageDraw
 import numpy as np
 import os
 
 SIZE     = 512
-ORANGE   = (230, 110, 0)
+PINK     = (230, 80, 155)
+WHITE    = (255, 255, 255)
 CORNER_R = 60
 PAD      = 20
 
-SRC = r'C:\Users\patsa\OneDrive\Desktop\Screenshot 2026-06-10 231828.png'
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   'icons', 'iconMhBsBake.png')
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   'icons', 'iconFollicleRig.png')
+                   'icons', 'iconMhRecycle.png')
 
-# Load source as grayscale (black follicle on white bg)
 src = Image.open(SRC).convert('L')
 
-# Auto-crop to the bounding box of the dark (follicle) pixels
+# Auto-crop to dark pixels
 arr_src = np.array(src)
 dark = arr_src < 200
 rows = np.any(dark, axis=1)
@@ -29,27 +30,26 @@ margin = 8
 src = src.crop((max(c0 - margin, 0), max(r0 - margin, 0),
                 min(c1 + margin, src.width), min(r1 + margin, src.height)))
 
-# Scale to fit within padded area, preserving aspect ratio
+# Scale to fit
 max_dim = SIZE - 2 * PAD
 w, h = src.size
 scale = min(max_dim / w, max_dim / h)
 src = src.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
-# Center on a white canvas
-gray_canvas = Image.new('L', (SIZE, SIZE), 255)
+# Centre on white canvas
+canvas = Image.new('L', (SIZE, SIZE), 255)
 ox = (SIZE - src.width) // 2
 oy = (SIZE - src.height) // 2
-gray_canvas.paste(src, (ox, oy))
+canvas.paste(src, (ox, oy))
 
-# Invert: original black follicle becomes 1.0, white bg becomes 0.0
-arr = np.array(gray_canvas, dtype=float) / 255.0
-inv = 1.0 - arr
+# dark pixels → white, light pixels → pink
+arr = np.array(canvas, dtype=float) / 255.0
+inv = 1.0 - arr  # dark=1.0, light=0.0
 
-# Build RGBA: orange scaled by follicle alpha, black background
 rgba = np.zeros((SIZE, SIZE, 4), dtype=np.uint8)
-rgba[:, :, 0] = (ORANGE[0] * inv).astype(np.uint8)
-rgba[:, :, 1] = (ORANGE[1] * inv).astype(np.uint8)
-rgba[:, :, 2] = (ORANGE[2] * inv).astype(np.uint8)
+rgba[:, :, 0] = (PINK[0] + (WHITE[0] - PINK[0]) * inv).astype(np.uint8)
+rgba[:, :, 1] = (PINK[1] + (WHITE[1] - PINK[1]) * inv).astype(np.uint8)
+rgba[:, :, 2] = (PINK[2] + (WHITE[2] - PINK[2]) * inv).astype(np.uint8)
 rgba[:, :, 3] = 255
 
 result = Image.fromarray(rgba, 'RGBA')

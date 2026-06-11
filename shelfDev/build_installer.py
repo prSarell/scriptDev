@@ -38,6 +38,7 @@ RIG_TOOLS  = os.path.join(RIG_DIR, "tools")
 RIG_ICONS  = os.path.join(RIG_DIR, "icons")
 RIGDEV_DIR      = os.path.normpath(os.path.join(HERE, "..", "rigDev"))
 METAHUMAN_DIR   = os.path.normpath(os.path.join(HERE, "..", "metahuman_facial_transfer"))
+SIMDEV_DIR      = os.path.normpath(os.path.join(HERE, "..", "simDev"))
 
 
 def _load_config(shelf_dir):
@@ -88,6 +89,10 @@ def _bundle_scripts():
     for name in getattr(anim_cfg, "METAHUMAN_SCRIPTS", []):
         _read(os.path.join(METAHUMAN_DIR, name), name)
 
+    # simDev scripts
+    for name in getattr(anim_cfg, "SIMTOOL_SCRIPTS", []):
+        _read(os.path.join(SIMDEV_DIR, name), os.path.basename(name))
+
     # mpRig extra scripts + button scripts
     rig_scripts = list(rig_cfg.EXTRA_SCRIPTS)
     for btn in rig_cfg.BUTTONS:
@@ -97,9 +102,9 @@ def _bundle_scripts():
     for name in rig_scripts:
         _read(os.path.join(RIG_TOOLS, name), name)
 
-    # rigDev scripts
+    # rigDev scripts — deploy flat to scripts/ regardless of subdirectory path
     for name in getattr(rig_cfg, "RIGTOOL_SCRIPTS", []):
-        _read(os.path.join(RIGDEV_DIR, name), name)
+        _read(os.path.join(RIGDEV_DIR, name), os.path.basename(name))
 
     return bundled
 
