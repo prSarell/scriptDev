@@ -26,6 +26,11 @@ _MESH_PATTERNS = {
     'teeth': ['teeth_lod0_mesh', '*teeth*lod0*mesh*'],
 }
 
+# Substrings that disqualify a mesh match (case-insensitive), per key
+_MESH_EXCLUDES = {
+    'eyes': ['lash'],
+}
+
 # ── LODs ──────────────────────────────────────────────────────────────────────
 
 def find_lods():
@@ -180,11 +185,11 @@ def _find_meshes(key):
                 meshes.append(xform)
         return meshes
 
+    excludes = _MESH_EXCLUDES.get(key, [])
     found = []
     for pattern in _MESH_PATTERNS.get(key, []):
-        matches = cmds.ls(pattern, type='transform') or []
-        for m in matches:
-            if m not in found:
+        for m in (cmds.ls(pattern, type='transform') or []):
+            if m not in found and not any(e in m.lower() for e in excludes):
                 found.append(m)
     return found
 
