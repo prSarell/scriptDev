@@ -9,36 +9,41 @@ def gen():
     p = QtGui.QPainter(px)
     p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
 
-    # Background
+    # ── dark rounded background ───────────────────────────────────────────────
     p.setBrush(QtGui.QColor(45, 45, 55))
     p.setPen(QtCore.Qt.PenStyle.NoPen)
-    p.drawRoundedRect(0, 0, size, size, 8, 8)
+    p.drawRoundedRect(0, 0, size, size, 10, 10)
 
-    font = QtGui.QFont('Courier New', 9, QtGui.QFont.Weight.Bold)
-    p.setFont(font)
+    # ── ID card (landscape, centered) ────────────────────────────────────────
+    card_x, card_y, card_w, card_h = 5, 14, 54, 36
+    p.setBrush(QtGui.QColor(62, 62, 75))
+    p.setPen(QtGui.QPen(QtGui.QColor(190, 190, 200), 2.0))
+    p.drawRoundedRect(card_x, card_y, card_w, card_h, 6, 6)
 
-    # Dimmed "ns:" prefix
-    p.setPen(QtGui.QColor(120, 80, 80))
-    p.drawText(QtCore.QRect(5, 10, 30, 18), QtCore.Qt.AlignmentFlag.AlignLeft, 'ns:')
+    silhouette = QtGui.QColor(210, 210, 220)
 
-    # Strikethrough line over "ns:"
-    pen = QtGui.QPen(QtGui.QColor(200, 80, 80), 1.5)
-    p.setPen(pen)
-    p.drawLine(4, 19, 32, 19)
+    # ── person silhouette (left portion of card) ──────────────────────────────
+    # head
+    p.setBrush(silhouette)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    head_cx, head_cy, head_r = 18.5, 25.0, 5.0
+    p.drawEllipse(QtCore.QPointF(head_cx, head_cy), head_r, head_r)
 
-    # Arrow
-    arrow_pen = QtGui.QPen(QtGui.QColor(160, 160, 160), 1.5)
-    arrow_pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-    p.setPen(arrow_pen)
-    p.drawLine(8, 34, 56, 34)
-    p.drawLine(48, 28, 56, 34)
-    p.drawLine(48, 40, 56, 34)
+    # shoulders — ellipse clipped to card bottom edge
+    p.save()
+    clip = QtGui.QPainterPath()
+    clip.addRoundedRect(card_x, card_y, card_w, card_h, 6, 6)
+    p.setClipPath(clip)
+    p.drawEllipse(QtCore.QPointF(head_cx, 41.0), 8.5, 6.5)
+    p.restore()
 
-    # Clean name below
-    p.setPen(QtGui.QColor(140, 210, 140))
-    font2 = QtGui.QFont('Courier New', 9, QtGui.QFont.Weight.Bold)
-    p.setFont(font2)
-    p.drawText(QtCore.QRect(5, 44, 54, 16), QtCore.Qt.AlignmentFlag.AlignLeft, 'name')
+    # ── name lines (right portion of card) ───────────────────────────────────
+    line_pen = QtGui.QPen(QtGui.QColor(190, 190, 200), 3.5)
+    line_pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    p.setPen(line_pen)
+    lx = 30
+    for y, x_end in ((24, 55), (31, 55), (38, 47)):
+        p.drawLine(QtCore.QPointF(lx, y), QtCore.QPointF(x_end, y))
 
     p.end()
     out = os.path.join(os.path.dirname(__file__), 'iconNsStrip.png')
