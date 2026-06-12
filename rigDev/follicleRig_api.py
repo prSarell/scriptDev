@@ -464,7 +464,7 @@ def _fourArrowCurve(name):
     return cmds.curve(name=name, degree=1, point=points)
 
 
-def _calibrationSpan(surface, anchorPos, u, v, axis, epsilon=0.01):
+def _calibrationSpan(anchor, anchorPos, surface, u, v, axis, epsilon=0.01):
     value = u if axis == 'u' else v
     delta = epsilon if value + epsilon <= 1.0 else -epsilon
     sampleU, sampleV = (u + delta, v) if axis == 'u' else (u, v + delta)
@@ -474,7 +474,21 @@ def _calibrationSpan(surface, anchorPos, u, v, axis, epsilon=0.01):
     cmds.delete(probe)
 
     distance = sum((a - b) ** 2 for a, b in zip(anchorPos, probePos)) ** 0.5
-    return max(distance / abs(delta), 1e-6)
+    span = max(distance / abs(delta), 1e-6)
+
+    # Check whether increasing UV moves the follicle in the same direction as
+    # the anchor's local axis (X = U, Y = V). If they oppose, negate the span
+    # so the control and follicle move in the same visible direction.
+    matrix = cmds.xform(anchor, query=True, worldSpace=True, matrix=True)
+    local_axis = (matrix[0], matrix[1], matrix[2]) if axis == 'u' \
+        else (matrix[4], matrix[5], matrix[6])
+    uv_dir = tuple(p - a for p, a in zip(probePos, anchorPos))
+    dot = sum(a * b for a, b in zip(uv_dir, local_axis))
+    # delta may be negative near the UV edge — account for that when reading the sign
+    if (dot >= 0.0) != (delta > 0.0):
+        span = -span
+
+    return span
 
 
 def _linearUVChain(controlAttr, axisSpan, startingValue, sensitivityAttr, baseName, axisLabel):
@@ -516,8 +530,8 @@ def createUVDriverControl(follicle, surface, customName=None, sensitivity=1.0, u
     anchor = createFollicle(surface, startU, startV, base + '_uvAnchor')
     anchorPos = cmds.xform(anchor, query=True, worldSpace=True, translation=True)
 
-    spanU = _calibrationSpan(surface, anchorPos, startU, startV, 'u')
-    spanV = _calibrationSpan(surface, anchorPos, startU, startV, 'v')
+    spanU = _calibrationSpan(anchor, anchorPos, surface, startU, startV, 'u')
+    spanV = _calibrationSpan(anchor, anchorPos, surface, startU, startV, 'v')
 
     ctrl = _fourArrowCurve(base + '_uv_CTL') if useArrowShape else \
         cmds.circle(name=base + '_uv_CTL', normal=(0, 0, 1), radius=1, constructionHistory=False)[0]
