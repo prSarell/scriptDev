@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.9"
+SHELF_VERSION = "2.0"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -26,6 +26,8 @@ RIGTOOL_SCRIPTS = [
     "hairBuilder/hairBuilder_api.py",
     "hairBuilder/hairBuilder_ui.py",
     "nameStripper/nameStripper/ps_namespace_stripper.py",
+    "mh_body_clean/mh_body_clean_api.py",
+    "mh_body_clean/mh_body_clean_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -110,6 +112,18 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
+        ),
+    },
+    {
+        "label": "MH Body Clean",
+        "tooltip": "Open MH Body Clean — delete LODs, Unreal lights, and assign base colour textures to a Metahuman body scene",
+        "icon": "iconMhBodyClean.png",
+        "command": (
+            "import importlib\n"
+            "import mh_body_clean_api, mh_body_clean_ui\n"
+            "importlib.reload(mh_body_clean_api)\n"
+            "importlib.reload(mh_body_clean_ui)\n"
+            "mh_body_clean_ui.show()"
         ),
     },
     {
