@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.8"
+SHELF_VERSION = "1.9"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -25,6 +25,7 @@ RIGTOOL_SCRIPTS = [
     "metahumanVP/vp_shader_ui.py",
     "hairBuilder/hairBuilder_api.py",
     "hairBuilder/hairBuilder_ui.py",
+    "nameStripper/nameStripper/ps_namespace_stripper.py",
 ]
 
 # Each entry defines one shelf button.
@@ -109,6 +110,17 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
+        ),
+    },
+    {
+        "label": "NS Strip",
+        "tooltip": "Open Namespace Stripper — strip namespaces, add prefix/suffix, and revert names on selected transforms and joints",
+        "icon": "iconNsStrip.png",
+        "command": (
+            "import importlib\n"
+            "import ps_namespace_stripper\n"
+            "importlib.reload(ps_namespace_stripper)\n"
+            "ps_namespace_stripper.show()"
         ),
     },
     {
