@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.7"
+SHELF_VERSION = "1.8"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -23,6 +23,8 @@ RIGTOOL_SCRIPTS = [
     "doubleSkinFaceRig/dsfr_ui.py",
     "metahumanVP/vp_shader_api.py",
     "metahumanVP/vp_shader_ui.py",
+    "hairBuilder/hairBuilder_api.py",
+    "hairBuilder/hairBuilder_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -107,6 +109,18 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
+        ),
+    },
+    {
+        "label": "Hair Builder",
+        "tooltip": "Open Hair Builder — 6-step workflow for building, placing, and baking a hair rig onto a poly hair clump",
+        "icon": "iconHairBuilder.png",
+        "command": (
+            "import importlib\n"
+            "import hairBuilder_api, hairBuilder_ui\n"
+            "importlib.reload(hairBuilder_api)\n"
+            "importlib.reload(hairBuilder_ui)\n"
+            "hairBuilder_ui.show()"
         ),
     },
     {
