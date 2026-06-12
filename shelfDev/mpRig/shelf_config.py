@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "1.6"
+SHELF_VERSION = "1.7"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -21,6 +21,8 @@ RIGTOOL_SCRIPTS = [
     "correctiveBSToolDev/tlmCorrectiveBS_ui.py",
     "doubleSkinFaceRig/dsfr_api.py",
     "doubleSkinFaceRig/dsfr_ui.py",
+    "metahumanVP/vp_shader_api.py",
+    "metahumanVP/vp_shader_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -61,18 +63,6 @@ BUTTONS = [
         ),
     },
     {
-        "label": "Corrective BS",
-        "tooltip": "Open Corrective Blendshape Editor — add corrective shapes to fix deformation errors",
-        "icon": "iconCorrectiveBS.png",
-        "command": (
-            "import importlib\n"
-            "import tlmCorrectiveBS_api, tlmCorrectiveBS_ui\n"
-            "importlib.reload(tlmCorrectiveBS_api)\n"
-            "importlib.reload(tlmCorrectiveBS_ui)\n"
-            "tlmCorrectiveBS_ui.show()"
-        ),
-    },
-    {
         "label": "MH Recycle",
         "tooltip": "Open MH Rig Recycle — strip Metahuman plugin dependency and export a standalone blendshape face rig",
         "icon": "iconMhRecycle.png",
@@ -96,6 +86,18 @@ BUTTONS = [
         ),
     },
     {
+        "label": "VP Shader",
+        "tooltip": "Open VP Shader Assign — auto-assign colour-coded shaders to Virtual Pancakes selection sets so joint-critical edge loops are visible before sculpting",
+        "icon": "iconVpShader.png",
+        "command": (
+            "import importlib\n"
+            "import vp_shader_api, vp_shader_ui\n"
+            "importlib.reload(vp_shader_api)\n"
+            "importlib.reload(vp_shader_ui)\n"
+            "vp_shader_ui.show()"
+        ),
+    },
+    {
         "label": "DoubleSkin",
         "tooltip": "Open Double Skin Face Rig — build a two-cluster face rig with blendshape layer and surface-riding uvPin joints",
         "icon": "iconDsfr.png",
@@ -105,6 +107,18 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
+        ),
+    },
+    {
+        "label": "Corrective BS",
+        "tooltip": "Open Corrective Blendshape Editor — add corrective shapes to fix deformation errors",
+        "icon": "iconCorrectiveBS.png",
+        "command": (
+            "import importlib\n"
+            "import tlmCorrectiveBS_api, tlmCorrectiveBS_ui\n"
+            "importlib.reload(tlmCorrectiveBS_api)\n"
+            "importlib.reload(tlmCorrectiveBS_ui)\n"
+            "tlmCorrectiveBS_ui.show()"
         ),
     },
 ]

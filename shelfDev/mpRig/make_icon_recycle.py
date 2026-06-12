@@ -61,5 +61,8 @@ ImageDraw.Draw(corner_mask).rounded_rectangle(
 )
 result.putalpha(corner_mask)
 
+from make_mh_badge import add_mh_badge
+result = add_mh_badge(result)
+
 result.save(OUT)
 print(f'Saved: {OUT}')

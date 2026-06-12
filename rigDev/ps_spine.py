@@ -1,6 +1,6 @@
 import maya.cmds as cmds
 import maya.mel as mel
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtWidgets, QtCore, QtGui
 from shiboken6 import wrapInstance
 from maya import OpenMayaUI as omui
 
@@ -35,6 +35,7 @@ def buildSpine(prefix, surface_spans=3):
         cmds.keyTangent(ott='linear', g=True)
 
         cmds.select(prefix)
+        curve_shape = cmds.listRelatives(prefix, shapes=True, noIntermediate=True)[0]
         degree = cmds.getAttr(prefix + '.degree')
         span = cmds.getAttr(prefix + '.spans')
         pointNumber = degree + span
@@ -58,8 +59,27 @@ def buildSpine(prefix, surface_spans=3):
 
         cmds.select(startJoint, endJoint)
         cmds.ikHandle(sol='ikSplineSolver', name=(prefix + '_000_IKH'))
-        cmds.delete('curve1')
-        cmds.connectAttr(prefix + 'Shape.worldSpace[0]', prefix + '_000_IKH.inCurve')
+        # Wire the spine curve into the IK handle.
+        # Use isConnected to check the exact attribute — listConnections can
+        # return either the shape or the transform depending on Maya version,
+        # making name comparison unreliable.
+        if not cmds.isConnected(curve_shape + '.worldSpace[0]',
+                                 prefix + '_000_IKH.inCurve'):
+            # Disconnect whatever the IK solver auto-connected, delete its curve
+            # transform, then wire in our spine curve.
+            # Must disconnect BEFORE connectAttr — Maya keeps broken connections
+            # alive even after the source node is deleted.
+            ik_plugs = cmds.listConnections(prefix + '_000_IKH.inCurve',
+                                            source=True, plugs=True) or []
+            for plug in ik_plugs:
+                cmds.disconnectAttr(plug, prefix + '_000_IKH.inCurve')
+                src_node = plug.split('.')[0]
+                src_xform = cmds.listRelatives(src_node, parent=True) or []
+                to_del = src_xform[0] if src_xform else src_node
+                if to_del != prefix and cmds.objExists(to_del):
+                    cmds.delete(to_del)
+            cmds.connectAttr(curve_shape + '.worldSpace[0]',
+                             prefix + '_000_IKH.inCurve')
 
         connections = cmds.listConnections(prefix + '_000_IKH', t='ikEffector')
         cmds.rename(str(connections[0]), prefix + '_000_EFF')
@@ -155,29 +175,31 @@ def buildSpine(prefix, surface_spans=3):
 
         cmds.parentConstraint(prefix + '_001_CTL', prefix + '_Geo001_FK')
         cmds.setAttr(prefix + '_CTL001_BtmSDK_GRP.rotate', 0, 0, 0)
-        cmds.pointConstraint(prefix + '_000_EFF', prefix + '_CTL002_GRP', mo=False)
-        cmds.delete(prefix + '_CTL002_GRP_pointConstraint1')
+        pc = cmds.pointConstraint(prefix + '_000_EFF', prefix + '_CTL002_GRP', mo=False)[0]
+        cmds.delete(pc)
         cmds.parentConstraint(prefix + '_002_CTL', prefix + '_Geo002_FK')
-        cmds.pointConstraint(prefix + '_000_FK', prefix + '_CTL000_GRP', mo=False)
-        cmds.delete(prefix + '_CTL000_GRP_pointConstraint1')
+        pc = cmds.pointConstraint(prefix + '_000_FK', prefix + '_CTL000_GRP', mo=False)[0]
+        cmds.delete(pc)
         cmds.parentConstraint(prefix + '_000_CTL', prefix + '_Geo000_FK')
 
-        cmds.spaceLocator(n='up')
-        cmds.parent('up', prefix + '_000_FK')
-        cmds.setAttr('up.translate', 0, 0, -2)
-        cmds.setAttr('up.rotate', 0, 0, 0)
-        cmds.aimConstraint(prefix + '_001_FK', prefix + '_CTL000_GRP',
-                           aimVector=[0, 1, 0], worldUpType='object', worldUpObject='up')
-        cmds.delete(prefix + '_CTL000_GRP_aimConstraint1')
+        up_loc = prefix + '_up_LOC'
+        cmds.spaceLocator(n=up_loc)
+        cmds.parent(up_loc, prefix + '_000_FK')
+        cmds.setAttr(up_loc + '.translate', 0, 0, -2)
+        cmds.setAttr(up_loc + '.rotate', 0, 0, 0)
+        ac = cmds.aimConstraint(prefix + '_001_FK', prefix + '_CTL000_GRP',
+                                aimVector=[0, 1, 0], worldUpType='object',
+                                worldUpObject=up_loc)[0]
+        cmds.delete(ac)
 
-        cmds.parent('up', endJoint)
-        cmds.setAttr('up.translate', 0, 0, -2)
-        cmds.setAttr('up.rotate', 0, 0, 0)
-        cmds.aimConstraint(lastJoint, prefix + '_CTL002_GRP',
-                           aimVector=[0, -1, 0], upVector=[0, 0, -1],
-                           worldUpType='object', worldUpObject='up')
-        cmds.delete(prefix + '_CTL002_GRP_aimConstraint1')
-        cmds.delete('up')
+        cmds.parent(up_loc, endJoint)
+        cmds.setAttr(up_loc + '.translate', 0, 0, -2)
+        cmds.setAttr(up_loc + '.rotate', 0, 0, 0)
+        ac = cmds.aimConstraint(lastJoint, prefix + '_CTL002_GRP',
+                                aimVector=[0, -1, 0], upVector=[0, 0, -1],
+                                worldUpType='object', worldUpObject=up_loc)[0]
+        cmds.delete(ac)
+        cmds.delete(up_loc)
 
         cmds.group(em=True, name=prefix + '_UpTwist000_NULL')
         cmds.group(em=True, name=prefix + '_DwnTwist000_NULL')
@@ -197,10 +219,10 @@ def buildSpine(prefix, surface_spans=3):
         cmds.setAttr(prefix + '_Geo001_GRP.translate', 0, 0, 0)
         cmds.setAttr(prefix + '_Geo001_GRP.rotate', 0, 0, 0)
 
-        cmds.parentConstraint(prefix + '_000_CTL', prefix + '_Geo000_GRP')
-        cmds.delete(prefix + '_Geo000_GRP_parentConstraint1')
-        cmds.parentConstraint(prefix + '_000_CTL', prefix + '_Geo002_GRP')
-        cmds.delete(prefix + '_Geo002_GRP_parentConstraint1')
+        pc = cmds.parentConstraint(prefix + '_000_CTL', prefix + '_Geo000_GRP')[0]
+        cmds.delete(pc)
+        pc = cmds.parentConstraint(prefix + '_000_CTL', prefix + '_Geo002_GRP')[0]
+        cmds.delete(pc)
 
         for i in range(0, pointNumber):
             node = cmds.createNode('multiplyDivide',
@@ -225,7 +247,7 @@ def buildSpine(prefix, surface_spans=3):
                              prefix + '_' + str(i).zfill(3) + '_JNT.rotateX')
 
         cmds.createNode('curveInfo', n=(prefix + '_000_CIN'))
-        cmds.connectAttr(prefix + 'Shape.worldSpace', prefix + '_000_CIN.inputCurve')
+        cmds.connectAttr(curve_shape + '.worldSpace', prefix + '_000_CIN.inputCurve')
         cmds.createNode('multiplyDivide', n=(prefix + '_SquashStretch000_MDN'))
         cmds.setAttr(prefix + '_SquashStretch000_MDN.operation', 2)
         cmds.connectAttr(prefix + '_000_CIN.arcLength',
@@ -382,10 +404,10 @@ def buildSpine(prefix, surface_spans=3):
         cmds.parent(prefix + '_All000_CTL', prefix + '_All000_GRP')
         cmds.parent(prefix + '_All001_CTL', prefix + '_All001_GRP')
         cmds.parent(prefix + '_All002_CTL', prefix + '_All002_GRP')
-        cmds.parentConstraint(prefix + '_000_CTL', prefix + '_All000_GRP')
+        pc = cmds.parentConstraint(prefix + '_000_CTL', prefix + '_All000_GRP')[0]
+        cmds.delete(pc)
         cmds.parentConstraint(prefix + '_All000_CTL', prefix + '_All001_GRP')
         cmds.parentConstraint(prefix + '_All001_CTL', prefix + '_All002_GRP')
-        cmds.delete(prefix + '_All000_GRP_parentConstraint1')
         cmds.group(em=True, name=(prefix + '_NoTransform000_GRP'))
 
         cmds.connectAttr(prefix + '_All000_CTL.subControlOneVisibility',
@@ -414,8 +436,8 @@ def buildSpine(prefix, surface_spans=3):
 
         cmds.parentConstraint(prefix + '_All002_CTL', prefix + '_CTL000_GRP')
         cmds.group(em=True, name=prefix + '_CTL002constraint_GRP')
-        cmds.parentConstraint(prefix + '_002_CTL', prefix + '_CTL002constraint_GRP')
-        cmds.delete(prefix + '_CTL002constraint_GRP_parentConstraint1')
+        pc = cmds.parentConstraint(prefix + '_002_CTL', prefix + '_CTL002constraint_GRP')[0]
+        cmds.delete(pc)
         cmds.parentConstraint(prefix + '_CTL002constraint_GRP', prefix + '_CTL002_GRP')
         cmds.parent(prefix + '_CTL002constraint_GRP', prefix + '_All002_CTL')
         cmds.parent(prefix + '_000_IKH', prefix + '_All000_CTL')
@@ -462,9 +484,9 @@ def buildSpine(prefix, surface_spans=3):
         for i in range(0, totalSpineJoints):
             cmds.select(clear=True)
             cmds.joint(name=prefix + '_' + str(i).zfill(3) + '_SKL')
-            cmds.parentConstraint(prefix + '_' + str(i).zfill(3) + '_JNT',
-                                  prefix + '_' + str(i).zfill(3) + '_SKL')
-            cmds.delete(prefix + '_' + str(i).zfill(3) + '_SKL_parentConstraint1')
+            pc = cmds.parentConstraint(prefix + '_' + str(i).zfill(3) + '_JNT',
+                                       prefix + '_' + str(i).zfill(3) + '_SKL')[0]
+            cmds.delete(pc)
             cmds.setAttr(prefix + '_' + str(i).zfill(3) + '_SKL.rotate', 0, 0, 0)
             cmds.parentConstraint(prefix + '_' + str(i).zfill(3) + '_JNT',
                                   prefix + '_' + str(i).zfill(3) + '_SKL')
@@ -557,6 +579,31 @@ def hideTorso(prefix):
         cmds.setAttr(prefix + '_Joint_' + str(i).zfill(3) + '_FOL.visibility', 0)
 
 
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _spine_preview(spans, w=100, h=20):
+    px = QtGui.QPixmap(w, h)
+    px.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(px)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    pad_x, pad_y = 1, 2
+    rect = QtCore.QRectF(pad_x, pad_y, w - 2 * pad_x, h - 2 * pad_y)
+    p.setBrush(QtGui.QColor(72, 72, 72))
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    p.drawRoundedRect(rect, 2, 2)
+    p.setPen(QtGui.QPen(QtGui.QColor(160, 160, 160), 1.0))
+    p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(rect, 2, 2)
+    p.setPen(QtGui.QPen(QtGui.QColor(140, 140, 140), 0.8))
+    seg = rect.width() / spans
+    for i in range(1, spans):
+        x = rect.left() + i * seg
+        p.drawLine(QtCore.QPointF(x, rect.top() + 1),
+                   QtCore.QPointF(x, rect.bottom() - 1))
+    p.end()
+    return px
+
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 class SpineRigUI(QtWidgets.QDialog):
@@ -582,13 +629,6 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
-        # Prefix
-        prefix_row = QtWidgets.QHBoxLayout()
-        prefix_row.addWidget(QtWidgets.QLabel('Prefix:'))
-        self._prefix = QtWidgets.QLineEdit('spine')
-        prefix_row.addWidget(self._prefix)
-        layout.addLayout(prefix_row)
-
         # Draw button
         draw_btn = QtWidgets.QPushButton('Draw Spine Curve')
         draw_btn.clicked.connect(self._draw_curve)
@@ -596,28 +636,25 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
-        # Fidelity slider
-        fidelity_header = QtWidgets.QHBoxLayout()
-        fidelity_header.addWidget(QtWidgets.QLabel('Surface Fidelity:'))
-        fidelity_header.addStretch()
-        self._fidelity_label = QtWidgets.QLabel('3 spans')
-        fidelity_header.addWidget(self._fidelity_label)
-        layout.addLayout(fidelity_header)
-
-        slider_row = QtWidgets.QHBoxLayout()
-        slider_row.addWidget(QtWidgets.QLabel('Low'))
-        self._fidelity = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self._fidelity.setMinimum(3)
-        self._fidelity.setMaximum(9)
-        self._fidelity.setValue(3)
-        self._fidelity.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
-        self._fidelity.setTickInterval(1)
-        self._fidelity.valueChanged.connect(
-            lambda v: self._fidelity_label.setText(f'{v} spans')
-        )
-        slider_row.addWidget(self._fidelity)
-        slider_row.addWidget(QtWidgets.QLabel('High'))
-        layout.addLayout(slider_row)
+        # Surface fidelity — radio buttons with spine segment preview
+        fidelity_box = QtWidgets.QGroupBox('Surface Fidelity')
+        fidelity_layout = QtWidgets.QVBoxLayout(fidelity_box)
+        fidelity_layout.setSpacing(6)
+        self._fidelity_group = QtWidgets.QButtonGroup(self)
+        for spans in (3, 5, 7, 9):
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(10)
+            rb = QtWidgets.QRadioButton(str(spans))
+            if spans == 3:
+                rb.setChecked(True)
+            self._fidelity_group.addButton(rb, spans)
+            preview = QtWidgets.QLabel()
+            preview.setPixmap(_spine_preview(spans))
+            row.addWidget(rb)
+            row.addWidget(preview)
+            row.addStretch()
+            fidelity_layout.addLayout(row)
+        layout.addWidget(fidelity_box)
 
         layout.addWidget(_separator())
 
@@ -627,50 +664,50 @@ class SpineRigUI(QtWidgets.QDialog):
         build_btn.clicked.connect(self._build)
         layout.addWidget(build_btn)
 
+        # Log
+        log_box = QtWidgets.QGroupBox('Log')
+        log_layout = QtWidgets.QVBoxLayout(log_box)
+        self._log = QtWidgets.QPlainTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setMaximumHeight(140)
+        self._log.setFont(QtGui.QFont('Courier New', 9))
+        log_layout.addWidget(self._log)
+        layout.addWidget(log_box)
+
+    def _log_msg(self, msg):
+        self._log.appendPlainText(msg)
+        self._log.verticalScrollBar().setValue(
+            self._log.verticalScrollBar().maximum()
+        )
+
     def _draw_curve(self):
         mel.eval('CVCurveTool')
 
     def _build(self):
-        prefix = self._prefix.text().strip()
-        if not prefix:
-            QtWidgets.QMessageBox.warning(self, 'ps_spine', 'Please enter a prefix.')
-            return
-
         sel = cmds.ls(sl=True)
         if not sel:
-            QtWidgets.QMessageBox.warning(
-                self, 'ps_spine',
-                'Select the spine curve before building.'
-            )
+            self._log_msg('ERROR: Select the spine curve before building.')
             return
 
-        curve = sel[0]
-        shapes = cmds.listRelatives(curve, shapes=True) or []
+        prefix = sel[0]
+        shapes = cmds.listRelatives(prefix, shapes=True, noIntermediate=True) or []
         if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
-            QtWidgets.QMessageBox.warning(
-                self, 'ps_spine',
-                f'"{curve}" is not a NURBS curve.'
-            )
+            self._log_msg(f'ERROR: "{prefix}" is not a NURBS curve.')
             return
 
-        actual_prefix = cmds.rename(curve, prefix) if curve != prefix else curve
-        if actual_prefix != prefix:
-            self._prefix.setText(actual_prefix)
-
-        spans = self._fidelity.value()
+        spans = self._fidelity_group.checkedId()
+        self._log_msg(f'Building "{prefix}" ({spans} spans)...')
 
         try:
-            buildSpine(actual_prefix, surface_spans=spans)
-            hideTorso(actual_prefix)
+            buildSpine(prefix, surface_spans=spans)
+            hideTorso(prefix)
+            self._log_msg(f'Done — "{prefix}" spine rig built.')
             cmds.inViewMessage(
-                amg=f'<b>{actual_prefix}</b> spine rig built.',
+                amg=f'<b>{prefix}</b> spine rig built.',
                 pos='midCenter', fade=True
             )
         except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self, 'ps_spine',
-                f'Build failed:\n{str(e)}'
-            )
+            self._log_msg(f'ERROR: {e}')
 
 
 def _separator():
