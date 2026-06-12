@@ -115,9 +115,10 @@ BUTTONS = [
         "tooltip": "Open JiffyPomo — Pomodoro timer and task tracker for Maya artists",
         "icon": "iconJiffy.png",
         "command": (
-            "import importlib\n"
+            "import sys\n"
+            "for _m in [k for k in sys.modules if k.startswith('jiffy') or k == 'Jiffypomo']:\n"
+            "    del sys.modules[_m]\n"
             "import Jiffypomo\n"
-            "importlib.reload(Jiffypomo)\n"
             "Jiffypomo.run_jiffypomo()"
         ),
     },

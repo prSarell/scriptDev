@@ -31,8 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 class JiffyPomo(QtWidgets.QWidget):
+    OBJECT_NAME = 'JiffyPomoMainWindow'
+
     def __init__(self, parent=None):
         super(JiffyPomo, self).__init__(parent)
+        self.setObjectName(self.OBJECT_NAME)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("JiffyPomo")
         self.resize(600, 950)
@@ -426,25 +429,21 @@ class JiffyPomo(QtWidgets.QWidget):
 
 
 def run_jiffypomo():
+    # Close any existing windows regardless of which module load created them.
+    # Module globals are reset on reload so we search Qt's widget tree instead.
     try:
-        app = QtWidgets.QApplication.instance()
-        if not app:
-            logger.debug("No existing QApplication, creating new one")
-            app = QtWidgets.QApplication([])
+        main_ptr = omui.MQtUtil.mainWindow()
+        main_win = wrapInstance(int(main_ptr), QtWidgets.QWidget)
+        for w in main_win.findChildren(QtWidgets.QWidget, JiffyPomo.OBJECT_NAME):
+            w.close()
     except Exception as e:
-        logger.error(f"Error initializing QApplication: {str(e)}")
-        app = QtWidgets.QApplication([])
+        logger.debug(f"Could not close existing JiffyPomo window: {e}")
 
-    global jiffypomo_window
-    if 'jiffypomo_window' in globals() and isinstance(jiffypomo_window, QtWidgets.QWidget):
-        jiffypomo_window.close()
-        logger.debug("Closed existing JiffyPomo window")
-
-    jiffypomo_window = JiffyPomo()
-    jiffypomo_window.show()
-    jiffypomo_window.raise_()
+    window = JiffyPomo()
+    window.show()
+    window.raise_()
     logger.debug("JiffyPomo window launched")
-    return jiffypomo_window
+    return window
 
 
 if __name__ == "__main__":
