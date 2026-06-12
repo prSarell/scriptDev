@@ -186,8 +186,6 @@ def _find_meshes(key):
         for m in matches:
             if m not in found:
                 found.append(m)
-        if found:
-            break
     return found
 
 
