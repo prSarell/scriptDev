@@ -17,6 +17,7 @@ MH_ICONS = [
     'iconMhRecycle.png',
     'iconMhDnaRepair.png',
     'iconVpShader.png',
+    'iconMhBodyClean.png',
 ]
 
 # Badge geometry — centred at (463, 463) inside the 60px rounded corner

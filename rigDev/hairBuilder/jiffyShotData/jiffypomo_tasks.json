@@ -1,0 +1,14 @@
+{
+    "stage": "",
+    "date": "June 12th",
+    "due": "",
+    "artist_time_hours": 0,
+    "artist_time_minutes": 0,
+    "tasks": "",
+    "timer_state": {
+        "is_running": false,
+        "original_seconds": 0,
+        "remaining_seconds": 0,
+        "start_time": null
+    }
+}

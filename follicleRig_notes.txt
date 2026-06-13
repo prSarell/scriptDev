@@ -1,0 +1,157 @@
+Follicle Rig Tool - Notes
+=========================
+Date: 2026-06-07
+
+--- WHAT IT DOES ---
+
+A rigging-shelf tool for follicle-driven secondary rigs - the classic example
+being a bat wing: a NURBS or polygon surface is skinned to the rig's main
+joints (the wing bones), follicles are scattered across that surface, and a
+joint riding under each follicle drives secondary geometry (the wing
+membrane). Chain: surface drives follicle -> follicle drives joint -> joint
+drives character. Nothing fancy or expensive happens anywhere in that chain,
+which is the whole point - cheap, robust secondary motion.
+
+Built in rigDev/follicleRig_api.py (~600 lines, all logic, fully unit-tested
+headlessly via mayapy) and rigDev/follicleRig_ui.py (PySide6 shelf window).
+
+--- TOOL 1: FOLLICLE PLACEMENT (3 modes, one shared backend) ---
+
+All three modes funnel through buildFollicleRig(), which creates one
+follicle + one driven joint per (u, v) pair and names them
+<base>_<NN>_FOL / <base>_<NN>_JNT.
+
+1. NURBS Grid - evenly spaced uCount x vCount follicles across a NURBS
+   surface, edge to edge, row-major.
+2. Polygon Vertices - place a follicle at each selected mesh vertex's UV,
+   in selection order (validates single-mesh selection and that the mesh
+   is UV-mapped).
+3. Curve on Surface - walk a curve's CVs in order, find each one's closest
+   UV on the surface, and place a follicle there. Named from the curve
+   (not the surface), so a hand-drawn "battWingPath" curve produces
+   battWingPath_00_FOL, battWingPath_01_FOL, etc. Warns (without failing)
+   if a CV sits too far from the surface - usually a sign the curve wasn't
+   drawn live/snapped onto it.
+
+Key lesson: closestPointOnSurface (NURBS) has no inputMatrix and works in
+object space, while closestPointOnMesh (poly) has inputMatrix and works in
+world space - the NURBS path needs explicit world<->object conversions
+(MMatrix/MPoint). Either way, these closest-point nodes are built, queried
+and deleted immediately - left connected and live they're an iterative
+search that jitters near seams/poles and costs real performance every frame.
+
+--- TOOL 2: UV-DRIVER CONTROL (the hard problem - and its solution) ---
+
+Goal: a control whose translate repositions a follicle on its surface (drags
+it across the U/V grid), feeling consistent - not racing ahead of or lagging
+behind the drag - regardless of the surface's scale.
+
+Fixed convention: control.translateX always drives parameterU,
+translateY always drives parameterV, translateZ is left free as a lift-off
+axis. Rotates are locked, hidden and unkeyable.
+
+THE SNAG: a fixed translateX -> U mapping needs to be calibrated against
+"how far you can drag before you hit the end of the surface" - and that
+calibration has to be measured along the control's own local X axis. But a
+surface's own local-axis layout is arbitrary (Maya's default nurbsPlane, for
+example, lies with its surface normal along its own local X - giving it
+~zero span in local X and a divide-by-zero). This isn't a world-space/scene-
+orientation problem - it's intrinsic to how each surface happens to be
+modelled, and varies model to model.
+
+THE FIX (proposed by the user, who built a version of this rig 15+ years
+ago): build a second, static "anchor" follicle at the exact same (u, v) as
+the driven follicle, and parent the control under the anchor at local origin.
+
+This works because of a fact about Maya follicles that isn't obvious but is
+fundamental to how groomed hair stays aligned to a deforming surface: a
+follicle transform's local axes are ALWAYS oriented to the surface's own
+U/V grain at that point - local X = the surface's U-tangent direction,
+local Y = the V-tangent direction, local Z = the surface normal. (Confirmed
+empirically: built a follicle on an arbitrarily rotated surface, queried the
+true tangent/normal vectors via pointOnSurfaceInfo, and the dot products
+were exactly 1.000 / 0.000 / 0.000 for each axis pairing.)
+
+So the anchor follicle hands the control a perfectly UV-aligned coordinate
+frame for free - no custom tangent-vector math, no per-surface special
+casing, and the control's rest position becomes exactly (0, 0, 0), which
+collapses the calibration network back down to its simplest form (no
+delta-from-rest subtraction needed).
+
+Calibration itself uses a one-shot finite-difference probe
+(_calibrationSpan): nudge a temporary follicle by a small epsilon in U or V,
+measure the world-space distance moved, divide by epsilon to get "world
+units per unit change in U/V" at that exact point, then delete the probe.
+This is deliberately surface-type-agnostic - it works identically for NURBS
+and polygon meshes, where a NURBS-only node like pointOnSurfaceInfo could
+not have been used.
+
+Per-axis remap network: multiplyDivide(x sensitivity) -> multiplyDivide
+(/ calibration span) -> plusMinusAverage(+ starting U or V) -> clamp(0-1)
+-> follicle.parameterU/V. `sensitivity` is a non-keyable, channel-box-only
+rigger tuning knob - lock and hide it once tuned, before handoff to
+animators.
+
+Control shape: a flat 4-pointed arrow/cross in the XY plane (normal +Z),
+matching the new axis convention.
+
+--- TOOL 3: JOINT-DRIVER CONTROL ---
+
+Goal: give the animator extra translate/rotate offset on the joint under
+each follicle, at very low cost - "nothing fancy happening".
+
+Solution: build a "stop sign on a pole" control (a vertical line rising
+along local Z - the surface normal once parented under a follicle - capped
+with an octagon; tall and large enough to be easy to see and easy to select,
+built as two curve shapes under one transform so either part selects it).
+Parent it as a SIBLING of the joint under the follicle, zero it to coincide
+exactly with the follicle's pivot/orientation, then parent-constrain the
+joint to it.
+
+Because both control and joint share the follicle as their parent and
+coincide at rest, the constraint reduces to a plain mirror of the control's
+local transform onto the joint's - no compensation, no fighting, minimal
+evaluation cost. All channels (translate AND rotate) stay open, keyable and
+unlocked - there's no calibration math on this one at all.
+
+--- STATUS ---
+
+Tasks #1-7 complete (placement modes, both controls, combined PySide6 UI -
+all logic validated headlessly via mayapy with passing assertions across
+default-orientation, rotated/offset, differently-scaled, and polygon-mesh
+surfaces). Temp test scripts were written, run, and deleted each time.
+
+Task #8 - testing all placement modes and both controls together inside an
+interactive Maya session - is the only thing left. The UI cannot be tested
+headlessly: QApplication constructs fine under mayapy, but instantiating any
+QWidget segfaults outside Maya's own process (same limitation hit with the
+Metahuman tool's UI - Maya's bundled Qt runtime isn't designed to run
+standalone).
+
+User feedback: "90% there, a few tweaks to look at later" - not yet
+itemized; ask what they are when picking this back up.
+
+--- LAUNCH BUTTON ---
+
+Paste into the Maya Script Editor (Python tab), or wire up as a shelf button:
+
+    import sys
+    sys.path.insert(0, r'C:\Users\patsa\OneDrive\Documents\maya\scriptDev\rigDev')
+
+    import follicleRig_ui
+    follicleRig_ui.show()
+
+If you edit the modules and want to re-launch without restarting Maya:
+
+    import importlib
+    import follicleRig_api
+    import follicleRig_ui
+    importlib.reload(follicleRig_api)
+    importlib.reload(follicleRig_ui)
+    follicleRig_ui.show()
+
+Golden path to test (Task #8): create follicles with each of the 3 placement
+modes on a real surface -> select a follicle + its surface and add a UV
+driver control -> drag it and confirm the follicle moves smoothly across the
+surface without racing ahead or lagging -> select a follicle + its joint and
+add a joint driver control -> move/rotate it and confirm the joint follows.

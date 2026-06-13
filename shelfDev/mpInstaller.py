@@ -98,6 +98,20 @@ def _install():
         _copy(os.path.join(RIGDEV_DIR, name), scripts_dir, os.path.basename(name))
 
     # --- Icons ---
+    # Generate any icons that have a gen_icon*.py script alongside them.
+    for src_icons_dir in (ANIM_ICONS, RIG_ICONS):
+        if not os.path.isdir(src_icons_dir):
+            continue
+        for fname in sorted(os.listdir(src_icons_dir)):
+            if fname.startswith("gen_icon") and fname.endswith(".py"):
+                script_path = os.path.join(src_icons_dir, fname)
+                try:
+                    with open(script_path, "r", encoding="utf-8") as fh:
+                        code = fh.read()
+                    exec(compile(code, script_path, "exec"), {"__file__": script_path})
+                except Exception as e:
+                    print("[mpInstaller] WARNING: icon gen failed for {}: {}".format(fname, e))
+
     for btn in anim_cfg.BUTTONS:
         name = btn.get("icon", "")
         if name:

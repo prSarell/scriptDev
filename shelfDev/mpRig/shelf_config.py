@@ -1,5 +1,5 @@
 SHELF_NAME = "mpRig"
-SHELF_VERSION = "2.0"
+SHELF_VERSION = "2.1"
 
 # Scripts deployed to ~/maya/scripts/ but with no shelf button.
 EXTRA_SCRIPTS = []
@@ -147,6 +147,15 @@ BUTTONS = [
             "importlib.reload(hairBuilder_api)\n"
             "importlib.reload(hairBuilder_ui)\n"
             "hairBuilder_ui.show()"
+        ),
+    },
+    {
+        "label": "ngSkinTools",
+        "tooltip": "Open ngSkinTools2 — layer-based skin weight painting and editing",
+        "icon": "iconNgSkin.png",
+        "command": (
+            "import ngSkinTools2\n"
+            "ngSkinTools2.open_ui()"
         ),
     },
     {

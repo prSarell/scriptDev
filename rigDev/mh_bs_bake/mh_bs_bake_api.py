@@ -159,13 +159,17 @@ def collect_channel_extremes(face_controls):
     return extremes
 
 
-def bake_single_shapes(face_mesh, namespace=':', progress_cb=None):
+def bake_single_shapes(face_mesh, namespace=':', in_betweens=0, progress_cb=None):
     """
     Bake all single-control extreme poses into blendshape targets.
 
     Args:
         face_mesh (str): Metahuman face mesh transform name.
         namespace (str): rig namespace (trailing colon included, or ':').
+        in_betweens (int): number of evenly-spaced in-between targets to bake
+            per shape (0 = none, max 6). In-betweens capture the arc of motion
+            at fractional weight values so deformation travels a curve rather
+            than a straight line between neutral and the extreme.
         progress_cb (callable): optional fn(current, total, label).
 
     Returns:
@@ -180,12 +184,12 @@ def bake_single_shapes(face_mesh, namespace=':', progress_cb=None):
 
     cmds.undoInfo(stateWithoutFlush=False)
     try:
-        return _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb)
+        return _bake_single_shapes_inner(face_mesh, namespace, face_controls, in_betweens, progress_cb)
     finally:
         cmds.undoInfo(stateWithoutFlush=True)
 
 
-def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
+def _bake_single_shapes_inner(face_mesh, namespace, face_controls, in_betweens, progress_cb):
     bs_base_name, bs_node_name, targets_grp_name = _derive_bs_names(face_mesh)
 
     zero_out_face_controls(namespace)
@@ -196,22 +200,42 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
 
     extremes = collect_channel_extremes(face_controls)
     total = len(extremes)
+    total_steps = total * (1 + in_betweens)
+    step = 0
+
     target_meshes = []
+    ib_data = []  # (extreme_idx, fraction, mesh_name)
 
     for i, (ctrl, channel, direction, val) in enumerate(extremes):
-        if progress_cb:
-            label = 'Baking {}.{} ({})'.format(strip_namespace(ctrl), channel, direction)
-            progress_cb(i, total, label)
-
         ctrl_attr = '{}.{}'.format(ctrl, channel)
+        safe = strip_namespace(ctrl).replace('CTRL_', '').replace(':', '_')
+
+        # In-between poses at evenly-spaced fractions between neutral and extreme
+        for j in range(1, in_betweens + 1):
+            fraction = j / (in_betweens + 1)
+            if progress_cb:
+                progress_cb(step, total_steps,
+                            'IB {}/{} — {}.{} ({})'.format(
+                                j, in_betweens, strip_namespace(ctrl), channel, direction))
+            cmds.setAttr(ctrl_attr, val * fraction)
+            _force_eval(face_mesh)
+            ib_name = 'mhBs_{}_{}_{}_ib{:02d}'.format(safe, channel, direction, j)
+            ib_mesh = cmds.duplicate(face_mesh, name=ib_name)[0]
+            cmds.delete(ib_mesh, constructionHistory=True)
+            ib_data.append((i, fraction, ib_mesh))
+            step += 1
+
+        # Full extreme
+        if progress_cb:
+            progress_cb(step, total_steps,
+                        'Baking {}.{} ({})'.format(strip_namespace(ctrl), channel, direction))
         cmds.setAttr(ctrl_attr, val)
         _force_eval(face_mesh)
-
-        safe = strip_namespace(ctrl).replace('CTRL_', '').replace(':', '_')
         target_name = 'mhBs_{}_{}_{}'.format(safe, channel, direction)
         target = cmds.duplicate(face_mesh, name=target_name)[0]
         cmds.delete(target, constructionHistory=True)
         target_meshes.append(target)
+        step += 1
 
         cmds.setAttr(ctrl_attr, 0.0)
 
@@ -219,14 +243,20 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
     _force_eval(face_mesh)
 
     if progress_cb:
-        progress_cb(total, total, 'Building blendShape node...')
+        progress_cb(total_steps, total_steps, 'Building blendShape node...')
 
     bs_node = cmds.blendShape(
         target_meshes + [bs_base], name=bs_node_name, frontOfChain=True
     )[0]
 
-    # Group targets at world root, visible and ready for sculpting
-    targets_grp = cmds.group(target_meshes, name=targets_grp_name)
+    # Register in-between targets into the blendShape before grouping
+    for extreme_idx, fraction, ib_mesh in ib_data:
+        cmds.blendShape(bs_node, edit=True, inBetween=True,
+                        target=[bs_base, extreme_idx, ib_mesh, fraction])
+
+    # Group all targets (extremes + in-betweens) at world root, ready for sculpting
+    all_grp_meshes = target_meshes + [m for _, _, m in ib_data]
+    targets_grp = cmds.group(all_grp_meshes, name=targets_grp_name)
     cmds.parent(targets_grp, world=True)
 
     # Wire each weight to its control channel via set-driven key
@@ -247,9 +277,9 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, progress_cb):
 
     zero_out_face_controls(namespace)
 
-    logger.info('Phase 1 complete: {} blendshape targets baked.'.format(total))
+    logger.info('Phase 1 complete: {} shapes baked ({} in-betweens each).'.format(total, in_betweens))
     if progress_cb:
-        progress_cb(total, total, 'Done — {} shapes baked.'.format(total))
+        progress_cb(total_steps, total_steps, 'Done — {} shapes baked.'.format(total))
 
     return {'bs_node': bs_node, 'bs_base': bs_base, 'extremes': extremes}
 

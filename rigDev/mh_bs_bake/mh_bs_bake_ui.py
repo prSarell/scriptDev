@@ -98,6 +98,18 @@ class MhBsBakeUI(QtWidgets.QDialog):
         p1_desc.setWordWrap(True)
         p1_layout.addWidget(p1_desc)
 
+        ib_row = QtWidgets.QHBoxLayout()
+        ib_row.addWidget(QtWidgets.QLabel('In-Betweens:'))
+        self._ib_group = QtWidgets.QButtonGroup(self)
+        for val in range(7):
+            rb = QtWidgets.QRadioButton('None' if val == 0 else str(val))
+            if val == 0:
+                rb.setChecked(True)
+            self._ib_group.addButton(rb, val)
+            ib_row.addWidget(rb)
+        ib_row.addStretch()
+        p1_layout.addLayout(ib_row)
+
         self._p1_btn = QtWidgets.QPushButton('Bake Single Shapes')
         self._p1_btn.clicked.connect(self._run_phase1)
         p1_layout.addWidget(self._p1_btn)
@@ -237,7 +249,9 @@ class MhBsBakeUI(QtWidgets.QDialog):
                 self._log_msg('ERROR: "{}" does not exist in the scene.'.format(mesh))
                 return
 
-        self._log_msg('--- Phase 1 start ({} mesh(es)) ---'.format(len(meshes)))
+        in_betweens = self._ib_group.checkedId()
+        ib_note = ' ({} in-betweens)'.format(in_betweens) if in_betweens else ''
+        self._log_msg('--- Phase 1 start ({} mesh(es)){} ---'.format(len(meshes), ib_note))
         self._p1_btn.setEnabled(False)
         self._phase1_result = None
         cb = self._make_progress_cb(self._p1_progress)
@@ -245,7 +259,7 @@ class MhBsBakeUI(QtWidgets.QDialog):
         try:
             for mesh, label in meshes:
                 self._log_msg('Baking {}...'.format(label))
-                result = api.bake_single_shapes(mesh, namespace, cb)
+                result = api.bake_single_shapes(mesh, namespace, in_betweens, cb)
                 self._log_msg('{} done: {} targets, bs_node={}, bs_base={}'.format(
                     label,
                     len(result['extremes']),
