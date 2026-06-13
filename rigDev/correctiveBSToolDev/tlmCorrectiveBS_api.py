@@ -30,35 +30,36 @@ def getSkinCluster(mesh):
 
 
 def getBlendShapeNode(mesh):
-    """Return the first blendShape node in the mesh history, or None."""
+    """
+    Return the corrective blendShape node — the one upstream of the skinCluster
+    (before it in deformation order). When history is walked upstream the
+    skinCluster appears first; the corrective blendShape appears after it.
+    Falls back to the first blendShape found when there is no skinCluster.
+    """
     shape = getMeshShape(mesh)
-    for node in (cmds.listHistory(shape, pruneDagObjects=True) or []):
-        if cmds.nodeType(node) == 'blendShape':
+    history = cmds.listHistory(shape, pruneDagObjects=True) or []
+    sc_found = False
+    for node in history:
+        nt = cmds.nodeType(node)
+        if nt == 'skinCluster':
+            sc_found = True
+        elif nt == 'blendShape' and sc_found:
             return node
+    if not sc_found:
+        for node in history:
+            if cmds.nodeType(node) == 'blendShape':
+                return node
     return None
 
 
 def getUpstreamSkinCluster(mesh):
     """
-    Return the skinCluster that is downstream of any blendShape node in the
-    deformation stack — i.e. the one whose transform the blendshape feeds into.
-    This is the deformer whose matrix we invert during delta extraction.
-    Falls back to the first skinCluster when no blendShape exists yet.
+    Return the skinCluster the corrective blendShape feeds into.
+    In the corrective stack (blendShape -> skinCluster -> output) the
+    skinCluster appears BEFORE the blendShape when walking history upstream,
+    so the first skinCluster found is always the right one.
     """
-    shape = getMeshShape(mesh)
-    history = cmds.listHistory(shape, pruneDagObjects=True) or []
-
-    bs_index = None
-    for i, node in enumerate(history):
-        if cmds.nodeType(node) == 'blendShape':
-            bs_index = i
-            break
-
-    search = history[bs_index:] if bs_index is not None else history
-    for node in search:
-        if cmds.nodeType(node) == 'skinCluster':
-            return node
-    return None
+    return getSkinCluster(mesh)
 
 
 # ── vertex position helpers ───────────────────────────────────────────────────

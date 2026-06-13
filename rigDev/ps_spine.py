@@ -579,6 +579,125 @@ def hideTorso(prefix):
         cmds.setAttr(prefix + '_Joint_' + str(i).zfill(3) + '_FOL.visibility', 0)
 
 
+def addTip(prefix, tip_crv):
+    """
+    Append FK tip controls to the top of an existing spine rig and extend its
+    SKL chain continuously to the tip.
+
+    tip_crv: a NURBS curve drawn above the spine whose CVs define the tip
+    control positions and count. The curve is hidden and parented into the rig
+    after sampling.
+
+    Each CV becomes one tip CTL. Controls are daisy-chain parentConstrained
+    (first GRP to {prefix}Top_CTL, each subsequent GRP to the previous CTL).
+    The spine SKL chain is extended in-place from its last joint — no separate
+    tip SKL chain — giving one continuous chain from rig base to tip end.
+    """
+    top_ctl = prefix + 'Top_CTL'
+    no_xf_grp = prefix + '_NoTransform000_GRP'
+
+    if not cmds.objExists(top_ctl):
+        raise RuntimeError('Spine Top_CTL not found: ' + top_ctl)
+    if not cmds.objExists(no_xf_grp):
+        raise RuntimeError('Spine NoTransform GRP not found: ' + no_xf_grp)
+    if not cmds.objExists(tip_crv):
+        raise RuntimeError('Tip curve not found: ' + tip_crv)
+
+    tip_grp = prefix + '_TipRig_GRP'
+    if cmds.objExists(tip_grp):
+        raise RuntimeError('Tip rig already exists: ' + tip_grp)
+
+    crv_shapes = cmds.listRelatives(tip_crv, shapes=True, noIntermediate=True) or []
+    if not crv_shapes or cmds.nodeType(crv_shapes[0]) != 'nurbsCurve':
+        raise RuntimeError(tip_crv + ' is not a NURBS curve')
+
+    # Sample CV positions — same pattern as buildSpine
+    degree = cmds.getAttr(tip_crv + '.degree')
+    spans = cmds.getAttr(tip_crv + '.spans')
+    tip_count = degree + spans
+    points = cmds.getAttr(tip_crv + '.cv[0:' + str(tip_count) + ']')
+
+    # Find last spine SKL by counting JNT joints
+    jnt_list = sorted(cmds.ls(prefix + '_*_JNT', type='joint') or [])
+    if not jnt_list:
+        raise RuntimeError('No spine JNT joints found for prefix: ' + prefix)
+    last_spine_skl = prefix + '_' + str(len(jnt_list) - 1).zfill(3) + '_SKL'
+    if not cmds.objExists(last_spine_skl):
+        raise RuntimeError('Last spine SKL not found: ' + last_spine_skl)
+    next_skl_idx = len(jnt_list)
+
+    # Container group for the tip CTL chain
+    cmds.group(em=True, name=tip_grp)
+    cmds.parent(tip_grp, no_xf_grp)
+
+    # Hide and store the tip curve inside the rig
+    cmds.parent(tip_crv, tip_grp)
+    cmds.setAttr(tip_crv + '.visibility', 0)
+
+    # ── CTL daisy-chain at CV positions ───────────────────────────────────
+    prev_driver = top_ctl
+    ctl_names = []
+    for i in range(tip_count):
+        idx = str(i + 1).zfill(3)
+        grp = prefix + '_Tip_' + idx + '_GRP'
+        ctl = prefix + '_Tip_' + idx + '_CTL'
+        cv_pos = (points[i][0], points[i][1], points[i][2])
+
+        cmds.group(em=True, name=grp)
+        cmds.parent(grp, tip_grp)
+        # Position at CV, match orientation to driver, then constrain with offset
+        cmds.xform(grp, ws=True, t=cv_pos)
+        oc = cmds.orientConstraint(prev_driver, grp, mo=False)[0]
+        cmds.delete(oc)
+        cmds.setAttr(grp + '.rotateOrder', 4)
+        cmds.addAttr(grp, longName='twist', at='double', keyable=False)
+        cmds.setAttr(grp + '.twist', lock=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(grp + attr, lock=True, keyable=False)
+        cmds.parentConstraint(prev_driver, grp, mo=True)
+
+        cmds.select(clear=True)
+        cmds.circle(radius=2, nr=(0, 1, 0), c=(0, 0, 0), name=ctl, ch=False)
+        cmds.parent(ctl, grp)
+        cmds.setAttr(ctl + '.rotateOrder', 4)
+        cmds.addAttr(ctl, longName='twist', at='double', keyable=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(ctl + attr, lock=True, keyable=False)
+        ctl_shape = cmds.listRelatives(ctl, shapes=True)[0]
+        cmds.setAttr(ctl_shape + '.overrideEnabled', 1)
+        cmds.setAttr(ctl_shape + '.overrideColor', 22)
+
+        ctl_names.append(ctl)
+        prev_driver = ctl
+
+    # ── Extend spine SKL chain ────────────────────────────────────────────
+    # tip_count joints constrained to tip CTLs + 1 free end joint
+    new_skl_names = []
+    for i in range(tip_count + 1):
+        cmds.select(clear=True)
+        skl = prefix + '_' + str(next_skl_idx + i).zfill(3) + '_SKL'
+        cmds.joint(name=skl)
+        new_skl_names.append(skl)
+
+    # Parent as a chain continuing from the last spine SKL
+    cmds.parent(new_skl_names[0], last_spine_skl)
+    for i in range(1, len(new_skl_names)):
+        cmds.parent(new_skl_names[i], new_skl_names[i - 1])
+
+    # Constrain each new SKL to its matching tip CTL
+    for i, ctl in enumerate(ctl_names):
+        skl = new_skl_names[i]
+        pc = cmds.parentConstraint(ctl, skl)[0]
+        cmds.delete(pc)
+        cmds.setAttr(skl + '.rotate', 0, 0, 0)
+        cmds.parentConstraint(ctl, skl)
+
+    # Last joint is the free end — no constraint
+    cmds.setAttr(new_skl_names[-1] + '.jointOrient', 0, 0, 0)
+
+    cmds.select(clear=True)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _spine_preview(spans, w=100, h=20):
@@ -674,6 +793,32 @@ class SpineRigUI(QtWidgets.QDialog):
         log_layout.addWidget(self._log)
         layout.addWidget(log_box)
 
+        layout.addWidget(_separator())
+
+        # Add Tip section
+        tip_box = QtWidgets.QGroupBox('Add Tip')
+        tip_layout = QtWidgets.QVBoxLayout(tip_box)
+        tip_layout.setSpacing(6)
+
+        draw_tip_btn = QtWidgets.QPushButton('Draw Tip Curve')
+        draw_tip_btn.clicked.connect(self._draw_curve)
+        tip_layout.addWidget(draw_tip_btn)
+
+        tip_layout.addWidget(_separator())
+
+        prefix_row = QtWidgets.QHBoxLayout()
+        prefix_row.addWidget(QtWidgets.QLabel('Prefix:'))
+        self._tip_prefix = QtWidgets.QLineEdit()
+        self._tip_prefix.setPlaceholderText('spine')
+        prefix_row.addWidget(self._tip_prefix)
+        tip_layout.addLayout(prefix_row)
+
+        tip_btn = QtWidgets.QPushButton('Add Tip To Rig')
+        tip_btn.clicked.connect(self._add_tip)
+        tip_layout.addWidget(tip_btn)
+
+        layout.addWidget(tip_box)
+
     def _log_msg(self, msg):
         self._log.appendPlainText(msg)
         self._log.verticalScrollBar().setValue(
@@ -704,6 +849,31 @@ class SpineRigUI(QtWidgets.QDialog):
             self._log_msg(f'Done — "{prefix}" spine rig built.')
             cmds.inViewMessage(
                 amg=f'<b>{prefix}</b> spine rig built.',
+                pos='midCenter', fade=True
+            )
+        except Exception as e:
+            self._log_msg(f'ERROR: {e}')
+
+    def _add_tip(self):
+        sel = cmds.ls(sl=True)
+        if not sel:
+            self._log_msg('ERROR: Select the tip curve before adding.')
+            return
+        tip_crv = sel[0]
+        shapes = cmds.listRelatives(tip_crv, shapes=True, noIntermediate=True) or []
+        if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
+            self._log_msg(f'ERROR: "{tip_crv}" is not a NURBS curve.')
+            return
+        prefix = self._tip_prefix.text().strip()
+        if not prefix:
+            self._log_msg('ERROR: Enter the spine rig prefix.')
+            return
+        self._log_msg(f'Adding tip to "{prefix}" from "{tip_crv}"...')
+        try:
+            addTip(prefix, tip_crv)
+            self._log_msg(f'Done — tip rig added to "{prefix}".')
+            cmds.inViewMessage(
+                amg=f'<b>{prefix}</b> tip rig added.',
                 pos='midCenter', fade=True
             )
         except Exception as e:

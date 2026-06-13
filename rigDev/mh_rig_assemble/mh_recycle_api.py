@@ -115,9 +115,10 @@ def toggle_comparison():
     mh_bs_base are visible during comparison.
     Returns True if comparison is now ON, False if OFF.
     """
-    meshes = [m for m in _find_rl_meshes() if cmds.objExists(m)]
-    if not meshes:
+    all_meshes = [m for m in _find_rl_meshes() if cmds.objExists(m)]
+    if not all_meshes:
         raise RuntimeError('No RigLogic-driven meshes found in scene.')
+    meshes = [m for m in all_meshes if 'eye' not in m.lower()]
 
     currently_on = any(cmds.getAttr(m + '.template') for m in meshes)
     for mesh in meshes:
@@ -135,6 +136,7 @@ def comparison_is_on():
     return any(
         cmds.objExists(m) and cmds.getAttr(m + '.template')
         for m in _find_rl_meshes()
+        if 'eye' not in m.lower()
     )
 
 

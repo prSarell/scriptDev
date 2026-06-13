@@ -91,6 +91,18 @@ BUTTONS = [
         ),
     },
     {
+        "label": "MH Body Clean",
+        "tooltip": "Open MH Body Clean — delete LODs, Unreal lights, and assign base colour textures to a Metahuman body scene",
+        "icon": "iconMhBodyClean.png",
+        "command": (
+            "import importlib\n"
+            "import mh_body_clean_api, mh_body_clean_ui\n"
+            "importlib.reload(mh_body_clean_api)\n"
+            "importlib.reload(mh_body_clean_ui)\n"
+            "mh_body_clean_ui.show()"
+        ),
+    },
+    {
         "label": "VP Shader",
         "tooltip": "Open VP Shader Assign — auto-assign colour-coded shaders to Virtual Pancakes selection sets so joint-critical edge loops are visible before sculpting",
         "icon": "iconVpShader.png",
@@ -112,18 +124,6 @@ BUTTONS = [
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"
-        ),
-    },
-    {
-        "label": "MH Body Clean",
-        "tooltip": "Open MH Body Clean — delete LODs, Unreal lights, and assign base colour textures to a Metahuman body scene",
-        "icon": "iconMhBodyClean.png",
-        "command": (
-            "import importlib\n"
-            "import mh_body_clean_api, mh_body_clean_ui\n"
-            "importlib.reload(mh_body_clean_api)\n"
-            "importlib.reload(mh_body_clean_ui)\n"
-            "mh_body_clean_ui.show()"
         ),
     },
     {

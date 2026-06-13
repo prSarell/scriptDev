@@ -191,6 +191,10 @@ def _find_meshes(key):
         for m in (cmds.ls(pattern, type='transform') or []):
             if m not in found and not any(e in m.lower() for e in excludes):
                 found.append(m)
+
+    if key == 'head' and cmds.objExists('mh_bs_base') and 'mh_bs_base' not in found:
+        found.append('mh_bs_base')
+
     return found
 
 
