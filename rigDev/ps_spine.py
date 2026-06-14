@@ -629,16 +629,20 @@ def addTip(prefix, tip_crv):
     # Container group for the tip CTL chain
     cmds.group(em=True, name=tip_grp)
     cmds.parent(tip_grp, no_xf_grp)
+    cog_ctl = prefix + 'COG_CTL'
+    for axis in ['scaleX', 'scaleY', 'scaleZ']:
+        cmds.connectAttr(cog_ctl + '.globalScale', tip_grp + '.' + axis)
 
     # Hide and store the tip curve inside the rig
     cmds.parent(tip_crv, tip_grp)
     cmds.setAttr(tip_crv + '.visibility', 0)
 
     # ── CTL daisy-chain at CV positions ───────────────────────────────────
+    # Skip CV[0] — it overlaps with the spine Top_CTL/last SKL.
     prev_driver = top_ctl
     ctl_names = []
-    for i in range(tip_count):
-        idx = str(i + 1).zfill(3)
+    for i in range(1, tip_count):
+        idx = str(i).zfill(3)
         grp = prefix + '_Tip_' + idx + '_GRP'
         ctl = prefix + '_Tip_' + idx + '_CTL'
         cv_pos = (points[i][0], points[i][1], points[i][2])
@@ -659,6 +663,8 @@ def addTip(prefix, tip_crv):
         cmds.select(clear=True)
         cmds.circle(radius=2, nr=(0, 1, 0), c=(0, 0, 0), name=ctl, ch=False)
         cmds.parent(ctl, grp)
+        cmds.setAttr(ctl + '.translate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotate', 0, 0, 0)
         cmds.setAttr(ctl + '.rotateOrder', 4)
         cmds.addAttr(ctl, longName='twist', at='double', keyable=True)
         for attr in ('.v', '.sx', '.sy', '.sz'):
@@ -671,9 +677,8 @@ def addTip(prefix, tip_crv):
         prev_driver = ctl
 
     # ── Extend spine SKL chain ────────────────────────────────────────────
-    # tip_count joints constrained to tip CTLs + 1 free end joint
     new_skl_names = []
-    for i in range(tip_count + 1):
+    for i in range(tip_count - 1):
         cmds.select(clear=True)
         skl = prefix + '_' + str(next_skl_idx + i).zfill(3) + '_SKL'
         cmds.joint(name=skl)
@@ -691,9 +696,6 @@ def addTip(prefix, tip_crv):
         cmds.delete(pc)
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
-
-    # Last joint is the free end — no constraint
-    cmds.setAttr(new_skl_names[-1] + '.jointOrient', 0, 0, 0)
 
     cmds.select(clear=True)
 
@@ -749,7 +751,7 @@ class SpineRigUI(QtWidgets.QDialog):
         layout.addWidget(_separator())
 
         # Draw button
-        draw_btn = QtWidgets.QPushButton('Draw Spine Curve')
+        draw_btn = QtWidgets.QPushButton('Draw Curve')
         draw_btn.clicked.connect(self._draw_curve)
         layout.addWidget(draw_btn)
 
@@ -783,6 +785,21 @@ class SpineRigUI(QtWidgets.QDialog):
         build_btn.clicked.connect(self._build)
         layout.addWidget(build_btn)
 
+        layout.addWidget(_separator())
+
+        # Add Tip section
+        tip_box = QtWidgets.QGroupBox('Add Tip')
+        tip_layout = QtWidgets.QVBoxLayout(tip_box)
+        tip_layout.setSpacing(6)
+
+        tip_btn = QtWidgets.QPushButton('Add Tip To Rig')
+        tip_btn.clicked.connect(self._add_tip)
+        tip_layout.addWidget(tip_btn)
+
+        layout.addWidget(tip_box)
+
+        layout.addWidget(_separator())
+
         # Log
         log_box = QtWidgets.QGroupBox('Log')
         log_layout = QtWidgets.QVBoxLayout(log_box)
@@ -792,32 +809,6 @@ class SpineRigUI(QtWidgets.QDialog):
         self._log.setFont(QtGui.QFont('Courier New', 9))
         log_layout.addWidget(self._log)
         layout.addWidget(log_box)
-
-        layout.addWidget(_separator())
-
-        # Add Tip section
-        tip_box = QtWidgets.QGroupBox('Add Tip')
-        tip_layout = QtWidgets.QVBoxLayout(tip_box)
-        tip_layout.setSpacing(6)
-
-        draw_tip_btn = QtWidgets.QPushButton('Draw Tip Curve')
-        draw_tip_btn.clicked.connect(self._draw_curve)
-        tip_layout.addWidget(draw_tip_btn)
-
-        tip_layout.addWidget(_separator())
-
-        prefix_row = QtWidgets.QHBoxLayout()
-        prefix_row.addWidget(QtWidgets.QLabel('Prefix:'))
-        self._tip_prefix = QtWidgets.QLineEdit()
-        self._tip_prefix.setPlaceholderText('spine')
-        prefix_row.addWidget(self._tip_prefix)
-        tip_layout.addLayout(prefix_row)
-
-        tip_btn = QtWidgets.QPushButton('Add Tip To Rig')
-        tip_btn.clicked.connect(self._add_tip)
-        tip_layout.addWidget(tip_btn)
-
-        layout.addWidget(tip_box)
 
     def _log_msg(self, msg):
         self._log.appendPlainText(msg)
@@ -864,10 +855,7 @@ class SpineRigUI(QtWidgets.QDialog):
         if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
             self._log_msg(f'ERROR: "{tip_crv}" is not a NURBS curve.')
             return
-        prefix = self._tip_prefix.text().strip()
-        if not prefix:
-            self._log_msg('ERROR: Enter the spine rig prefix.')
-            return
+        prefix = tip_crv
         self._log_msg(f'Adding tip to "{prefix}" from "{tip_crv}"...')
         try:
             addTip(prefix, tip_crv)

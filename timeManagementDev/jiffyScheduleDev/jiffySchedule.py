@@ -1,6 +1,24 @@
 ﻿# JiffySchedule — production schedule and asset tracker
 # Part of the Jiffy suite for Maya artists
 
+# ---------------------------------------------------------------------------
+# MULTI-USER NOTE (2026-06-14)
+# For a small team (e.g. 3 people), shared access can be achieved by pointing
+# all users' Maya projects to the same shared folder (OneDrive, network drive,
+# etc.) — they will all read/write the same jiffyschedule.json automatically.
+# No team size or member list needs to be defined.
+#
+# Risk: last-save-wins if two people save simultaneously.
+# Options considered:
+#   1. Convention — agree to coordinate via chat before editing (zero code, fine for small teams)
+#   2. Lock file — write jiffyschedule.lock with name + timestamp on open/save;
+#                  warn others that someone is currently editing
+#   3. Timestamp log — append who saved and when; collisions are visible after the fact
+#
+# A Reload button would also help — lets users pull latest from disk without
+# closing the tool. Decide on collision strategy before implementing.
+# ---------------------------------------------------------------------------
+
 from PySide6 import QtWidgets, QtCore, QtGui
 import os, json, time
 from datetime import date as _date, datetime as _datetime
