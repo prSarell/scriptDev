@@ -704,7 +704,52 @@ def addTip(prefix, tip_crv):
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
 
+    # ── If FK rig already exists, wire Tip_001_GRP into the FK_IK blend ───
+    _wireTipToFKRig(prefix)
+
     cmds.select(clear=True)
+
+
+def _wireTipToFKRig(prefix):
+    """
+    Add the last FK CTL as a second parentConstraint target on _Tip_001_GRP
+    and wire both weights through the existing FKIK_MDN / FKIK_PMA nodes.
+    Safe to call when either the tip rig or the FK rig doesn't exist yet —
+    returns silently in that case. Called from both addTip and addFK so the
+    wiring happens regardless of which was run first.
+    """
+    tip_grp = prefix + '_Tip_001_GRP'
+    mdn = prefix + '_FKIK_MDN'
+    pma = prefix + '_FKIK_PMA'
+
+    if not cmds.objExists(tip_grp) or not cmds.objExists(mdn) or not cmds.objExists(pma):
+        return
+
+    fk_ctls = sorted(cmds.ls(prefix + '_FK_*_CTL', type='transform') or [])
+    if not fk_ctls:
+        return
+    last_fk_ctl = fk_ctls[-1]
+
+    # Guard: don't add a second constraint if last_fk_ctl is already a target
+    existing_pc = (cmds.listRelatives(tip_grp, children=True,
+                                      type='parentConstraint') or [None])[0]
+    if existing_pc:
+        targets = cmds.parentConstraint(existing_pc, query=True,
+                                        targetList=True) or []
+        if last_fk_ctl in targets:
+            return
+
+    cmds.parentConstraint(last_fk_ctl, tip_grp, mo=True)
+    tip_pc = (cmds.listRelatives(tip_grp, children=True,
+                                  type='parentConstraint') or [None])[0]
+    if not tip_pc:
+        return
+    tip_weights = cmds.parentConstraint(tip_pc, query=True,
+                                         weightAliasList=True) or []
+    if len(tip_weights) < 2:
+        return
+    cmds.connectAttr(pma + '.output1D', tip_pc + '.' + tip_weights[0], force=True)
+    cmds.connectAttr(mdn + '.outputX',  tip_pc + '.' + tip_weights[1], force=True)
 
 
 def addFK(prefix):
@@ -834,12 +879,18 @@ def addFK(prefix):
         cmds.connectAttr(pma + '.output1D', pc_node + '.' + weight_list[0], force=True)
         cmds.connectAttr(mdn + '.outputX', pc_node + '.' + weight_list[1], force=True)
 
-    # ── Visibility: FK_GRP on when FK_IK=1, spine CTLs on when FK_IK=0 ───
+    # ── Visibility: FK_GRP on when FK_IK=1, spine CTL GRPs on when FK_IK=0 ──
+    # Drive parent GRPs rather than the CTLs themselves — hideTorso locks CTL
+    # visibility attributes directly, making them unreliable connection targets.
     cmds.connectAttr(mdn + '.outputX', fk_grp_name + '.visibility')
-    for spine_ctl in [prefix + 'Btm_CTL', prefix + 'Mid_CTL', prefix + 'Top_CTL']:
-        if cmds.objExists(spine_ctl):
-            cmds.setAttr(spine_ctl + '.visibility', lock=False)
-            cmds.connectAttr(pma + '.output1D', spine_ctl + '.visibility', force=True)
+    for grp in [prefix + '_CTL000_GRP',
+                prefix + '_CTL001_BtmSDK_GRP',
+                prefix + '_CTL002_GRP']:
+        if cmds.objExists(grp):
+            cmds.connectAttr(pma + '.output1D', grp + '.visibility', force=True)
+
+    # ── Tip rig: wire Tip_001_GRP if tip was already added ────────────────
+    _wireTipToFKRig(prefix)
 
     cmds.select(clear=True)
 
