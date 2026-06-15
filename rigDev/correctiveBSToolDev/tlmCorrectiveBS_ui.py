@@ -206,7 +206,33 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         target_btn_row.addWidget(self._deleteBtn)
         root.addLayout(target_btn_row)
 
-        root.addStretch()
+        root.addWidget(self._divider())
+
+        # ── Log ──
+        log_header = QtWidgets.QHBoxLayout()
+        log_lbl = QtWidgets.QLabel('LOG')
+        log_lbl.setStyleSheet(
+            'color: %s; font-size: 10px; font-weight: bold; letter-spacing: 1px;' % self.DIM)
+        clear_btn = QtWidgets.QPushButton('Clear')
+        clear_btn.setFixedWidth(48)
+        clear_btn.setStyleSheet(
+            'QPushButton { background: %s; border: 1px solid %s; color: %s; '
+            'padding: 2px 6px; font-size: 10px; }'
+            'QPushButton:hover { background: %s; }' % (
+                self.LIGHT, self.BORDER, self.DIM, self.BORDER))
+        log_header.addWidget(log_lbl)
+        log_header.addStretch()
+        log_header.addWidget(clear_btn)
+        root.addLayout(log_header)
+
+        self._log = QtWidgets.QTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setFixedHeight(100)
+        self._log.setStyleSheet(
+            'QTextEdit { background: #111111; border: 1px solid %s; '
+            'color: #aaaaaa; font-size: 10px; font-family: Consolas, monospace; }' % self.BORDER)
+        clear_btn.clicked.connect(self._log.clear)
+        root.addWidget(self._log)
 
     # ── slot handlers ─────────────────────────────────────────────────────────
 
@@ -270,8 +296,9 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                 'Sculpt mesh ready: %s   —   sculpt this, then Bake.' % dup)
             self._sculptStatus.setStyleSheet(
                 'color: %s; font-size: 10px;' % self.TEXT)
+            self._log_msg('Sculpt mesh created: ' + dup)
             cmds.select(dup, r=True)
-        except api.CorrectiveBSError as e:
+        except Exception as e:
             self._warn(str(e))
 
     def _onBake(self):
@@ -297,12 +324,13 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                 'Target "%s" baked to %s [%d]' % (name, bs_node, idx))
             self._bakeStatus.setStyleSheet(
                 'color: %s; font-size: 10px;' % self.TEXT)
+            self._log_msg('Baked "%s" → %s [%d]' % (name, bs_node, idx))
             self._refreshTargetList()
             # Select the baked target in the list
             items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
             if items:
                 self._targetList.setCurrentItem(items[0])
-        except api.CorrectiveBSError as e:
+        except Exception as e:
             self._warn(str(e))
 
     def _loadDriverAttr(self):
@@ -347,6 +375,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                 'SDK wired: %s  [%s → %s]' % (driver, rmin, rmax))
             self._bakeStatus.setStyleSheet(
                 'color: %s; font-size: 10px;' % self.TEXT)
+            self._log_msg('SDK wired: %s [%s → %s]' % (driver, rmin, rmax))
         except Exception as e:
             self._warn(str(e))
 
@@ -397,7 +426,8 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._bakeStatus.setText('Target "%s" updated.' % target_name)
             self._bakeStatus.setStyleSheet(
                 'color: %s; font-size: 10px;' % self.TEXT)
-        except api.CorrectiveBSError as e:
+            self._log_msg('Updated target "%s"' % target_name)
+        except Exception as e:
             self._warn(str(e))
 
     def _onDelete(self):
@@ -431,7 +461,14 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
+    def _log_msg(self, msg, error=False):
+        color = '#d65f5f' if error else '#6fbf73'
+        self._log.append(
+            '<span style="color:{}">{}</span>'.format(
+                color, msg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')))
+
     def _warn(self, msg):
+        self._log_msg(msg, error=True)
         QtWidgets.QMessageBox.warning(self, 'Corrective BS', msg)
 
     def _headerLabel(self, text):

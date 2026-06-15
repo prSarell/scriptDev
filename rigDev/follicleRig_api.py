@@ -87,10 +87,18 @@ def createFollicle(surface, u, v, name):
 def createJointUnderFollicle(follicle, name):
     cmds.select(clear=True)
     cmds.joint(name=name + '_JNT')
-    cmds.parent(cmds.ls(selection=True)[0], follicle)
-    # cmds.joint() may return a world-root absolute path (|name) in Maya 2025;
-    # after parenting the path is stale, so re-resolve from the follicle.
-    joint = cmds.listRelatives(follicle, children=True, type='joint')[-1]
+    # cmds.joint() auto-selects the new joint. Capture its full long path now,
+    # before parenting, so the reference is unambiguous even when another node
+    # with the same short name already exists under a different parent.
+    sel = cmds.ls(selection=True, long=True) or []
+    if not sel:
+        raise FollicleRigError('Failed to create joint ' + name + '_JNT')
+    cmds.parent(sel[0], follicle)
+    # DAG path changed after parenting — re-resolve via listRelatives.
+    joints = cmds.listRelatives(follicle, children=True, type='joint', fullPath=True) or []
+    if not joints:
+        raise FollicleRigError('Joint not found under ' + follicle)
+    joint = joints[-1]
     for attr in ('translateX', 'translateY', 'translateZ',
                  'rotateX', 'rotateY', 'rotateZ',
                  'jointOrientX', 'jointOrientY', 'jointOrientZ'):
@@ -184,6 +192,7 @@ def buildFollicleRig(surface, uvList, customName=None, nameSource=None):
     Returns (group, [(follicle, joint), ...]).
     '''
     cmds.makeLive(none=True)
+    cmds.selectMode(object=True)
     base = resolveBaseName(nameSource if nameSource else surface, customName)
 
     group = cmds.group(empty=True, name=base + '_FOL_GRP')
@@ -404,15 +413,16 @@ def getSurfaceFromFollicle(follicle):
 
 
 def getJointUnderFollicle(follicle):
-    children = cmds.listRelatives(follicle, children=True, type='joint') or []
+    children = cmds.listRelatives(follicle, children=True, type='joint', fullPath=True) or []
     if not children:
         raise FollicleRigError('No joint found under ' + follicle)
     return children[0]
 
 
 def resolveToFollicle(node):
-    if cmds.nodeType(node) == 'joint':
-        parent = (cmds.listRelatives(node, parent=True) or [None])[0]
+    long = (cmds.ls(node, long=True) or [node])[0]
+    if cmds.nodeType(long) == 'joint':
+        parent = (cmds.listRelatives(long, parent=True, fullPath=True) or [None])[0]
         if parent:
             try:
                 getFollicleShape(parent)
@@ -421,8 +431,8 @@ def resolveToFollicle(node):
                 pass
         raise FollicleRigError(node + ' is not parented under a follicle')
     try:
-        getFollicleShape(node)
-        return node
+        getFollicleShape(long)
+        return long
     except FollicleRigError:
         raise FollicleRigError(node + ' is not a follicle or follicle-parented joint')
 
@@ -444,7 +454,7 @@ def addControllersForSelection(nodes):
     for node in nodes:
         # Expand groups: if the node's direct children include follicles, treat
         # it as a FOL_GRP and process every uncontrolled primary follicle inside.
-        children = cmds.listRelatives(node, children=True, type='transform') or []
+        children = cmds.listRelatives(node, children=True, type='transform', fullPath=True) or []
         group_follicles = []
         for child in children:
             try:
@@ -453,7 +463,7 @@ def addControllersForSelection(nodes):
                 continue
             # Skip anchor follicles (created by UV controllers) — they have no
             # joint child. Only primary follicles should get controllers.
-            if not (cmds.listRelatives(child, children=True, type='joint') or []):
+            if not (cmds.listRelatives(child, children=True, type='joint', fullPath=True) or []):
                 continue
             # Skip follicles already driven by a UV controller
             if cmds.listConnections(folShape + '.parameterU', source=True, destination=False):

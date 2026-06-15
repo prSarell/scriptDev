@@ -27,6 +27,11 @@ def show():
 # ── rig builder ───────────────────────────────────────────────────────────────
 
 def buildSpine(prefix, surface_spans=3):
+    # Strip any DAG path so the prefix is always a short name used for naming,
+    # not a scene path. cmds.joint() in a chain creates children, so an absolute
+    # path like |head_001_FK would address the wrong location in the hierarchy.
+    prefix = prefix.split('|')[-1].split(':')[-1]
+
     existing = cmds.ls(prefix + '_000_FK', prefix + '_000_SKL', prefix + '_000_JNT')
     if existing:
         raise RuntimeError(
@@ -600,6 +605,7 @@ def addTip(prefix, tip_crv):
     The spine SKL chain is extended in-place from its last joint — no separate
     tip SKL chain — giving one continuous chain from rig base to tip end.
     """
+    prefix = prefix.split('|')[-1].split(':')[-1]
     top_ctl = prefix + 'Top_CTL'
     no_xf_grp = prefix + '_NoTransform000_GRP'
 
@@ -763,6 +769,7 @@ def addFK(prefix):
     constraint. A FK_IK attribute on COG_CTL (0 = full IK, 1 = full FK) drives
     the blend via one MDN + PMA wired to each constraint's weight attributes.
     """
+    prefix = prefix.split('|')[-1].split(':')[-1]
     cog_ctl = prefix + 'COG_CTL'
     btm_ctl = prefix + 'Btm_CTL'
     no_xf_grp = prefix + '_NoTransform000_GRP'

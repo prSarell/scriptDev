@@ -259,21 +259,29 @@ def _bake_single_shapes_inner(face_mesh, namespace, face_controls, in_betweens, 
     targets_grp = cmds.group(all_grp_meshes, name=targets_grp_name)
     cmds.parent(targets_grp, world=True)
 
-    # Wire each weight to its control channel via set-driven key
+    # Wire each weight to its control channel via set-driven key.
+    # Linear tangents keep evaluation lightweight — the 0→1 relationship is
+    # already linear so clamped tangents add overhead with no visual benefit.
     for i, (ctrl, channel, direction, val) in enumerate(extremes):
         ctrl_attr = '{}.{}'.format(ctrl, channel)
         weight_attr = '{}.weight[{}]'.format(bs_node, i)
 
         cmds.setAttr(ctrl_attr, 0.0)
         cmds.setAttr(weight_attr, 0.0)
-        cmds.setDrivenKeyframe(weight_attr, currentDriver=ctrl_attr)
+        cmds.setDrivenKeyframe(weight_attr, currentDriver=ctrl_attr,
+                               inTangentType='linear', outTangentType='linear')
 
         cmds.setAttr(ctrl_attr, val)
         cmds.setAttr(weight_attr, 1.0)
-        cmds.setDrivenKeyframe(weight_attr, currentDriver=ctrl_attr)
+        cmds.setDrivenKeyframe(weight_attr, currentDriver=ctrl_attr,
+                               inTangentType='linear', outTangentType='linear')
 
         cmds.setAttr(ctrl_attr, 0.0)
         cmds.setAttr(weight_attr, 0.0)
+
+        # Hide weight from Channel Box so autokey doesn't try to key it —
+        # it's SDK-driven and should never receive direct keyframes.
+        cmds.setAttr(weight_attr, keyable=False, channelBox=False)
 
     zero_out_face_controls(namespace)
 
@@ -399,6 +407,8 @@ def _find_and_apply_correctives_inner(
                 '{}.outputWeight'.format(combo_node),
                 '{}.weight[{}]'.format(bs_node, new_index)
             )
+            cmds.setAttr('{}.weight[{}]'.format(bs_node, new_index),
+                         keyable=False, channelBox=False)
 
             corrective_count += 1
             logger.info('Corrective: {} (delta {:.3f}mm)'.format(corr_name, delta_mm))

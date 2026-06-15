@@ -47,7 +47,7 @@ def show():
 
 
 def _addControllersFromSelection(setStatus):
-    nodes = cmds.ls(selection=True) or []
+    nodes = cmds.ls(selection=True, long=True) or []
     if not nodes:
         setStatus('Select follicles or their joints first', error=True)
         return
@@ -174,6 +174,7 @@ class _PolyVerticesTab(QtWidgets.QWidget):
         except Exception as err:
             self._setStatus('Error: ' + str(err), error=True)
             return
+        self._vertBtn.setText('Enter Vertex Mode')
         self._setStatus('Created %d follicle(s) in %s' % (len(pairs), group))
 
 

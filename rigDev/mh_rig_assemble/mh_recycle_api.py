@@ -197,7 +197,14 @@ def delete_face_joints(namespace=':'):
     """
     prefix = '' if namespace in (':', '') else namespace
     all_joints = cmds.ls('{}FACIAL_*'.format(prefix), type='joint') or []
+    to_keep = [j for j in all_joints if 'eye' in j.lower()]
     to_delete = [j for j in all_joints if 'eye' not in j.lower()]
+
+    # Unparent eye joints to world before deletion — without this, any eye
+    # joint whose parent is in to_delete would be taken with it.
+    if to_keep:
+        cmds.parent(to_keep, world=True)
+
     if to_delete:
         cmds.delete(to_delete)
     return len(to_delete)

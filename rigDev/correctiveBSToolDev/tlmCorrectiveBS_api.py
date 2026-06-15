@@ -31,25 +31,14 @@ def getSkinCluster(mesh):
 
 def getBlendShapeNode(mesh):
     """
-    Return the corrective blendShape node — the one upstream of the skinCluster
-    (before it in deformation order). When history is walked upstream the
-    skinCluster appears first; the corrective blendShape appears after it.
-    Falls back to the first blendShape found when there is no skinCluster.
+    Return the corrective blendShape node for this mesh, identified by its
+    naming convention (<mesh>_correctiveBS). Returns None if it doesn't exist
+    yet, so addCorrectiveTarget knows to create a new one rather than adding
+    to an existing facial/pose blendShape node on the rig.
     """
-    shape = getMeshShape(mesh)
-    history = cmds.listHistory(shape, pruneDagObjects=True) or []
-    sc_found = False
-    for node in history:
-        nt = cmds.nodeType(node)
-        if nt == 'skinCluster':
-            sc_found = True
-        elif nt == 'blendShape' and sc_found:
-            return node
-    if not sc_found:
-        for node in history:
-            if cmds.nodeType(node) == 'blendShape':
-                return node
-    return None
+    short = mesh.split('|')[-1].split(':')[-1]
+    candidates = cmds.ls(short + '_correctiveBS', type='blendShape') or []
+    return candidates[0] if candidates else None
 
 
 def getUpstreamSkinCluster(mesh):
@@ -117,10 +106,13 @@ def _buildSkinMatrices(skin_fn, mesh_dag, vtx_count):
     all_weights, n_influences = skin_fn.getWeights(mesh_dag, all_vtx)
 
     influences = skin_fn.influenceObjects()
-    eff_mats = [
-        list(skin_fn.getBindPreMatrix(j) * influences[j].inclusiveMatrix())
-        for j in range(n_influences)
-    ]
+    bind_pre_plug = skin_fn.findPlug('bindPreMatrix', False)
+    eff_mats = []
+    for j in range(n_influences):
+        logical_idx = skin_fn.indexForInfluenceObject(influences[j])
+        elem = bind_pre_plug.elementByLogicalIndex(logical_idx)
+        bind_pre_mat = om.MFnMatrixData(elem.asMObject()).matrix()
+        eff_mats.append(list(bind_pre_mat * influences[j].inclusiveMatrix()))
 
     matrices = []
     for i in range(vtx_count):
@@ -146,14 +138,30 @@ def extractDelta(mesh, sculpted_mesh):
     showing the desired corrected result at that same pose, returns a list
     of (x, y, z) world-space positions for the blendshape target.
 
-    When a skin cluster is present each sculpted vertex is back-transformed
-    through the inverse of its per-vertex skin matrix so that after skinning
-    it lands exactly at the sculpted position.  When no skin cluster exists
-    (e.g. a pure blendshape face rig) the sculpted positions are returned
-    directly.
+    When a skin cluster is present, the correct formula is:
+        target[i] = S[i]^-1 * sculpted[i] + bind[i] - preskin[i]
+
+    where preskin[i] is the output of all upstream blendShapes at the
+    current pose (not the bind pose).  The stored blendShape delta is
+    target - bind = S^-1 * sculpted - preskin; applying that at weight 1
+    yields preskin + delta = S^-1 * sculpted, which skins back to sculpted.
+
+    This means the result is exact even when existing facial/pose blendShapes
+    are active at the correction pose.
     """
     sc = getUpstreamSkinCluster(mesh)
-    sculpted_pos = getVertexPositions(sculpted_mesh, worldSpace=True)
+
+    # Read sculpted positions in world space, then remap into the original
+    # mesh's world space. This handles the case where the sculpt mesh has
+    # been moved off its original position.
+    sculpted_pos_ws = getVertexPositions(sculpted_mesh, worldSpace=True)
+    M_sculpt = om.MMatrix(cmds.xform(sculpted_mesh, q=True, ws=True, matrix=True))
+    M_orig   = om.MMatrix(cmds.xform(mesh,          q=True, ws=True, matrix=True))
+    remap = M_sculpt.inverse() * M_orig
+    sculpted_pos = []
+    for pos in sculpted_pos_ws:
+        p = om.MPoint(pos[0], pos[1], pos[2]) * remap
+        sculpted_pos.append((p.x, p.y, p.z))
 
     if sc is None:
         return sculpted_pos
@@ -174,11 +182,36 @@ def extractDelta(mesh, sculpted_mesh):
 
     skin_matrices = _buildSkinMatrices(skin_fn, mesh_dag, vtx_count)
 
+    # Pre-skin positions: the combined output of all upstream deformers
+    # (existing blendShapes, previous corrective targets, etc.) at the
+    # current pose.  Mute the skinCluster so the mesh evaluates to its
+    # pre-skin state, then read world-space vertex positions.
+    sc_env = cmds.getAttr(sc + '.envelope')
+    cmds.setAttr(sc + '.envelope', 0)
+    try:
+        preskin_pos = getVertexPositions(mesh, worldSpace=True)
+    finally:
+        cmds.setAttr(sc + '.envelope', sc_env)
+
+    # Bind-pose positions from the intermediate (pre-deformation) shape.
+    all_shapes = cmds.listRelatives(mesh, shapes=True, allDescendents=False) or []
+    intermediate = next(
+        (s for s in all_shapes if cmds.getAttr(s + '.intermediateObject')), None)
+    if intermediate is None:
+        raise CorrectiveBSError('No intermediate shape found on ' + mesh)
+    sel3 = om.MSelectionList()
+    sel3.add(intermediate)
+    pts_bind = om.MFnMesh(sel3.getDagPath(0)).getPoints(om.MSpace.kWorld)
+
     target_positions = []
     for i in range(vtx_count):
         sp = sculpted_pos[i]
-        tp = om.MPoint(sp[0], sp[1], sp[2]) * skin_matrices[i].inverse()
-        target_positions.append((tp.x, tp.y, tp.z))
+        pp = preskin_pos[i]
+        bp = pts_bind[i]
+        back = om.MPoint(sp[0], sp[1], sp[2]) * skin_matrices[i].inverse()
+        target_positions.append((back.x + bp.x - pp[0],
+                                  back.y + bp.y - pp[1],
+                                  back.z + bp.z - pp[2]))
 
     return target_positions
 
@@ -242,12 +275,18 @@ def addCorrectiveTarget(mesh, target_positions, target_name):
 
     try:
         if bs_node is None:
-            sc = getSkinCluster(mesh)
-            kwargs = {'before': True} if sc else {}
+            # Create without 'before' so it lands post-skin by default,
+            # then reorder to sit between any existing pre-skin blendShapes
+            # and the skinCluster. This means the back-transform only needs
+            # to invert the skinCluster, which is what extractDelta does.
             result = cmds.blendShape(tmp_mesh, mesh,
-                                     name=mesh + '_correctiveBS', **kwargs)
+                                     name=mesh + '_correctiveBS',
+                                     origin='local')
             bs_node = result[0]
             target_index = 0
+            sc = getSkinCluster(mesh)
+            if sc:
+                cmds.reorderDeformers(bs_node, sc, mesh)
         else:
             target_index = cmds.blendShape(bs_node, query=True, weightCount=True) or 0
             cmds.blendShape(bs_node, edit=True,
