@@ -150,7 +150,7 @@ def closestUVOnSurface(surface, point):
     if shapeType == 'nurbsSurface':
         node = cmds.createNode('closestPointOnSurface')
         cmds.connectAttr(surfaceShape + '.local', node + '.inputSurface')
-        cmds.setAttr(node + '.inPosition', *_transformPoint(surfaceShape, 'worldInverseMatrix[0]', point))
+        cmds.setAttr(node + '.inPosition', *_transformPoint(surfaceShape, 'worldInverseMatrix[0]', point), type='double3')
         u_raw = cmds.getAttr(node + '.parameterU')
         v_raw = cmds.getAttr(node + '.parameterV')
         closest = _transformPoint(surfaceShape, 'worldMatrix[0]', cmds.getAttr(node + '.position')[0])
@@ -166,7 +166,7 @@ def closestUVOnSurface(surface, point):
         node = cmds.createNode('closestPointOnMesh')
         cmds.connectAttr(surfaceShape + '.outMesh', node + '.inMesh')
         cmds.connectAttr(surfaceShape + '.worldMatrix[0]', node + '.inputMatrix')
-        cmds.setAttr(node + '.inPosition', *point)
+        cmds.setAttr(node + '.inPosition', *point, type='double3')
         u = cmds.getAttr(node + '.parameterU')
         v = cmds.getAttr(node + '.parameterV')
         closest = cmds.getAttr(node + '.position')[0]
@@ -589,8 +589,8 @@ def createUVDriverControl(follicle, surface, customName=None, sensitivity=1.0, u
         cmds.circle(name=base + '_uv_CTL', normal=(0, 0, 1), radius=1, constructionHistory=False)[0]
 
     cmds.parent(ctrl, anchor)
-    cmds.setAttr(ctrl + '.translate', 0, 0, 0)
-    cmds.setAttr(ctrl + '.rotate', 0, 0, 0)
+    cmds.setAttr(ctrl + '.translate', 0, 0, 0, type='double3')
+    cmds.setAttr(ctrl + '.rotate', 0, 0, 0, type='double3')
 
     cmds.addAttr(ctrl, longName='sensitivity', attributeType='float', defaultValue=sensitivity, keyable=False)
     cmds.setAttr(ctrl + '.sensitivity', channelBox=True)
@@ -633,8 +633,8 @@ def createJointDriverControl(follicle, joint, customName=None, useStopSignShape=
         cmds.circle(name=base + '_jnt_CTL', normal=(0, 0, 1), radius=0.6, constructionHistory=False)[0]
 
     cmds.parent(ctrl, follicle)
-    cmds.setAttr(ctrl + '.translate', 0, 0, 0)
-    cmds.setAttr(ctrl + '.rotate', 0, 0, 0)
+    cmds.setAttr(ctrl + '.translate', 0, 0, 0, type='double3')
+    cmds.setAttr(ctrl + '.rotate', 0, 0, 0, type='double3')
 
     cmds.parentConstraint(ctrl, joint, maintainOffset=False)
 
