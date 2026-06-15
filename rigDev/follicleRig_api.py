@@ -29,8 +29,9 @@ def resolveBaseName(sourceNode, customName=None):
 
 def getFollicleShape(node):
     if cmds.nodeType(node) == 'follicle':
-        return node
-    shapes = cmds.listRelatives(node, shapes=True, noIntermediate=True) or []
+        full = cmds.ls(node, long=True)
+        return full[0] if full else node
+    shapes = cmds.listRelatives(node, shapes=True, noIntermediate=True, fullPath=True) or []
     for shape in shapes:
         if cmds.nodeType(shape) == 'follicle':
             return shape
