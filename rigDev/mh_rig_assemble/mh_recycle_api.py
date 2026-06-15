@@ -149,7 +149,7 @@ def delete_rl_meshes():
     Delete all RigLogic-driven face meshes and any associated display layers.
     Returns (mesh_count, layer_count).
     """
-    meshes = _find_rl_meshes()
+    meshes = [m for m in _find_rl_meshes() if 'eye' not in m.lower()]
     layers = _find_display_layers_for_meshes(meshes)
 
     mesh_count = 0

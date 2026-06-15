@@ -275,18 +275,13 @@ def addCorrectiveTarget(mesh, target_positions, target_name):
 
     try:
         if bs_node is None:
-            # Create without 'before' so it lands post-skin by default,
-            # then reorder to sit between any existing pre-skin blendShapes
-            # and the skinCluster. This means the back-transform only needs
-            # to invert the skinCluster, which is what extractDelta does.
-            result = cmds.blendShape(tmp_mesh, mesh,
-                                     name=mesh + '_correctiveBS',
-                                     origin='local')
+            sc = getSkinCluster(mesh)
+            kwargs = dict(name=mesh + '_correctiveBS', origin='local')
+            if sc:
+                kwargs['before'] = True
+            result = cmds.blendShape(tmp_mesh, mesh, **kwargs)
             bs_node = result[0]
             target_index = 0
-            sc = getSkinCluster(mesh)
-            if sc:
-                cmds.reorderDeformers(bs_node, sc, mesh)
         else:
             target_index = cmds.blendShape(bs_node, query=True, weightCount=True) or 0
             cmds.blendShape(bs_node, edit=True,

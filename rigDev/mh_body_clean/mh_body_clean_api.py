@@ -195,6 +195,9 @@ def _find_meshes(key):
     if key == 'head' and cmds.objExists('mh_bs_base') and 'mh_bs_base' not in found:
         found.append('mh_bs_base')
 
+    if key == 'teeth' and cmds.objExists('mh_bs_teeth_base') and 'mh_bs_teeth_base' not in found:
+        found.append('mh_bs_teeth_base')
+
     return found
 
 
