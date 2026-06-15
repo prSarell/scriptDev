@@ -429,8 +429,11 @@ def resolveToFollicle(node):
 def addControllersForSelection(nodes):
     '''
     Builds a UV driver control + joint driver control for each unique follicle
-    in `nodes`. Accepts follicle transforms and/or their child joints.
-    Deduplicates so selecting a follicle and its own child joint counts as one.
+    in `nodes`. Accepts:
+      - The top-level follicle group (_FOL_GRP) → expands to all follicles inside
+      - Individual follicle transforms
+      - Joints parented under follicles
+    Skips follicles that already have a UV controller connected.
     Anchor follicles for UV controls are parented into the same group as
     their driven follicle.
     Returns [(uv_ctrl, jnt_ctrl), ...].
@@ -438,10 +441,32 @@ def addControllersForSelection(nodes):
     follicles = []
     seen = set()
     for node in nodes:
+        # Expand groups: if the node's direct children include follicles, treat
+        # it as a FOL_GRP and process every uncontrolled follicle inside.
+        children = cmds.listRelatives(node, children=True, type='transform') or []
+        group_follicles = []
+        for child in children:
+            try:
+                folShape = getFollicleShape(child)
+            except FollicleRigError:
+                continue
+            # Skip follicles already driven by a UV controller
+            if cmds.listConnections(folShape + '.parameterU', source=True, destination=False):
+                continue
+            group_follicles.append(child)
+
+        if group_follicles:
+            for fol in group_follicles:
+                if fol not in seen:
+                    seen.add(fol)
+                    follicles.append(fol)
+            continue
+
+        # Not a group — try to resolve as individual follicle or joint
         try:
             fol = resolveToFollicle(node)
         except FollicleRigError:
-            cmds.warning('Skipping ' + node + ': not a follicle or follicle-parented joint')
+            cmds.warning('Skipping ' + node + ': not a follicle, joint, or follicle group')
             continue
         if fol not in seen:
             seen.add(fol)
