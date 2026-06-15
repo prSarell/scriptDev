@@ -442,13 +442,17 @@ def addControllersForSelection(nodes):
     seen = set()
     for node in nodes:
         # Expand groups: if the node's direct children include follicles, treat
-        # it as a FOL_GRP and process every uncontrolled follicle inside.
+        # it as a FOL_GRP and process every uncontrolled primary follicle inside.
         children = cmds.listRelatives(node, children=True, type='transform') or []
         group_follicles = []
         for child in children:
             try:
                 folShape = getFollicleShape(child)
             except FollicleRigError:
+                continue
+            # Skip anchor follicles (created by UV controllers) — they have no
+            # joint child. Only primary follicles should get controllers.
+            if not (cmds.listRelatives(child, children=True, type='joint') or []):
                 continue
             # Skip follicles already driven by a UV controller
             if cmds.listConnections(folShape + '.parameterU', source=True, destination=False):
