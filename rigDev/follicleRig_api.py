@@ -93,6 +93,7 @@ def createJointUnderFollicle(follicle, name):
                  'rotateX', 'rotateY', 'rotateZ',
                  'jointOrientX', 'jointOrientY', 'jointOrientZ'):
         cmds.setAttr(joint + '.' + attr, 0)
+    cmds.setAttr(joint + '.jointOrientX', 90)
     return joint
 
 

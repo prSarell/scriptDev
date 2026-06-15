@@ -81,8 +81,8 @@ class HairBuilderUI(QtWidgets.QDialog):
             ('3 — Position Hair',
              'Select a vertex on the scalp surface, then press to attach the rig.',
              self._on_position),
-            ('4 — Bake && Clean',
-             'Bake SKL joints, delete the rig and skin cluster.',
+            ('4 — Bake && Build FK Rig',
+             'Bake SKL joints, delete the spine rig, and build an FK daisy-chain under the scalp follicle.',
              self._on_bake),
             ('5 — Snap Base to Surface',
              'Select the base edge loop, then press to snap verts to the scalp.',
@@ -196,13 +196,13 @@ class HairBuilderUI(QtWidgets.QDialog):
         if not self._prefix:
             self._log_msg('Step 4 — ERROR: Build the rig first (Step 1).')
             return
-        self._log_msg('Step 4 — Baking SKL joints and cleaning rig...')
+        self._log_msg('Step 4 — Baking SKL joints, removing spine rig, building FK chain...')
         try:
             api.bake_and_clean(self._prefix, self._scalp_mesh,
                                self._scalp_fol,
                                self._skin_cluster or '',
                                self._pointNumber, self._tip_count)
-            self._log_msg('Step 4 — Done. SKL joints baked; rig removed.')
+            self._log_msg('Step 4 — Done. SKL joints baked; FK rig built under scalp follicle.')
             self._set_steps_from(4)
         except Exception as e:
             self._log_msg(f'Step 4 — ERROR: {e}')

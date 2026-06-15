@@ -27,6 +27,13 @@ def show():
 # ── rig builder ───────────────────────────────────────────────────────────────
 
 def buildSpine(prefix, surface_spans=3):
+    existing = cmds.ls(prefix + '_000_FK', prefix + '_000_SKL', prefix + '_000_JNT')
+    if existing:
+        raise RuntimeError(
+            'Rig nodes already exist for "' + prefix + '" (' + ', '.join(existing) + '). '
+            'Undo the previous build or delete existing rig nodes before rebuilding.'
+        )
+
     currentIntangent = cmds.keyTangent(query=True, itt=True, g=True)
     currentOutTangent = cmds.keyTangent(query=True, ott=True, g=True)
 
@@ -700,6 +707,143 @@ def addTip(prefix, tip_crv):
     cmds.select(clear=True)
 
 
+def addFK(prefix):
+    """
+    Build a daisy-chain FK rig that blends with the spine rig on the SKL joints.
+
+    Duplicates the SKL chain as _FKJNT joints (suffix is _FKJNT rather than _FK
+    because _FK is already used by the IK spline joints). Daisy-chains circle
+    CTLs using the same structure as the tip rig, then adds a second
+    parentConstraint target on each SKL joint alongside the existing JNT
+    constraint. A FK_IK attribute on COG_CTL (0 = full IK, 1 = full FK) drives
+    the blend via one MDN + PMA wired to each constraint's weight attributes.
+    """
+    cog_ctl = prefix + 'COG_CTL'
+    btm_ctl = prefix + 'Btm_CTL'
+    no_xf_grp = prefix + '_NoTransform000_GRP'
+    fk_grp_name = prefix + '_FK_GRP'
+
+    for node in [cog_ctl, no_xf_grp]:
+        if not cmds.objExists(node):
+            raise RuntimeError('Expected node not found: ' + node)
+    if cmds.objExists(fk_grp_name):
+        raise RuntimeError('FK rig already exists: ' + fk_grp_name)
+
+    skl_joints = sorted(cmds.ls(prefix + '_*_SKL', type='joint') or [])
+    if not skl_joints:
+        raise RuntimeError('No SKL joints found for prefix: ' + prefix)
+    count = len(skl_joints)
+
+    # Container group parented under NoTransform, scaled with rig
+    cmds.group(em=True, name=fk_grp_name)
+    cmds.parent(fk_grp_name, no_xf_grp)
+    for axis in ['scaleX', 'scaleY', 'scaleZ']:
+        cmds.connectAttr(cog_ctl + '.globalScale', fk_grp_name + '.' + axis)
+
+    # ── FK joint chain ─────────────────────────────────────────────────────
+    fk_joints = []
+    for i, skl in enumerate(skl_joints):
+        idx = str(i).zfill(3)
+        fk_jnt = prefix + '_' + idx + '_FKJNT'
+        cmds.select(clear=True)
+        cmds.joint(name=fk_jnt)
+        pc = cmds.parentConstraint(skl, fk_jnt, mo=False)[0]
+        cmds.delete(pc)
+        cmds.setAttr(fk_jnt + '.rotate', 0, 0, 0)
+        for attr in ('jointOrientX', 'jointOrientY', 'jointOrientZ'):
+            cmds.setAttr(fk_jnt + '.' + attr, cmds.getAttr(skl + '.' + attr))
+        fk_joints.append(fk_jnt)
+
+    cmds.parent(fk_joints[0], fk_grp_name)
+    for i in range(1, count):
+        cmds.parent(fk_joints[i], fk_joints[i - 1])
+
+    # ── CTL daisy chain (mirrors tip rig structure) ────────────────────────
+    prev_driver = btm_ctl if cmds.objExists(btm_ctl) else None
+    ctl_names = []
+    for i, skl in enumerate(skl_joints):
+        idx = str(i).zfill(3)
+        grp = prefix + '_FK_' + idx + '_GRP'
+        ctl = prefix + '_FK_' + idx + '_CTL'
+
+        cmds.group(em=True, name=grp)
+        cmds.parent(grp, fk_grp_name)
+        pc = cmds.parentConstraint(skl, grp, mo=False)[0]
+        cmds.delete(pc)
+        cmds.setAttr(grp + '.rotateOrder', 4)
+        cmds.addAttr(grp, longName='twist', at='double', keyable=False)
+        cmds.setAttr(grp + '.twist', lock=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(grp + attr, lock=True, keyable=False)
+        if prev_driver:
+            cmds.parentConstraint(prev_driver, grp, mo=True)
+
+        cmds.select(clear=True)
+        cmds.circle(radius=4, nr=(0, 1, 0), c=(0, 0, 0), name=ctl, ch=False)
+        cmds.rotate(0, 0, 90, ctl + '.cv[*]', relative=True, objectSpace=True)
+        cmds.parent(ctl, grp)
+        cmds.setAttr(ctl + '.translate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotateOrder', 4)
+        cmds.addAttr(ctl, longName='twist', at='double', keyable=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(ctl + attr, lock=True, keyable=False)
+        ctl_shape = cmds.listRelatives(ctl, shapes=True)[0]
+        cmds.setAttr(ctl_shape + '.overrideEnabled', 1)
+        cmds.setAttr(ctl_shape + '.overrideColor', 18)
+
+        cmds.parentConstraint(ctl, fk_joints[i])
+
+        ctl_names.append(ctl)
+        prev_driver = ctl
+
+    # ── FK_IK attr on COG_CTL ──────────────────────────────────────────────
+    if not cmds.attributeQuery('FK_IK', node=cog_ctl, exists=True):
+        cmds.addAttr(cog_ctl, longName='FK_IK', attributeType='float',
+                     min=0, max=1, defaultValue=0, keyable=True)
+
+    # ── MDN: outputX = FK_IK (FK weight), outputY = -FK_IK ───────────────
+    mdn = cmds.createNode('multiplyDivide', name=prefix + '_FKIK_MDN')
+    cmds.setAttr(mdn + '.operation', 1)
+    cmds.setAttr(mdn + '.input1X', 1.0)
+    cmds.connectAttr(cog_ctl + '.FK_IK', mdn + '.input2X')
+    cmds.setAttr(mdn + '.input1Y', -1.0)
+    cmds.connectAttr(cog_ctl + '.FK_IK', mdn + '.input2Y')
+
+    # ── PMA: 1 + (-FK_IK) = 1 - FK_IK (IK weight) ────────────────────────
+    pma = cmds.createNode('plusMinusAverage', name=prefix + '_FKIK_PMA')
+    cmds.setAttr(pma + '.operation', 1)
+    cmds.setAttr(pma + '.input1D[0]', 1.0)
+    cmds.connectAttr(mdn + '.outputY', pma + '.input1D[1]')
+
+    # ── Add FK constraint to each SKL, wire both weights ──────────────────
+    for i, skl in enumerate(skl_joints):
+        cmds.parentConstraint(fk_joints[i], skl, mo=True)
+
+        pc_node = (cmds.listRelatives(skl, children=True,
+                                      type='parentConstraint') or [None])[0]
+        if not pc_node:
+            continue
+
+        weight_list = cmds.parentConstraint(pc_node, query=True,
+                                             weightAliasList=True) or []
+        if len(weight_list) < 2:
+            continue
+
+        # weight_list[0] = existing JNT (IK) weight, [1] = new FKJNT (FK) weight
+        cmds.connectAttr(pma + '.output1D', pc_node + '.' + weight_list[0], force=True)
+        cmds.connectAttr(mdn + '.outputX', pc_node + '.' + weight_list[1], force=True)
+
+    # ── Visibility: FK_GRP on when FK_IK=1, spine CTLs on when FK_IK=0 ───
+    cmds.connectAttr(mdn + '.outputX', fk_grp_name + '.visibility')
+    for spine_ctl in [prefix + 'Btm_CTL', prefix + 'Mid_CTL', prefix + 'Top_CTL']:
+        if cmds.objExists(spine_ctl):
+            cmds.setAttr(spine_ctl + '.visibility', lock=False)
+            cmds.connectAttr(pma + '.output1D', spine_ctl + '.visibility', force=True)
+
+    cmds.select(clear=True)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _spine_preview(spans, w=100, h=20):
@@ -787,6 +931,23 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
+        # Add FK section
+        fk_box = QtWidgets.QGroupBox('Add FK')
+        fk_layout = QtWidgets.QVBoxLayout(fk_box)
+        fk_layout.setSpacing(6)
+        fk_note = QtWidgets.QLabel(
+            'Select the rig\'s COG_CTL then click Add FK Rig.\n'
+            'FK_IK = 0 → spine rig, FK_IK = 1 → FK.'
+        )
+        fk_note.setWordWrap(True)
+        fk_layout.addWidget(fk_note)
+        fk_btn = QtWidgets.QPushButton('Add FK Rig')
+        fk_btn.clicked.connect(self._add_fk)
+        fk_layout.addWidget(fk_btn)
+        layout.addWidget(fk_box)
+
+        layout.addWidget(_separator())
+
         # Add Tip section
         tip_box = QtWidgets.QGroupBox('Add Tip')
         tip_layout = QtWidgets.QVBoxLayout(tip_box)
@@ -862,6 +1023,31 @@ class SpineRigUI(QtWidgets.QDialog):
             self._log_msg(f'Done — tip rig added to "{prefix}".')
             cmds.inViewMessage(
                 amg=f'<b>{prefix}</b> tip rig added.',
+                pos='midCenter', fade=True
+            )
+        except Exception as e:
+            self._log_msg(f'ERROR: {e}')
+
+    def _add_fk(self):
+        sel = cmds.ls(sl=True)
+        if not sel:
+            self._log_msg('ERROR: Select the COG_CTL before adding FK rig.')
+            return
+        node = sel[0]
+        if not node.endswith('COG_CTL'):
+            self._log_msg(f'ERROR: "{node}" does not look like a COG_CTL — '
+                          'select the rig\'s COG_CTL and try again.')
+            return
+        prefix = node[:-len('COG_CTL')]
+        self._log_msg(f'Adding FK rig to "{prefix}" — FK joints named _FKJNT '
+                      '(suffix _FK is reserved by the IK spline joints)...')
+        try:
+            addFK(prefix)
+            self._log_msg(
+                f'Done — FK rig added. Key {node}.FK_IK: 0 = spine rig, 1 = FK.'
+            )
+            cmds.inViewMessage(
+                amg=f'<b>{prefix}</b> FK rig added.',
                 pos='midCenter', fade=True
             )
         except Exception as e:

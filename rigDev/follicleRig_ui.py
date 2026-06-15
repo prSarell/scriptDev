@@ -121,10 +121,10 @@ class _PolyVerticesTab(QtWidgets.QWidget):
         layout.addWidget(note)
 
         layout.addSpacing(8)
-        vertBtn = QtWidgets.QPushButton('Enter Vertex Mode')
-        vertBtn.setStyleSheet(_btn('#3D5A3A'))
-        vertBtn.clicked.connect(self._onEnterVertexMode)
-        layout.addWidget(vertBtn)
+        self._vertBtn = QtWidgets.QPushButton('Enter Vertex Mode')
+        self._vertBtn.setStyleSheet(_btn('#3D5A3A'))
+        self._vertBtn.clicked.connect(self._onEnterVertexMode)
+        layout.addWidget(self._vertBtn)
 
         layout.addSpacing(8)
         createBtn = QtWidgets.QPushButton('Create Follicles')
@@ -140,6 +140,11 @@ class _PolyVerticesTab(QtWidgets.QWidget):
         layout.addStretch()
 
     def _onEnterVertexMode(self):
+        if cmds.selectMode(query=True, component=True):
+            cmds.selectMode(object=True)
+            self._vertBtn.setText('Enter Vertex Mode')
+            self._setStatus('Returned to object mode')
+            return
         sel = cmds.ls(selection=True) or []
         if not sel:
             self._setStatus('Select a polygon mesh first', error=True)
@@ -149,6 +154,7 @@ class _PolyVerticesTab(QtWidgets.QWidget):
         except api.FollicleRigError as err:
             self._setStatus(str(err), error=True)
             return
+        self._vertBtn.setText('Exit Vertex Mode')
         self._setStatus('Vertex mode active — pick vertices in order')
 
     def _onCreate(self):

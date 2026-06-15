@@ -650,13 +650,14 @@ def position_hair(prefix, scalp_vertex):
     return mesh, fol_xform
 
 
-# ── button 4: bake and clean ──────────────────────────────────────────────────
+# ── button 4: bake and build FK ──────────────────────────────────────────────
 
 def bake_and_clean(prefix, scalp_mesh, scalp_fol, skin_cluster,
                    pointNumber, tip_count):
     """
-    Bake SKL joints to their current world pose, then delete the rig,
-    follicle, and skin cluster.
+    Bake SKL joints to their current world pose, delete the spine/tip rig and
+    skin cluster, then build a lightweight FK daisy-chain rig over the SKL
+    chain parented under the scalp follicle.
     """
     skl_joints = get_skl_joints(prefix, pointNumber, tip_count)
 
@@ -669,23 +670,67 @@ def bake_and_clean(prefix, scalp_mesh, scalp_fol, skin_cluster,
     if cmds.objExists(skin_cluster):
         cmds.delete(skin_cluster)
 
-    # Delete scalp follicle
-    if cmds.objExists(scalp_fol):
-        cmds.delete(scalp_fol)
-
-    # Delete rig root (controls, surfaces, IK, etc.)
+    # Delete spine/tip rig — scalp follicle is kept as FK rig parent
     rig_root = prefix + '_NoTransform000_GRP'
     if cmds.objExists(rig_root):
         cmds.delete(rig_root)
 
-    # Bake: delete constraints on SKL joints then restore world transforms
-    # Process root-to-tip so parent transforms are clean before children
+    # Bake: clear constraints then restore world transforms root-to-tip
     for skl in skl_joints:
         for con in (cmds.listRelatives(skl, type='constraint') or []):
             cmds.delete(con)
     for skl in skl_joints:
         if cmds.objExists(skl):
             cmds.xform(skl, ws=True, matrix=world_matrices[skl])
+
+    # Build FK daisy-chain rig over the baked SKL joints
+    _build_fk_chain(prefix, skl_joints, scalp_fol)
+
+
+def _build_fk_chain(prefix, skl_joints, scalp_fol):
+    """
+    Build a FK daisy-chain CTL for every SKL joint and parent the chain
+    under scalp_fol.  Each GRP is parentConstrained to the previous CTL
+    (mo=True) so the chain inherits pose naturally.  Each SKL is
+    parentConstrained to its matching CTL (mo=False).
+    """
+    fk_root = prefix + '_FKRig_GRP'
+    cmds.group(em=True, name=fk_root)
+    cmds.parent(fk_root, scalp_fol)
+    cmds.setAttr(fk_root + '.translate', 0, 0, 0)
+    cmds.setAttr(fk_root + '.rotate', 0, 0, 0)
+
+    prev_ctl = None
+    for i, skl in enumerate(skl_joints):
+        idx = str(i).zfill(3)
+        grp = prefix + '_FK_' + idx + '_GRP'
+        ctl = prefix + '_FK_' + idx + '_CTL'
+
+        world_pos = cmds.xform(skl, q=True, ws=True, t=True)
+
+        cmds.group(em=True, name=grp)
+        cmds.parent(grp, fk_root)
+        cmds.xform(grp, ws=True, t=world_pos)
+
+        if prev_ctl is not None:
+            cmds.parentConstraint(prev_ctl, grp, mo=True)
+
+        cmds.select(clear=True)
+        cmds.circle(radius=2, nr=(0, 1, 0), c=(0, 0, 0), name=ctl, ch=False)
+        cmds.parent(ctl, grp)
+        cmds.setAttr(ctl + '.translate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotate', 0, 0, 0)
+        for attr in ('.sx', '.sy', '.sz', '.v'):
+            cmds.setAttr(ctl + attr, lock=True, keyable=False)
+        ctl_shape = cmds.listRelatives(ctl, shapes=True)[0]
+        cmds.setAttr(ctl_shape + '.overrideEnabled', 1)
+        cmds.setAttr(ctl_shape + '.overrideColor', 22)
+
+        cmds.parentConstraint(ctl, skl, mo=False)
+
+        prev_ctl = ctl
+
+    cmds.select(clear=True)
 
 
 # ── button 5: snap base to surface ───────────────────────────────────────────
