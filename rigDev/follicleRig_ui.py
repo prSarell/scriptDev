@@ -6,6 +6,10 @@ import maya.cmds as cmds
 import follicleRig_api as api
 
 
+def _html_escape(text):
+    return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
 def _adj(hex_color, amt):
     h = hex_color.lstrip('#')
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -290,10 +294,27 @@ class FollicleRigUI(QtWidgets.QDialog):
         tabs.addTab(_PolyVerticesTab(self._setStatus), 'Poly Vertices')
         tabs.addTab(_CurveOnSurfaceTab(self._setStatus), 'Curve on Surface')
 
-        self.status = QtWidgets.QLabel('')
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        log_row = QtWidgets.QHBoxLayout()
+        log_lbl = QtWidgets.QLabel('Log')
+        log_lbl.setStyleSheet('color:#888; font-size:10px;')
+        clear_btn = QtWidgets.QPushButton('Clear')
+        clear_btn.setFixedWidth(48)
+        clear_btn.setStyleSheet(_btn('#3a3a3a', '#aaaaaa'))
+        log_row.addWidget(log_lbl)
+        log_row.addStretch()
+        log_row.addWidget(clear_btn)
+        layout.addLayout(log_row)
+
+        self._log = QtWidgets.QTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setFixedHeight(90)
+        self._log.setStyleSheet(
+            'QTextEdit { background:#1a1a1a; border:1px solid #444; '
+            'color:#aaaaaa; font-size:10px; }')
+        layout.addWidget(self._log)
+        clear_btn.clicked.connect(self._log.clear)
 
     def _setStatus(self, message, error=False):
-        self.status.setText(message)
-        self.status.setStyleSheet('color: #d65f5f;' if error else 'color: #6fbf73;')
+        color = '#d65f5f' if error else '#6fbf73'
+        self._log.append(
+            '<span style="color:{}">{}</span>'.format(color, _html_escape(message)))

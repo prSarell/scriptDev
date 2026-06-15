@@ -2,6 +2,7 @@ import math
 import re
 
 import maya.cmds as cmds
+import maya.mel as mel
 import maya.api.OpenMaya as om
 
 
@@ -238,20 +239,23 @@ def setupCurveOnSurface(surface):
         duplicate = cmds.duplicate(surface)[0]
         cmds.hide(surface)
         cmds.makeLive(duplicate)
+        mel.eval('EPCurveTool')
         return surface, duplicate, None
     else:
         preExisting = frozenset(cmds.ls(type='nurbsCurve') or [])
         cmds.makeLive(surface)
+        mel.eval('EPCurveTool')
         return surface, None, preExisting
 
 
 def _cosShapeToNormalizedUVs(cosShape, surfaceShape):
     '''
-    Reads CVs from a curveOnSurface shape and returns normalized (0-1) UV pairs.
-    COS CVs are stored as (u, v) in the surface's native parameter domain;
-    we normalize using the surface's minValue/maxValue attributes.
+    Reads edit points (.ep) from a curveOnSurface shape and returns normalized
+    (0-1) UV pairs — one per point the user placed, regardless of curve degree.
+
+    COS edit points are stored as (u, v) in the surface's native parameter
+    domain, so EP count (spans + 1) equals follicle count with no CV mismatch.
     '''
-    degree = cmds.getAttr(cosShape + '.degree')
     spans = cmds.getAttr(cosShape + '.spans')
     minU = cmds.getAttr(surfaceShape + '.minValueU')
     maxU = cmds.getAttr(surfaceShape + '.maxValueU')
@@ -260,8 +264,8 @@ def _cosShapeToNormalizedUVs(cosShape, surfaceShape):
     rangeU = (maxU - minU) or 1.0
     rangeV = (maxV - minV) or 1.0
     uvList = []
-    for i in range(degree + spans):
-        raw = cmds.getAttr('%s.cv[%d]' % (cosShape, i))
+    for i in range(spans + 1):
+        raw = cmds.getAttr('%s.ep[%d]' % (cosShape, i))
         u_raw = raw[0][0] if isinstance(raw[0], (list, tuple)) else raw[0]
         v_raw = raw[0][1] if isinstance(raw[0], (list, tuple)) else raw[1]
         uvList.append(((u_raw - minU) / rangeU, (v_raw - minV) / rangeV))
@@ -282,6 +286,14 @@ def createFolliclesFromCurveSetup(original, duplicate, preExistingCurves=None):
         curveTransform = None
         cosShape = None
         for child in (cmds.listRelatives(dupShape, children=True) or []):
+            # EP curve tool on a live NURBS surface embeds a curveOnSurface node
+            # directly under the surface shape — the child IS the shape, so
+            # listRelatives(child, shapes=True) returns nothing. Check the child
+            # node type first before falling back to looking at its shapes.
+            if cmds.nodeType(child) in ('nurbsCurve', 'curveOnSurface'):
+                cosShape = child
+                curveTransform = child
+                break
             childShapes = cmds.listRelatives(child, shapes=True, noIntermediate=True) or []
             for s in childShapes:
                 if cmds.nodeType(s) in ('nurbsCurve', 'curveOnSurface'):
@@ -301,19 +313,23 @@ def createFolliclesFromCurveSetup(original, duplicate, preExistingCurves=None):
         origShape = getSurfaceShape(original)
         try:
             if cmds.nodeType(cosShape) == 'curveOnSurface':
-                # EP curve tool on a live NURBS surface creates a curveOnSurface
-                # node whose CVs are stored in the surface's native UV parameter
-                # space — read and normalize directly, no world-space projection.
+                # True COS: EP positions are stored as UV coords — read directly.
                 uvList = _cosShapeToNormalizedUVs(cosShape, origShape)
             else:
-                positions = getCurveCVPositions(curveTransform)
+                # Regular nurbsCurve embedded on the duplicate — use .ep[i]
+                # (edit points) so follicle count matches points placed, not CVs.
+                spans = cmds.getAttr(cosShape + '.spans')
+                positions = [
+                    tuple(cmds.pointPosition('%s.ep[%d]' % (cosShape, i), world=True))
+                    for i in range(spans + 1)
+                ]
                 if not positions:
-                    raise FollicleRigError('Curve has no CVs')
+                    raise FollicleRigError('Curve has no edit points')
                 uvList = []
                 for index, point in enumerate(positions):
                     uv, distance = closestUVOnSurface(original, point)
                     if distance > 0.01:
-                        cmds.warning('cv[%d] is %.4f units from surface' % (index, distance))
+                        cmds.warning('ep[%d] is %.4f units from surface' % (index, distance))
                     uvList.append(uv)
             result = buildFollicleRig(original, uvList, nameSource=nameSource)
         finally:
@@ -343,15 +359,20 @@ def createFolliclesFromCurveSetup(original, duplicate, preExistingCurves=None):
                 '%d new curves found. Undo extra curves and try again.' % len(newCurves))
 
         curveTransform = newCurves[0]
-        positions = getCurveCVPositions(curveTransform)
+        curveShape = getCurveShape(curveTransform)
+        spans = cmds.getAttr(curveShape + '.spans')
+        positions = [
+            tuple(cmds.pointPosition('%s.ep[%d]' % (curveTransform, i), world=True))
+            for i in range(spans + 1)
+        ]
         if not positions:
-            raise FollicleRigError('Curve has no CVs')
+            raise FollicleRigError('Curve has no edit points')
 
         uvList = []
         for index, point in enumerate(positions):
             uv, distance = closestUVOnSurface(original, point)
             if distance > 0.01:
-                cmds.warning('cv[%d] is %.4f units from %s' % (index, distance, original))
+                cmds.warning('ep[%d] is %.4f units from %s' % (index, distance, original))
             uvList.append(uv)
 
         result = buildFollicleRig(original, uvList, nameSource=curveTransform)
