@@ -81,9 +81,6 @@ def createFollicle(surface, u, v, name):
     cmds.setAttr(folShape + '.parameterV', v)
 
     folXform = cmds.rename(folXform, name + '_FOL')
-    folShape = cmds.listRelatives(folXform, shapes=True)[0]
-    cmds.rename(folShape, name + '_FOLShape')
-
     return folXform
 
 
