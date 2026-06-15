@@ -23,8 +23,6 @@ RIGTOOL_SCRIPTS = [
     "doubleSkinFaceRig/dsfr_ui.py",
     "metahumanVP/vp_shader_api.py",
     "metahumanVP/vp_shader_ui.py",
-    "hairBuilder/hairBuilder_api.py",
-    "hairBuilder/hairBuilder_ui.py",
     "nameStripper/nameStripper/ps_namespace_stripper.py",
     "mh_body_clean/mh_body_clean_api.py",
     "mh_body_clean/mh_body_clean_ui.py",
@@ -135,18 +133,6 @@ BUTTONS = [
             "import ps_namespace_stripper\n"
             "importlib.reload(ps_namespace_stripper)\n"
             "ps_namespace_stripper.show()"
-        ),
-    },
-    {
-        "label": "Hair Builder",
-        "tooltip": "Open Hair Builder — 6-step workflow for building, placing, and baking a hair rig onto a poly hair clump",
-        "icon": "iconHairBuilder.png",
-        "command": (
-            "import importlib\n"
-            "import hairBuilder_api, hairBuilder_ui\n"
-            "importlib.reload(hairBuilder_api)\n"
-            "importlib.reload(hairBuilder_ui)\n"
-            "hairBuilder_ui.show()"
         ),
     },
     {
