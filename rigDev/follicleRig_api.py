@@ -89,8 +89,11 @@ def createFollicle(surface, u, v, name):
 
 def createJointUnderFollicle(follicle, name):
     cmds.select(clear=True)
-    joint = cmds.joint(name=name + '_JNT')
-    cmds.parent(joint, follicle)
+    cmds.joint(name=name + '_JNT')
+    cmds.parent(cmds.ls(selection=True)[0], follicle)
+    # cmds.joint() may return a world-root absolute path (|name) in Maya 2025;
+    # after parenting the path is stale, so re-resolve from the follicle.
+    joint = cmds.listRelatives(follicle, children=True, type='joint')[-1]
     for attr in ('translateX', 'translateY', 'translateZ',
                  'rotateX', 'rotateY', 'rotateZ',
                  'jointOrientX', 'jointOrientY', 'jointOrientZ'):
