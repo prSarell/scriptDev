@@ -434,11 +434,14 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             return
 
         try:
-            target_positions = api.extractDelta(mesh, self._dup_a, posed_mesh)
-            api.updateCorrectiveTarget(mesh, target_name, target_positions)
+            api.updateCorrectiveTarget(mesh, target_name, self._dup_a, posed_mesh)
             self._bakeStatus.setText('Target "%s" updated.' % target_name)
             self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
             self._log_msg('Updated target "%s"' % target_name)
+            self._refreshTargetList()
+            items = self._targetList.findItems(target_name, QtCore.Qt.MatchExactly)
+            if items:
+                self._targetList.setCurrentItem(items[0])
         except Exception as e:
             self._warn(str(e))
 

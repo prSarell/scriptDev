@@ -1,4 +1,5 @@
 import maya.cmds as cmds
+import maya.mel as mel
 
 
 class CorrectiveBSError(Exception):
@@ -311,19 +312,55 @@ def addCorrectiveTarget(mesh, target_positions, target_name):
     return bs_node, target_index
 
 
-def updateCorrectiveTarget(mesh, target_name, target_positions):
+def updateCorrectiveTarget(mesh, target_name, sculpted_mesh, posed_mesh):
     """Replace vertex data for an existing target without touching SDK wiring."""
     bs_node = getBlendShapeNode(mesh)
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    tmp_mesh     = _buildTargetMesh(mesh, target_positions, target_name + '_tmp')
-    try:
-        cmds.blendShape(bs_node, edit=True,
-                        target=(mesh, target_index, tmp_mesh, 1.0))
-    finally:
-        if cmds.objExists(tmp_mesh):
-            cmds.delete(tmp_mesh)
+    _writeTargetDeltas(bs_node, target_index, sculpted_mesh, posed_mesh)
+
+
+def _writeTargetDeltas(bs_node, target_index, sculpted_mesh, posed_mesh):
+    """
+    Write corrective deltas (S - P) directly into the blendShape node's ipt/ict.
+
+    cmds.blendShape(edit=True, target=...) silently does nothing on an existing
+    target index — it is for adding targets, not replacing them.  Writing ipt/ict
+    directly is the only reliable way to update stored target data.
+
+    ipt stores per-vertex deltas: target_pos - blendShape_input_at_pose = S - P.
+    ict lists which vertex indices are included (sparse; unaffected verts omitted).
+
+    Uses mel.eval for the setAttr calls: cmds.setAttr with *args + keyword args
+    has binding issues in Maya's Python layer for pointArray/componentList types.
+    """
+    sculpted_pos = getVertexPositions(sculpted_mesh, worldSpace=False)
+    posed_pos    = getVertexPositions(posed_mesh,    worldSpace=True)
+
+    ipt_attr = (bs_node + '.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputPointsTarget') % target_index
+    ict_attr = (bs_node + '.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputComponentsTarget') % target_index
+
+    threshold = 1e-5
+    deltas     = []
+    components = []
+    for i, (s, p) in enumerate(zip(sculpted_pos, posed_pos)):
+        dx, dy, dz = s[0] - p[0], s[1] - p[1], s[2] - p[2]
+        if abs(dx) > threshold or abs(dy) > threshold or abs(dz) > threshold:
+            deltas.append((dx, dy, dz))
+            components.append(i)
+
+    n = len(deltas)
+    if n:
+        pts_str  = ' '.join('%.10g %.10g %.10g 1' % d for d in deltas)
+        comp_str = ' '.join('"vtx[%d]"' % i for i in components)
+        mel.eval('setAttr -type "pointArray" "%s" %d %s' % (ipt_attr, n, pts_str))
+        mel.eval('setAttr -type "componentList" "%s" %d %s' % (ict_attr, n, comp_str))
+    else:
+        mel.eval('setAttr -type "pointArray" "%s" 0' % ipt_attr)
+        mel.eval('setAttr -type "componentList" "%s" 0' % ict_attr)
 
 
 def listCorrectiveTargets(mesh):
