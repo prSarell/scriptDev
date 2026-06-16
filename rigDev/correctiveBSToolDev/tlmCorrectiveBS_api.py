@@ -355,28 +355,66 @@ def _resolveTargetIndex(bs_node, target_name):
 
 # ── SDK driver wiring ─────────────────────────────────────────────────────────
 
-def wireSDKDrivers(bs_node, target_index, bs_states):
+def _buildMultiDriverNetwork(bs_node, target_index, bs_states):
     """
-    Wire a Set Driven Key from the dominant blendShape weight in bs_states
-    to the corrective weight. bs_states is the list returned by startCorrection().
+    Build a setRange + floatMath multiply network for multi-driver face correctives.
 
-    Uses driverValue/value flags so setAttr on the driver is never needed —
-    safe even if the driver is already connected to an animation curve.
+    Each BS driver is normalised to 0-1 using a setRange node (mapping
+    0→peak to 0→1), then all normalised signals are multiplied together.
+    The product drives the corrective weight — it reaches 1 only when every
+    driver is simultaneously at its captured value, and degrades gracefully
+    when any driver backs off.
     """
-    if not bs_states:
+    valid = [(attr, peak) for attr, peak in bs_states if abs(peak) > 1e-4]
+    if not valid:
         return
 
-    driven_attr       = '%s.weight[%d]' % (bs_node, target_index)
-    driver_attr, peak = max(bs_states, key=lambda x: x[1])
+    driven_attr = '%s.weight[%d]' % (bs_node, target_index)
+    base        = '%s_%d' % (bs_node, target_index)
+
+    sr_outputs = []
+    for k, (driver_attr, peak) in enumerate(valid):
+        sr = cmds.createNode('setRange', name='%s_sr%d' % (base, k))
+        cmds.setAttr(sr + '.oldMinX', 0.0)
+        cmds.setAttr(sr + '.oldMaxX', peak)
+        cmds.setAttr(sr + '.minX',    0.0)
+        cmds.setAttr(sr + '.maxX',    1.0)
+        cmds.connectAttr(driver_attr, sr + '.valueX', force=True)
+        sr_outputs.append(sr + '.outValueX')
+
+    if len(sr_outputs) == 1:
+        cmds.connectAttr(sr_outputs[0], driven_attr, force=True)
+        return
+
+    prev_out = sr_outputs[0]
+    for k, sr_out in enumerate(sr_outputs[1:]):
+        fm = cmds.createNode('floatMath', name='%s_fm%d' % (base, k))
+        cmds.setAttr(fm + '.operation', 2)  # multiply
+        cmds.connectAttr(prev_out, fm + '.floatA', force=True)
+        cmds.connectAttr(sr_out,   fm + '.floatB', force=True)
+        prev_out = fm + '.outFloat'
+
+    cmds.connectAttr(prev_out, driven_attr, force=True)
+
+
+def _wireCustomDriver(bs_node, target_index, driver_attr, driver_value):
+    """
+    Wire a single SDK from any attribute (joint rotation, control slider, etc.)
+    to the corrective weight.  0→0, driver_value→1.
+
+    Uses driverValue/value flags so setAttr on the driver is never needed —
+    safe even when the driver attribute is already connected.
+    """
+    driven_attr = '%s.weight[%d]' % (bs_node, target_index)
 
     cmds.setDrivenKeyframe(driven_attr,
-                            currentDriver=driver_attr,
-                            driverValue=0.0,
-                            value=0.0)
+                           currentDriver=driver_attr,
+                           driverValue=0.0,
+                           value=0.0)
     cmds.setDrivenKeyframe(driven_attr,
-                            currentDriver=driver_attr,
-                            driverValue=peak,
-                            value=1.0)
+                           currentDriver=driver_attr,
+                           driverValue=driver_value,
+                           value=1.0)
 
     curves = cmds.listConnections(driven_attr, source=True, type='animCurveUU') or []
     if curves:
@@ -385,11 +423,14 @@ def wireSDKDrivers(bs_node, target_index, bs_states):
 
 # ── high-level operations ─────────────────────────────────────────────────────
 
-def bakeCorrection(mesh, sculpted_mesh, posed_mesh, target_name, bs_states):
+def bakeCorrection(mesh, sculpted_mesh, posed_mesh, target_name,
+                   bs_states=None, custom_driver_attr=None, custom_driver_value=None):
     """
     Step 2. Call with the rig still at the same pose as startCorrection().
 
-    Extracts the delta, creates the blendShape target, wires the SDK.
+    Driver wiring is determined by which kwargs are supplied:
+      bs_states             → multi-driver setRange/multiply network (face correctives)
+      custom_driver_attr    → single SDK from any attribute (joints, controls, breathing)
     Returns (blendshape_node, target_index).
     """
     for obj in (mesh, sculpted_mesh, posed_mesh):
@@ -399,6 +440,10 @@ def bakeCorrection(mesh, sculpted_mesh, posed_mesh, target_name, bs_states):
 
     target_positions      = extractDelta(mesh, sculpted_mesh, posed_mesh)
     bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
-    wireSDKDrivers(bs_node, target_index, bs_states)
+
+    if custom_driver_attr and custom_driver_value is not None:
+        _wireCustomDriver(bs_node, target_index, custom_driver_attr, custom_driver_value)
+    elif bs_states:
+        _buildMultiDriverNetwork(bs_node, target_index, bs_states)
 
     return bs_node, target_index

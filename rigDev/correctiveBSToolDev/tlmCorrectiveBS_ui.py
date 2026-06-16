@@ -48,11 +48,13 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self.setMinimumWidth(380)
         self.setStyleSheet(self._stylesheet())
 
-        self._dup_a        = None
-        self._dup_b        = None
-        self._bs_states    = []
-        self._bs_node      = None
-        self._target_index = None
+        self._dup_a               = None
+        self._dup_b               = None
+        self._bs_states           = []
+        self._bs_node             = None
+        self._target_index        = None
+        self._custom_driver_attr  = None
+        self._custom_driver_value = None
 
         self._buildUI()
         self._refreshTargetList()
@@ -86,6 +88,34 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         printStack.setToolTip('Print the full deformation stack for this mesh to the log.')
         printStack.clicked.connect(self._onPrintStack)
         root.addWidget(printStack)
+
+        root.addWidget(self._divider())
+
+        # ── Driver mode ──
+        root.addWidget(self._sectionLabel('DRIVER MODE'))
+
+        self._modeAuto   = QtWidgets.QRadioButton('Auto — BlendShapes')
+        self._modeCustom = QtWidgets.QRadioButton('Custom Attribute')
+        self._modeAuto.setChecked(True)
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(self._modeAuto)
+        mode_row.addWidget(self._modeCustom)
+        root.addLayout(mode_row)
+
+        self._customDriverRow = QtWidgets.QWidget()
+        custom_layout = QtWidgets.QHBoxLayout(self._customDriverRow)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        self._customDriverField = QtWidgets.QLineEdit()
+        self._customDriverField.setPlaceholderText('e.g.  upperArm_jnt.rotateZ  or  chest_ctrl.breathe')
+        pickDriver = self._iconButton('nudgeDown.png', 'Load selected attribute from Channel Box')
+        pickDriver.clicked.connect(self._loadCustomDriver)
+        custom_layout.addWidget(self._customDriverField)
+        custom_layout.addWidget(pickDriver)
+        self._customDriverRow.setVisible(False)
+        root.addWidget(self._customDriverRow)
+
+        self._modeAuto.toggled.connect(
+            lambda checked: self._customDriverRow.setVisible(not checked))
 
         root.addWidget(self._divider())
 
@@ -208,6 +238,17 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._refreshStackInfo(mesh)
         self._refreshTargetList()
 
+    def _loadCustomDriver(self):
+        sel = cmds.ls(sl=True)
+        if not sel:
+            self._warn('Select an object first.')
+            return
+        attrs = cmds.channelBox('mainChannelBox', query=True, selectedMainAttributes=True) or []
+        if not attrs:
+            self._warn('Select an attribute in the Channel Box first.')
+            return
+        self._customDriverField.setText(sel[0] + '.' + attrs[0])
+
     def _onPrintStack(self):
         mesh = self._meshField.text()
         if not mesh:
@@ -247,26 +288,45 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         if not name:
             self._warn('Enter a target name first.')
             return
+
+        use_custom = self._modeCustom.isChecked()
+        if use_custom:
+            driver_attr = self._customDriverField.text().strip()
+            if not driver_attr:
+                self._warn('Enter a driver attribute before capturing the pose.')
+                return
+            if not cmds.objExists(driver_attr):
+                self._warn('Driver attribute not found: ' + driver_attr)
+                return
+
         try:
             dup_a, dup_b, bs_states = api.startCorrection(mesh, name)
             self._dup_a     = dup_a
             self._dup_b     = dup_b
             self._bs_states = bs_states
 
-            if bs_states:
-                driver_lines = ['  Drivers:']
-                for attr, val in bs_states:
-                    driver_lines.append('    %s = %.3f' % (attr, val))
-                driver_text = '\n'.join(driver_lines)
+            if use_custom:
+                self._custom_driver_attr  = driver_attr
+                self._custom_driver_value = cmds.getAttr(driver_attr)
+                driver_text = '  Driver: %s = %.4f' % (driver_attr, self._custom_driver_value)
+                self._log_msg('Pose captured. Sculpt on: ' + dup_a)
+                self._log_msg('  custom driver: %s = %.4f' % (driver_attr, self._custom_driver_value))
             else:
-                driver_text = '  No blendShape drivers active — SDK will not be wired.'
+                self._custom_driver_attr  = None
+                self._custom_driver_value = None
+                if bs_states:
+                    driver_lines = ['  Drivers:']
+                    for attr, val in bs_states:
+                        driver_lines.append('    %s = %.3f' % (attr, val))
+                    driver_text = '\n'.join(driver_lines)
+                else:
+                    driver_text = '  No blendShape drivers active — no wiring will be created.'
+                self._log_msg('Pose captured. Sculpt on: ' + dup_a)
+                for attr, val in bs_states:
+                    self._log_msg('  driver: %s = %.3f' % (attr, val))
 
-            self._captureStatus.setText(
-                'Sculpt on: %s\n%s' % (dup_a, driver_text))
+            self._captureStatus.setText('Sculpt on: %s\n%s' % (dup_a, driver_text))
             self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
-            self._log_msg('Pose captured. Sculpt on: ' + dup_a)
-            for attr, val in bs_states:
-                self._log_msg('  driver: %s = %.3f' % (attr, val))
             cmds.select(dup_a, r=True)
         except Exception as e:
             self._warn(str(e))
@@ -288,17 +348,30 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             return
 
         try:
-            bs_node, idx = api.bakeCorrection(
-                mesh, self._dup_a, self._dup_b, name, self._bs_states)
+            use_custom = (self._custom_driver_attr is not None
+                          and self._custom_driver_value is not None)
+            if use_custom:
+                bs_node, idx = api.bakeCorrection(
+                    mesh, self._dup_a, self._dup_b, name,
+                    custom_driver_attr=self._custom_driver_attr,
+                    custom_driver_value=self._custom_driver_value)
+                wire_text = 'SDK: %s  [0 → %.4f]' % (
+                    self._custom_driver_attr, self._custom_driver_value)
+            else:
+                bs_node, idx = api.bakeCorrection(
+                    mesh, self._dup_a, self._dup_b, name,
+                    bs_states=self._bs_states)
+                valid = [(a, v) for a, v in self._bs_states if abs(v) > 1e-4]
+                if valid:
+                    if len(valid) == 1:
+                        wire_text = 'Network: %s  [0 → %.3f]' % valid[0]
+                    else:
+                        wire_text = 'Network: %d drivers multiplied' % len(valid)
+                else:
+                    wire_text = 'No driver wiring — no blendShape drivers were active.'
+
             self._bs_node      = bs_node
             self._target_index = idx
-
-            if self._bs_states:
-                driver_attr, peak = max(self._bs_states, key=lambda x: x[1])
-                wire_text = 'SDK: %s  [0 → %.3f]' % (driver_attr, peak)
-            else:
-                wire_text = 'No SDK wired — no blendShape drivers were active.'
-
             self._bakeStatus.setText(
                 'Baked "%s" → %s [%d]\n%s' % (name, bs_node, idx, wire_text))
             self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
