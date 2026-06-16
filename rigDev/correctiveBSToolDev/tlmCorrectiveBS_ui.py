@@ -1,5 +1,4 @@
 import maya.cmds as cmds
-import maya.mel as mel
 
 try:
     from PySide6 import QtWidgets, QtCore, QtGui
@@ -41,7 +40,6 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
     ACCENT = '#7a6fa0'
     GREEN  = '#4a7a4a'
     RED    = '#7a3a3a'
-    ORANGE = '#8a6a30'
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,8 +48,10 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self.setMinimumWidth(380)
         self.setStyleSheet(self._stylesheet())
 
-        self._sculpt_mesh = None
-        self._bs_node = None
+        self._dup_a        = None
+        self._dup_b        = None
+        self._bs_states    = []
+        self._bs_node      = None
         self._target_index = None
 
         self._buildUI()
@@ -82,9 +82,14 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._stackLabel.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
         root.addWidget(self._stackLabel)
 
+        printStack = QtWidgets.QPushButton('Print Deformation Stack')
+        printStack.setToolTip('Print the full deformation stack for this mesh to the log.')
+        printStack.clicked.connect(self._onPrintStack)
+        root.addWidget(printStack)
+
         root.addWidget(self._divider())
 
-        # ── Step 1: Sculpt ──
+        # ── Step 1: Capture Pose ──
         root.addWidget(self._sectionLabel('STEP 1  —  CAPTURE POSE'))
 
         name_row = QtWidgets.QHBoxLayout()
@@ -94,30 +99,18 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         name_row.addWidget(self._nameField)
         root.addLayout(name_row)
 
-        sculpt_row = QtWidgets.QHBoxLayout()
-        self._startBtn = QtWidgets.QPushButton('Duplicate for Sculpting')
+        self._startBtn = QtWidgets.QPushButton('Capture Pose  —  Start Sculpting')
         self._startBtn.setToolTip(
             'Duplicates the mesh at its current deformed state.\n'
-            'Sculpt the correction on this duplicate, then continue to Step 2.')
+            'One copy is hidden as a pose reference. Sculpt the\n'
+            'correction on the visible duplicate, then Bake.')
         self._startBtn.clicked.connect(self._onStart)
-        sculpt_row.addWidget(self._startBtn)
-        root.addLayout(sculpt_row)
+        root.addWidget(self._startBtn)
 
-        self._sculptStatus = QtWidgets.QLabel('No sculpt mesh captured yet.')
-        self._sculptStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
-        root.addWidget(self._sculptStatus)
-
-        # Import from external app
-        import_row = QtWidgets.QHBoxLayout()
-        import_row.addWidget(QtWidgets.QLabel('or load sculpted mesh:'))
-        self._sculptField = QtWidgets.QLineEdit()
-        self._sculptField.setPlaceholderText('Select sculpted mesh and click  ←')
-        self._sculptField.setReadOnly(True)
-        pickSculpt = self._iconButton('nudgeDown.png', 'Load selected mesh as sculpt target')
-        pickSculpt.clicked.connect(self._loadSculptMesh)
-        import_row.addWidget(self._sculptField)
-        import_row.addWidget(pickSculpt)
-        root.addLayout(import_row)
+        self._captureStatus = QtWidgets.QLabel('No pose captured yet.')
+        self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
+        self._captureStatus.setWordWrap(True)
+        root.addWidget(self._captureStatus)
 
         root.addWidget(self._divider())
 
@@ -126,9 +119,9 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         self._bakeBtn = QtWidgets.QPushButton('Bake Corrective Target')
         self._bakeBtn.setToolTip(
-            'Extracts the delta between the sculpted mesh and the skinned mesh,\n'
-            'then adds the result as a blendshape target.\n'
-            'The rig must still be at the same pose as Step 1.')
+            'Computes the corrective delta and adds the blendShape target.\n'
+            'The rig must still be at the same pose as Step 1.\n'
+            'SDK driver is wired automatically from the captured drivers.')
         self._bakeBtn.setStyleSheet(
             'QPushButton { background: %s; } '
             'QPushButton:hover { background: %s; }' % (self.GREEN, '#5a8a5a'))
@@ -137,45 +130,8 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         self._bakeStatus = QtWidgets.QLabel('')
         self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
+        self._bakeStatus.setWordWrap(True)
         root.addWidget(self._bakeStatus)
-
-        root.addWidget(self._divider())
-
-        # ── Step 3: Driver ──
-        root.addWidget(self._sectionLabel('STEP 3  —  WIRE DRIVER'))
-
-        driver_row = QtWidgets.QHBoxLayout()
-        driver_row.addWidget(QtWidgets.QLabel('Driver attr:'))
-        self._driverField = QtWidgets.QLineEdit()
-        self._driverField.setPlaceholderText('e.g.  L_arm_JNT.rotateZ')
-        pickDriver = self._iconButton('nudgeDown.png', 'Load selected channel from Channel Box')
-        pickDriver.clicked.connect(self._loadDriverAttr)
-        driver_row.addWidget(self._driverField)
-        driver_row.addWidget(pickDriver)
-        root.addLayout(driver_row)
-
-        range_row = QtWidgets.QHBoxLayout()
-        range_row.addWidget(QtWidgets.QLabel('Drive range:'))
-        self._rangeMinField = QtWidgets.QLineEdit('0')
-        self._rangeMinField.setFixedWidth(55)
-        self._rangeMaxField = QtWidgets.QLineEdit('90')
-        self._rangeMaxField.setFixedWidth(55)
-        range_row.addWidget(self._rangeMinField)
-        range_row.addWidget(QtWidgets.QLabel('→'))
-        range_row.addWidget(self._rangeMaxField)
-        range_row.addStretch()
-        root.addLayout(range_row)
-
-        self._wireBtn = QtWidgets.QPushButton('Wire SDK Driver')
-        self._wireBtn.setToolTip(
-            'Creates a Set Driven Key on the blendshape weight.\n'
-            'The driver attribute goes from the start to end value\n'
-            'as the blendshape weight goes from 0 to 1.')
-        self._wireBtn.setStyleSheet(
-            'QPushButton { background: %s; } '
-            'QPushButton:hover { background: %s; }' % (self.ACCENT, '#8a7fb0'))
-        self._wireBtn.clicked.connect(self._onWire)
-        root.addWidget(self._wireBtn)
 
         root.addWidget(self._divider())
 
@@ -194,7 +150,8 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         target_btn_row = QtWidgets.QHBoxLayout()
         self._updateBtn = QtWidgets.QPushButton('Update Target')
         self._updateBtn.setToolTip(
-            'Re-bake the selected target using the current sculpt mesh.\n'
+            'Re-bake the selected target from the current sculpt mesh.\n'
+            'The original pose reference must still be in the scene.\n'
             'Preserves existing SDK wiring.')
         self._updateBtn.clicked.connect(self._onUpdate)
         self._deleteBtn = QtWidgets.QPushButton('Delete Target')
@@ -251,6 +208,24 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._refreshStackInfo(mesh)
         self._refreshTargetList()
 
+    def _onPrintStack(self):
+        mesh = self._meshField.text()
+        if not mesh:
+            self._warn('Load a mesh first.')
+            return
+        try:
+            stack = api.getDeformationStack(mesh)
+        except api.CorrectiveBSError as e:
+            self._warn(str(e))
+            return
+        if not stack:
+            self._log_msg('No deformers found on: ' + mesh)
+            return
+        self._log_msg('Deformation stack for: ' + mesh)
+        for i, (node, node_type) in enumerate(stack):
+            arrow = '  →  ' if i < len(stack) - 1 else ''
+            self._log_msg('  [%d] %s  (%s)%s' % (i + 1, node, node_type, arrow))
+
     def _refreshStackInfo(self, mesh):
         sc = api.getSkinCluster(mesh)
         bs = api.getBlendShapeNode(mesh)
@@ -263,22 +238,6 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             parts.append('no deformers found')
         self._stackLabel.setText('  ' + '   →   '.join(parts))
 
-    def _loadSculptMesh(self):
-        sel = cmds.ls(sl=True, transforms=True)
-        if not sel:
-            self._warn('Select the sculpted mesh first.')
-            return
-        mesh = sel[0]
-        try:
-            api.getMeshShape(mesh)
-        except api.CorrectiveBSError as e:
-            self._warn(str(e))
-            return
-        self._sculpt_mesh = mesh
-        self._sculptField.setText(mesh)
-        self._sculptStatus.setText('Sculpt mesh loaded: ' + mesh)
-        self._sculptStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
-
     def _onStart(self):
         mesh = self._meshField.text()
         name = self._nameField.text().strip()
@@ -289,93 +248,67 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._warn('Enter a target name first.')
             return
         try:
-            dup = api.startCorrection(mesh, name)
-            self._sculpt_mesh = dup
-            self._sculptField.setText(dup)
-            self._sculptStatus.setText(
-                'Sculpt mesh ready: %s   —   sculpt this, then Bake.' % dup)
-            self._sculptStatus.setStyleSheet(
-                'color: %s; font-size: 10px;' % self.TEXT)
-            self._log_msg('Sculpt mesh created: ' + dup)
-            cmds.select(dup, r=True)
+            dup_a, dup_b, bs_states = api.startCorrection(mesh, name)
+            self._dup_a     = dup_a
+            self._dup_b     = dup_b
+            self._bs_states = bs_states
+
+            if bs_states:
+                driver_lines = ['  Drivers:']
+                for attr, val in bs_states:
+                    driver_lines.append('    %s = %.3f' % (attr, val))
+                driver_text = '\n'.join(driver_lines)
+            else:
+                driver_text = '  No blendShape drivers active — SDK will not be wired.'
+
+            self._captureStatus.setText(
+                'Sculpt on: %s\n%s' % (dup_a, driver_text))
+            self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
+            self._log_msg('Pose captured. Sculpt on: ' + dup_a)
+            for attr, val in bs_states:
+                self._log_msg('  driver: %s = %.3f' % (attr, val))
+            cmds.select(dup_a, r=True)
         except Exception as e:
             self._warn(str(e))
 
     def _onBake(self):
         mesh = self._meshField.text()
-        sculpt = self._sculptField.text()
         name = self._nameField.text().strip()
-
         if not mesh:
             self._warn('Load a mesh first.')
-            return
-        if not sculpt or not cmds.objExists(sculpt):
-            self._warn('No sculpted mesh loaded — use Step 1 or load one manually.')
             return
         if not name:
             self._warn('Enter a target name first.')
             return
+        if not self._dup_a or not cmds.objExists(self._dup_a):
+            self._warn('Sculpt mesh not found. Use Step 1 to capture the pose.')
+            return
+        if not self._dup_b or not cmds.objExists(self._dup_b):
+            self._warn('Pose reference not found. Use Step 1 to capture the pose again.')
+            return
 
         try:
-            bs_node, idx = api.bakeCorrection(mesh, sculpt, name)
-            self._bs_node = bs_node
+            bs_node, idx = api.bakeCorrection(
+                mesh, self._dup_a, self._dup_b, name, self._bs_states)
+            self._bs_node      = bs_node
             self._target_index = idx
+
+            if self._bs_states:
+                driver_attr, peak = max(self._bs_states, key=lambda x: x[1])
+                wire_text = 'SDK: %s  [0 → %.3f]' % (driver_attr, peak)
+            else:
+                wire_text = 'No SDK wired — no blendShape drivers were active.'
+
             self._bakeStatus.setText(
-                'Target "%s" baked to %s [%d]' % (name, bs_node, idx))
-            self._bakeStatus.setStyleSheet(
-                'color: %s; font-size: 10px;' % self.TEXT)
+                'Baked "%s" → %s [%d]\n%s' % (name, bs_node, idx, wire_text))
+            self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
             self._log_msg('Baked "%s" → %s [%d]' % (name, bs_node, idx))
+            self._log_msg(wire_text)
+            self._onPrintStack()
             self._refreshTargetList()
-            # Select the baked target in the list
             items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
             if items:
                 self._targetList.setCurrentItem(items[0])
-        except Exception as e:
-            self._warn(str(e))
-
-    def _loadDriverAttr(self):
-        """Load the first selected channel from the Channel Box."""
-        main_cb = mel.eval('$tmpVar = $gChannelBoxName')
-        attrs = cmds.channelBox(main_cb, query=True, selectedMainAttributes=True) or []
-        sel = cmds.ls(sl=True)
-        if not sel or not attrs:
-            self._warn(
-                'Select a node and highlight a channel in the Channel Box first.')
-            return
-        full_attr = sel[0] + '.' + attrs[0]
-        self._driverField.setText(full_attr)
-
-    def _onWire(self):
-        if self._bs_node is None or self._target_index is None:
-            # Try to resolve from current list selection
-            if not self._resolveSelectedTarget():
-                self._warn('Bake a target first, or select one from the list.')
-                return
-
-        driver = self._driverField.text().strip()
-        if not driver:
-            self._warn('Enter or load a driver attribute first.')
-            return
-
-        try:
-            rmin = float(self._rangeMinField.text())
-            rmax = float(self._rangeMaxField.text())
-        except ValueError:
-            self._warn('Drive range values must be numbers.')
-            return
-
-        if not cmds.objExists(driver.rsplit('.', 1)[0]):
-            self._warn('Driver node not found: ' + driver)
-            return
-
-        try:
-            api.wireSDKDriver(self._bs_node, self._target_index,
-                              driver, (rmin, rmax))
-            self._bakeStatus.setText(
-                'SDK wired: %s  [%s → %s]' % (driver, rmin, rmax))
-            self._bakeStatus.setStyleSheet(
-                'color: %s; font-size: 10px;' % self.TEXT)
-            self._log_msg('SDK wired: %s [%s → %s]' % (driver, rmin, rmax))
         except Exception as e:
             self._warn(str(e))
 
@@ -383,7 +316,6 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._resolveSelectedTarget()
 
     def _resolveSelectedTarget(self):
-        """Sync _bs_node / _target_index from the current list selection."""
         mesh = self._meshField.text()
         items = self._targetList.selectedItems()
         if not items or not mesh:
@@ -394,7 +326,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             return False
         try:
             idx = api._resolveTargetIndex(bs_node, target_name)
-            self._bs_node = bs_node
+            self._bs_node      = bs_node
             self._target_index = idx
             self._nameField.setText(target_name)
             return True
@@ -403,12 +335,8 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
     def _onUpdate(self):
         mesh = self._meshField.text()
-        sculpt = self._sculptField.text()
         if not mesh:
             self._warn('Load a mesh first.')
-            return
-        if not sculpt or not cmds.objExists(sculpt):
-            self._warn('No sculpted mesh loaded.')
             return
         if not self._resolveSelectedTarget():
             self._warn('Select a target from the list first.')
@@ -417,15 +345,26 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         items = self._targetList.selectedItems()
         target_name = items[0].text() if items else ''
         if not target_name:
-            self._warn('Select a target from the list first.')
+            return
+
+        if not self._dup_a or not cmds.objExists(self._dup_a):
+            self._warn(
+                'Sculpt mesh not in scene.\n'
+                'Use Step 1 to re-capture the pose and sculpt again.')
+            return
+
+        posed_mesh = target_name + '_poseRef'
+        if not cmds.objExists(posed_mesh):
+            self._warn(
+                'Pose reference "%s" not found.\n'
+                'Use Step 1 to re-capture the pose.' % posed_mesh)
             return
 
         try:
-            target_positions = api.extractDelta(mesh, sculpt)
+            target_positions = api.extractDelta(mesh, self._dup_a, posed_mesh)
             api.updateCorrectiveTarget(mesh, target_name, target_positions)
             self._bakeStatus.setText('Target "%s" updated.' % target_name)
-            self._bakeStatus.setStyleSheet(
-                'color: %s; font-size: 10px;' % self.TEXT)
+            self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
             self._log_msg('Updated target "%s"' % target_name)
         except Exception as e:
             self._warn(str(e))
@@ -446,7 +385,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         try:
             api.removeCorrectiveTarget(mesh, target_name)
             self._refreshTargetList()
-            self._bs_node = None
+            self._bs_node      = None
             self._target_index = None
         except api.CorrectiveBSError as e:
             self._warn(str(e))
@@ -541,5 +480,3 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             'DARK': self.DARK, 'MID': self.MID, 'LIGHT': self.LIGHT,
             'BORDER': self.BORDER, 'TEXT': self.TEXT, 'ACCENT': self.ACCENT,
         }
-
-
