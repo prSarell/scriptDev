@@ -382,6 +382,14 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
             if items:
                 self._targetList.setCurrentItem(items[0])
+            # Reset sculpt state — next target needs its own Step 1.
+            self._dup_a = None
+            self._dup_b = None
+            self._bs_states = []
+            self._custom_driver_attr  = None
+            self._custom_driver_value = None
+            self._captureStatus.setText('Bake done. Pose to next problem pose, enter a new target name, then use Step 1.')
+            self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
         except Exception as e:
             self._warn(str(e))
 
