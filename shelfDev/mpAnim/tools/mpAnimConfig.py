@@ -46,16 +46,27 @@ def get_save_path():
     return show_settings()
 
 
+def get_shot_cam():
+    """Return the configured shot camera name, defaulting to 'camera1'."""
+    return _load().get('shot_cam', 'camera1').strip() or 'camera1'
+
+
+def set_shot_cam(name):
+    config = _load()
+    config['shot_cam'] = name.strip()
+    _save(config)
+
+
 def show_settings():
     """Open the path configuration dialog. Returns the saved path or None."""
     dlg = _ConfigDialog(_maya_main_window())
     if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-        path = dlg.chosen_path()
         config = _load()
-        config['save_path'] = path
+        config['save_path'] = dlg.chosen_path()
+        config['shot_cam']  = dlg.chosen_cam()
         _save(config)
-        os.makedirs(path, exist_ok=True)
-        return path
+        os.makedirs(dlg.chosen_path(), exist_ok=True)
+        return dlg.chosen_path()
     return None
 
 
@@ -67,7 +78,9 @@ class _ConfigDialog(QtWidgets.QDialog):
         self.setMinimumWidth(400)
         self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowType.WindowContextHelpButtonHint)
 
-        existing = _load().get('save_path', '').strip()
+        cfg = _load()
+        existing      = cfg.get('save_path', '').strip()
+        existing_cam  = cfg.get('shot_cam', 'camera1').strip()
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(10)
@@ -92,6 +105,12 @@ class _ConfigDialog(QtWidgets.QDialog):
         browse_btn.clicked.connect(self._browse)
         path_row.addWidget(browse_btn)
         layout.addLayout(path_row)
+
+        cam_lbl = QtWidgets.QLabel('Shot camera name:')
+        layout.addWidget(cam_lbl)
+        self._cam_field = QtWidgets.QLineEdit(existing_cam)
+        self._cam_field.setPlaceholderText('e.g.  camera1  or  shotCam')
+        layout.addWidget(self._cam_field)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addStretch()
@@ -120,3 +139,6 @@ class _ConfigDialog(QtWidgets.QDialog):
 
     def chosen_path(self):
         return self._path_field.text().strip().replace('\\', '/')
+
+    def chosen_cam(self):
+        return self._cam_field.text().strip() or 'camera1'

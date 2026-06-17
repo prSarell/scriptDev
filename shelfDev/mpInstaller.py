@@ -16,6 +16,7 @@ ANIM_ICONS        = os.path.join(ANIM_DIR, "icons")
 RIG_DIR           = os.path.join(HERE, "mpRig")
 RIG_TOOLS         = os.path.join(RIG_DIR, "tools")
 RIG_ICONS         = os.path.join(RIG_DIR, "icons")
+ANIMDEV_DIR       = os.path.normpath(os.path.join(HERE, "..", "animDev"))
 MULTITOOL_DIR     = os.path.normpath(os.path.join(HERE, "..", "animDev", "multiTool"))
 JIFFYPOMO_DIR     = os.path.normpath(os.path.join(HERE, "..", "timeManagementDev", "jiffyPomoDev"))
 JIFFYSCHEDULE_DIR = os.path.normpath(os.path.join(HERE, "..", "timeManagementDev", "jiffyScheduleDev"))
@@ -69,6 +70,9 @@ def _install():
             anim_scripts.append(name)
     for name in anim_scripts:
         _copy(os.path.join(ANIM_TOOLS, name), scripts_dir)
+
+    for name in getattr(anim_cfg, "ANIMDEV_SCRIPTS", []):
+        _copy(os.path.join(ANIMDEV_DIR, name), scripts_dir)
 
     for name in getattr(anim_cfg, "MULTITOOL_SCRIPTS", []):
         _copy(os.path.join(MULTITOOL_DIR, name), scripts_dir)

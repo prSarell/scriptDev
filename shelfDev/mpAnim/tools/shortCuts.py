@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import maya.cmds as cmds
 import maya.mel as mel
@@ -361,7 +362,7 @@ def _slug_to_mods(slug):
 
 
 def _rtc_id(set_name, slug):
-    safe = (set_name + '_' + slug).replace('+', '_').replace(' ', '_').replace('-', '_')
+    safe = re.sub(r'[^A-Za-z0-9_]', '_', set_name + '_' + slug)
     return 'mpSC_' + safe
 
 
@@ -626,6 +627,28 @@ def set_spacebar(set_name, enabled, data):
 # Initialisation
 # ---------------------------------------------------------------------------
 
+def _restore_rtcs(set_name, set_data):
+    """Rebuild RTCs, NCs and key bindings for all hotkeys in a set.
+    Called on tool open so hotkeys added on another machine (or lost after
+    a Maya prefs wipe) are re-registered without the user having to re-assign."""
+    for slug, hk in set_data.get('hotkeys', {}).items():
+        if hk.get('muted'):
+            continue
+        rtc = hk.get('rtc') or _rtc_id(set_name, slug)
+        nc  = hk.get('nc')  or _nc_id(rtc)
+
+        def _do(hk=hk, rtc=rtc, nc=nc):
+            _ensure_rtc(rtc, hk.get('desc', ''), hk.get('command', ''),
+                        hk.get('lang', 'python'))
+            try:
+                cmds.nameCommand(nc, annotation=hk.get('desc', ''), command=rtc)
+            except Exception:
+                pass
+            _bind_key(hk['key'], hk['alt'], hk['ctrl'], hk['shift'], nc)
+
+        _with_set(set_name, _do)
+
+
 def _init(data):
     if not _set_exists('ps_anim'):
         current = cmds.hotkeySet(query=True, current=True)
@@ -640,6 +663,9 @@ def _init(data):
                 seed['desc'], seed['command'], seed['lang'],
                 data,
             )
+    else:
+        for set_name, set_data in data.get('sets', {}).items():
+            _restore_rtcs(set_name, set_data)
 
 
 # ---------------------------------------------------------------------------
@@ -773,8 +799,6 @@ class _KeyButton(QtWidgets.QPushButton):
             return
         self._state = state
         self.setProperty('state', state)
-        self.style().unpolish(self)
-        self.style().polish(self)
 
 
 class _ModKeyButton(QtWidgets.QPushButton):
@@ -797,8 +821,6 @@ class _ModKeyButton(QtWidgets.QPushButton):
 
     def _refresh(self):
         self.setProperty('active', 'true' if self._active else 'false')
-        self.style().unpolish(self)
-        self.style().polish(self)
 
 
 class _DeadKeyButton(QtWidgets.QPushButton):
@@ -1122,8 +1144,10 @@ class MainPanel(QtWidgets.QWidget):
         self._list.clear()
         # Built-in first
         self._list.addItem('Default (Maya)')
+        managed = set(self._data.get('sets', {}).keys())
         for name in _user_sets():
-            self._list.addItem(name)
+            if name in managed:
+                self._list.addItem(name)
         target = select or 'ps_anim'
         # Map display name back
         display = 'Default (Maya)' if target == _BUILTIN_SET else target
@@ -1482,7 +1506,13 @@ class KeyBinderPanel(QtCore.QObject):
                 self._assign_widget, 'Key Binder',
                 'Description and command are both required.')
             return
-        add_hotkey(set_name, key, alt, ctrl, shift, desc, cmd, lang, self._data)
+        try:
+            add_hotkey(set_name, key, alt, ctrl, shift, desc, cmd, lang, self._data)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self._assign_widget, 'Key Binder — Error',
+                f'Failed to assign hotkey:\n\n{e}')
+            return
         self._update_keyboard(set_name)
         self._clear_btn.setEnabled(True)
         self._status_lbl.setText('Assigned.')

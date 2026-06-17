@@ -37,6 +37,11 @@ SIMTOOL_SCRIPTS = [
     "tmClothSimToolDev/tlmClothChain.py",
 ]
 
+# Scripts from animDev/ root — deployed flat to ~/maya/scripts/.
+ANIMDEV_SCRIPTS = [
+    "toggleShotCam.py",
+]
+
 # Scripts from animDev/multiTool/ — all deployed flat to ~/maya/scripts/.
 MULTITOOL_SCRIPTS = [
     "multiTool.py",
