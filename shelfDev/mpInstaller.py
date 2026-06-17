@@ -29,6 +29,8 @@ STUDIOLIB_SRC     = os.path.normpath(
 
 _USERSETUP_MARKER = "# multiTool auto-load (mpAnim installer)"
 _USERSETUP_LINE   = "import maya.utils; maya.utils.executeDeferred('import multiTool; multiTool.show()')"
+_SHORTCUTS_MARKER = "# shortCuts auto-load (mpAnim installer)"
+_SHORTCUTS_LINE   = "import maya.utils; maya.utils.executeDeferred('import shortCuts; shortCuts.init_hotkeys()')"
 
 
 def _load_config(shelf_dir):
@@ -156,6 +158,10 @@ def _install():
         with open(usersetup, "a", encoding="utf-8") as fh:
             fh.write("\n" + _USERSETUP_MARKER + "\n" + _USERSETUP_LINE + "\n")
         print("[mpInstaller] patched userSetup.py")
+    if _SHORTCUTS_MARKER not in existing:
+        with open(usersetup, "a", encoding="utf-8") as fh:
+            fh.write("\n" + _SHORTCUTS_MARKER + "\n" + _SHORTCUTS_LINE + "\n")
+        print("[mpInstaller] patched userSetup.py (shortCuts)")
 
     # --- Shelves ---
     shelf_top    = mel.eval("$tmpVar=$gShelfTopLevel")
@@ -187,6 +193,7 @@ def _install():
 
     cmds.evalDeferred("import multiTool; multiTool.show()")
     cmds.evalDeferred("import mpAnimConfig; mpAnimConfig.get_save_path()")
+    cmds.evalDeferred("import shortCuts; shortCuts.init_hotkeys()")
 
     cmds.inViewMessage(
         amg="<b>mpAnim v{} + mpRig v{}</b> installed.".format(

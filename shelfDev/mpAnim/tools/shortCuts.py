@@ -544,6 +544,7 @@ def apply_set(name, data):
         if _set_exists(_BUILTIN_SET):
             cmds.hotkeySet(_BUILTIN_SET, edit=True, current=True)
         _restore_spacebar()
+        _restore_backtick()
     elif _set_exists(name):
         cmds.hotkeySet(name, edit=True, current=True)
         set_data = data.get('sets', {}).get(name, {})
@@ -551,6 +552,10 @@ def apply_set(name, data):
             _bind_spacebar()
         else:
             _restore_spacebar()
+        if set_data.get('shotcam_toggle', True):
+            _bind_backtick()
+        else:
+            _restore_backtick()
     data['active'] = name
     _save_data(data)
     cmds.inViewMessage(amg=f'Preset <hl>{name}</hl> applied.', pos='midCenter', fade=True)
@@ -655,17 +660,27 @@ def _init(data):
         cmds.hotkeySet('ps_anim', source=current)
 
     s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True})
-    if not s.get('hotkeys'):
-        for seed in _SEED_HOTKEYS:
+    for seed in _SEED_HOTKEYS:
+        slug = _slug(seed['key'], seed['alt'], seed['ctrl'], seed['shift'])
+        if slug not in s.get('hotkeys', {}):
             add_hotkey(
                 'ps_anim',
                 seed['key'], seed['alt'], seed['ctrl'], seed['shift'],
                 seed['desc'], seed['command'], seed['lang'],
                 data,
             )
-    else:
-        for set_name, set_data in data.get('sets', {}).items():
-            _restore_rtcs(set_name, set_data)
+
+    for set_name, set_data in data.get('sets', {}).items():
+        _restore_rtcs(set_name, set_data)
+
+    active = data.get('active') or 'ps_anim'
+    if active != _BUILTIN_SET and _set_exists(active):
+        cmds.hotkeySet(active, edit=True, current=True)
+        set_data = data.get('sets', {}).get(active, {})
+        if set_data.get('spacebar', False):
+            _bind_spacebar()
+        if set_data.get('shotcam_toggle', True):
+            _bind_backtick()
 
 
 # ---------------------------------------------------------------------------
@@ -775,6 +790,81 @@ def _restore_spacebar():
         _saved_space_hk = None
     else:
         cmds.hotkey(keyShortcut='space', name='', releaseName='')
+
+
+# ---------------------------------------------------------------------------
+# Backtick (`) Qt event filter — toggle shot camera
+# ---------------------------------------------------------------------------
+# Maya's viewport intercepts the backtick key for tweak mode before the
+# hotkey system fires, so cmds.hotkey cannot override it.  A Qt event
+# filter catches the key at the application level instead.
+
+_backtick_filter = None
+_BACKTICK_PROP   = 'mpAnimBacktickFilterRef'
+
+
+class _BacktickCamFilter(QtCore.QObject):
+
+    def eventFilter(self, obj, event):
+        if event.type() != QtCore.QEvent.Type.KeyPress:
+            return False
+        if event.key() != QtCore.Qt.Key.Key_QuoteLeft:
+            return False
+        if event.isAutoRepeat():
+            return False
+
+        focus = QtWidgets.QApplication.focusWidget()
+        if focus is not None:
+            if isinstance(focus, (QtWidgets.QTextEdit,
+                                  QtWidgets.QPlainTextEdit,
+                                  QtWidgets.QLineEdit)):
+                return False
+            try:
+                if bool(focus.inputMethodQuery(
+                        QtCore.Qt.InputMethodQuery.ImEnabled)):
+                    return False
+            except Exception:
+                pass
+
+        panel = cmds.getPanel(withFocus=True)
+        if not panel or cmds.getPanel(typeOf=panel) != 'modelPanel':
+            return False
+
+        try:
+            import toggleShotCam
+            toggleShotCam.toggle()
+        except Exception as e:
+            cmds.warning(f'shortCuts: toggleShotCam failed — {e}')
+        return True
+
+
+def _bind_backtick():
+    global _backtick_filter
+    _restore_backtick()
+    app = QtWidgets.QApplication.instance()
+    _backtick_filter = _BacktickCamFilter(app)
+    app.installEventFilter(_backtick_filter)
+    app.setProperty(_BACKTICK_PROP, _backtick_filter)
+
+
+def _restore_backtick():
+    global _backtick_filter
+    app = QtWidgets.QApplication.instance()
+    stored = app.property(_BACKTICK_PROP)
+    if stored is not None:
+        app.removeEventFilter(stored)
+        app.setProperty(_BACKTICK_PROP, None)
+    if _backtick_filter is not None and _backtick_filter is not stored:
+        app.removeEventFilter(_backtick_filter)
+    _backtick_filter = None
+
+
+def set_shotcam_toggle(set_name, enabled, data):
+    s = data['sets'].setdefault(set_name, {'hotkeys': {}, 'spacebar': False})
+    s['shotcam_toggle'] = enabled
+    _save_data(data)
+    if data.get('active') == set_name:
+        _bind_backtick() if enabled else _restore_backtick()
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1124,36 @@ class _SpaceRow(QtWidgets.QWidget):
         self._cb.blockSignals(False)
 
 
+class _ShotCamRow(QtWidgets.QWidget):
+    toggled = QtCore.Signal(bool)
+
+    def __init__(self, enabled, parent=None):
+        super().__init__(parent)
+        self.setObjectName('hotkeyRow')
+
+        h = QtWidgets.QHBoxLayout(self)
+        h.setContentsMargins(6, 0, 4, 0)
+        h.setSpacing(8)
+
+        self._cb = QtWidgets.QCheckBox()
+        self._cb.setChecked(enabled)
+        self._cb.toggled.connect(self.toggled)
+        h.addWidget(self._cb)
+
+        chip = QtWidgets.QLabel('`')
+        chip.setObjectName('keyChip')
+        h.addWidget(chip)
+
+        desc = QtWidgets.QLabel('Toggle shot camera')
+        desc.setObjectName('descLabel')
+        h.addWidget(desc, 1)
+
+    def set_checked(self, val):
+        self._cb.blockSignals(True)
+        self._cb.setChecked(val)
+        self._cb.blockSignals(False)
+
+
 class MainPanel(QtWidgets.QWidget):
     set_selected = QtCore.Signal(str)
 
@@ -1182,11 +1302,17 @@ class MainPanel(QtWidgets.QWidget):
 
         s = self._data.get('sets', {}).get(set_name, {})
 
+        # Shot camera toggle row
+        shotcam_row = _ShotCamRow(s.get('shotcam_toggle', True))
+        shotcam_row.toggled.connect(
+            lambda enabled: self._on_shotcam_toggled(set_name, enabled))
+        self._hotkey_layout.insertWidget(0, shotcam_row)
+
         # Spacebar row
         space_row = _SpaceRow(s.get('spacebar', False))
         space_row.toggled.connect(
             lambda enabled: self._on_spacebar_toggled(set_name, enabled))
-        self._hotkey_layout.insertWidget(0, space_row)
+        self._hotkey_layout.insertWidget(1, space_row)
 
         # Regular hotkeys
         hotkeys = s.get('hotkeys', {})
@@ -1196,7 +1322,7 @@ class MainPanel(QtWidgets.QWidget):
                 lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
             row.delete_clicked.connect(
                 lambda s_, sn=set_name: self._on_delete(sn, s_))
-            self._hotkey_layout.insertWidget(i + 1, row)
+            self._hotkey_layout.insertWidget(i + 2, row)
 
     def refresh_hotkeys(self, set_name):
         display = 'Default (Maya)' if set_name == _BUILTIN_SET else set_name
@@ -1212,6 +1338,9 @@ class MainPanel(QtWidgets.QWidget):
         self._del_btn.setEnabled(not is_builtin and bool(display))
         self._load_hotkeys(set_name)
         self.set_selected.emit(set_name)
+
+    def _on_shotcam_toggled(self, set_name, enabled):
+        set_shotcam_toggle(set_name, enabled, self._data)
 
     def _on_spacebar_toggled(self, set_name, enabled):
         set_spacebar(set_name, enabled, self._data)
@@ -1757,6 +1886,13 @@ class ShortCutsUI(QtWidgets.QDialog):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+def init_hotkeys():
+    data = _load_data()
+    if not data.get('sets'):
+        return
+    _init(data)
+
 
 def show():
     parent = _maya_main_window()
