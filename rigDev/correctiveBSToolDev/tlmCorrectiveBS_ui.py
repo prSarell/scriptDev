@@ -177,11 +177,32 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._targetList.itemSelectionChanged.connect(self._onTargetSelected)
         root.addWidget(self._targetList)
 
+        sculpt_row = QtWidgets.QHBoxLayout()
+        sculpt_row.addWidget(QtWidgets.QLabel('Sculpt:'))
+        self._sculptField = QtWidgets.QLineEdit()
+        self._sculptField.setPlaceholderText('auto-detected or pick from scene')
+        self._sculptField.setReadOnly(True)
+        pickSculpt = self._iconButton('nudgeDown.png', 'Pick selected mesh as sculpt source')
+        pickSculpt.clicked.connect(self._pickSculptMesh)
+        sculpt_row.addWidget(self._sculptField)
+        sculpt_row.addWidget(pickSculpt)
+        root.addLayout(sculpt_row)
+
+        poseRef_row = QtWidgets.QHBoxLayout()
+        poseRef_row.addWidget(QtWidgets.QLabel('PoseRef:'))
+        self._poseRefField = QtWidgets.QLineEdit()
+        self._poseRefField.setPlaceholderText('auto-detected or pick from scene')
+        self._poseRefField.setReadOnly(True)
+        pickPoseRef = self._iconButton('nudgeDown.png', 'Pick selected mesh as pose reference')
+        pickPoseRef.clicked.connect(self._pickPoseRefMesh)
+        poseRef_row.addWidget(self._poseRefField)
+        poseRef_row.addWidget(pickPoseRef)
+        root.addLayout(poseRef_row)
+
         target_btn_row = QtWidgets.QHBoxLayout()
         self._updateBtn = QtWidgets.QPushButton('Update Target')
         self._updateBtn.setToolTip(
-            'Re-bake the selected target from the current sculpt mesh.\n'
-            'The original pose reference must still be in the scene.\n'
+            'Re-bake the selected target from the sculpt mesh.\n'
             'Preserves existing SDK wiring.')
         self._updateBtn.clicked.connect(self._onUpdate)
         self._deleteBtn = QtWidgets.QPushButton('Delete Target')
@@ -237,6 +258,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._meshField.setText(mesh)
         self._refreshStackInfo(mesh)
         self._refreshTargetList()
+        self._recoverSession(mesh)
 
     def _loadCustomDriver(self):
         sel = cmds.ls(sl=True)
@@ -304,6 +326,8 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._dup_a     = dup_a
             self._dup_b     = dup_b
             self._bs_states = bs_states
+            self._sculptField.setText(dup_a)
+            self._poseRefField.setText(dup_b)
 
             if use_custom:
                 self._custom_driver_attr  = driver_attr
@@ -343,8 +367,18 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         if not self._dup_a or not cmds.objExists(self._dup_a):
             self._warn('Sculpt mesh not found. Use Step 1 to capture the pose.')
             return
-        if not self._dup_b or not cmds.objExists(self._dup_b):
-            self._warn('Pose reference not found. Use Step 1 to capture the pose again.')
+
+        existing = api.listCorrectiveTargets(mesh)
+        if name in existing:
+            reply = QtWidgets.QMessageBox.question(
+                self, 'Target Exists',
+                'Target "%s" already exists.\n\nUpdate it instead?' % name,
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            if reply == QtWidgets.QMessageBox.Yes:
+                items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
+                if items:
+                    self._targetList.setCurrentItem(items[0])
+                self._onUpdate()
             return
 
         try:
@@ -352,14 +386,14 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                           and self._custom_driver_value is not None)
             if use_custom:
                 bs_node, idx = api.bakeCorrection(
-                    mesh, self._dup_a, self._dup_b, name,
+                    mesh, self._dup_a, name,
                     custom_driver_attr=self._custom_driver_attr,
                     custom_driver_value=self._custom_driver_value)
                 wire_text = 'SDK: %s  [0 → %.4f]' % (
                     self._custom_driver_attr, self._custom_driver_value)
             else:
                 bs_node, idx = api.bakeCorrection(
-                    mesh, self._dup_a, self._dup_b, name,
+                    mesh, self._dup_a, name,
                     bs_states=self._bs_states)
                 valid = [(a, v) for a, v in self._bs_states if abs(v) > 1e-4]
                 if valid:
@@ -382,19 +416,36 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
             if items:
                 self._targetList.setCurrentItem(items[0])
-            # Reset sculpt state — next target needs its own Step 1.
             self._dup_a = None
             self._dup_b = None
             self._bs_states = []
             self._custom_driver_attr  = None
             self._custom_driver_value = None
+            self._sculptField.clear()
+            self._poseRefField.clear()
             self._captureStatus.setText('Bake done. Pose to next problem pose, enter a new target name, then use Step 1.')
             self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
         except Exception as e:
             self._warn(str(e))
 
     def _onTargetSelected(self):
-        self._resolveSelectedTarget()
+        if not self._resolveSelectedTarget():
+            return
+        target_name = self._targetList.selectedItems()[0].text()
+        sculpt_name = target_name + '_sculpt'
+        matches = cmds.ls(sculpt_name, type='transform') or []
+        if len(matches) == 1:
+            self._dup_a = matches[0]
+            self._sculptField.setText(matches[0])
+        else:
+            self._sculptField.clear()
+        pose_name = target_name + '_poseRef'
+        matches = cmds.ls(pose_name, type='transform') or []
+        if len(matches) == 1:
+            self._dup_b = matches[0]
+            self._poseRefField.setText(matches[0])
+        else:
+            self._poseRefField.clear()
 
     def _resolveSelectedTarget(self):
         mesh = self._meshField.text()
@@ -431,18 +482,11 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         if not self._dup_a or not cmds.objExists(self._dup_a):
             self._warn(
                 'Sculpt mesh not in scene.\n'
-                'Use Step 1 to re-capture the pose and sculpt again.')
-            return
-
-        posed_mesh = target_name + '_poseRef'
-        if not cmds.objExists(posed_mesh):
-            self._warn(
-                'Pose reference "%s" not found.\n'
-                'Use Step 1 to re-capture the pose.' % posed_mesh)
+                'Use Step 1 or pick a sculpt mesh below the target list.')
             return
 
         try:
-            api.updateCorrectiveTarget(mesh, target_name, self._dup_a, posed_mesh)
+            api.updateCorrectiveTarget(mesh, target_name, self._dup_a)
             self._bakeStatus.setText('Target "%s" updated.' % target_name)
             self._bakeStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
             self._log_msg('Updated target "%s"' % target_name)
@@ -473,6 +517,77 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._target_index = None
         except api.CorrectiveBSError as e:
             self._warn(str(e))
+
+    def _recoverSession(self, mesh):
+        targets = api.listCorrectiveTargets(mesh)
+        if not targets:
+            return
+
+        recovered = []
+        for target_name in targets:
+            sculpt_name = target_name + '_sculpt'
+            pose_name   = target_name + '_poseRef'
+
+            sculpt_matches = cmds.ls(sculpt_name, type='transform') or []
+            pose_matches   = cmds.ls(pose_name,   type='transform') or []
+
+            if len(sculpt_matches) > 1:
+                self._log_msg('Multiple "%s" found — skipping' % sculpt_name, error=True)
+                continue
+            if len(pose_matches) > 1:
+                self._log_msg('Multiple "%s" found — skipping' % pose_name, error=True)
+                continue
+
+            if sculpt_matches and pose_matches:
+                recovered.append((target_name, sculpt_matches[0], pose_matches[0]))
+
+        if not recovered:
+            return
+
+        for name, sculpt, pose in recovered:
+            self._log_msg('Session: found %s  (sculpt + poseRef in scene)' % name)
+
+        last = recovered[-1]
+        self._dup_a = last[1]
+        self._dup_b = last[2]
+        self._sculptField.setText(last[1])
+        self._poseRefField.setText(last[2])
+        self._nameField.setText(last[0])
+        self._captureStatus.setText(
+            'Recovered from scene: %s\n  sculpt = %s' % (last[0], last[1]))
+        self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.TEXT)
+
+        items = self._targetList.findItems(last[0], QtCore.Qt.MatchExactly)
+        if items:
+            self._targetList.setCurrentItem(items[0])
+
+    def _pickSculptMesh(self):
+        sel = cmds.ls(sl=True, transforms=True)
+        if not sel:
+            self._warn('Select a mesh transform first.')
+            return
+        try:
+            api.getMeshShape(sel[0])
+        except api.CorrectiveBSError as e:
+            self._warn(str(e))
+            return
+        self._dup_a = sel[0]
+        self._sculptField.setText(sel[0])
+        self._log_msg('Sculpt mesh set: ' + sel[0])
+
+    def _pickPoseRefMesh(self):
+        sel = cmds.ls(sl=True, transforms=True)
+        if not sel:
+            self._warn('Select a mesh transform first.')
+            return
+        try:
+            api.getMeshShape(sel[0])
+        except api.CorrectiveBSError as e:
+            self._warn(str(e))
+            return
+        self._dup_b = sel[0]
+        self._poseRefField.setText(sel[0])
+        self._log_msg('Pose reference set: ' + sel[0])
 
     def _refreshTargetList(self):
         self._targetList.clear()

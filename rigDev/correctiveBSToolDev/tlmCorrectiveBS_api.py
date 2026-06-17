@@ -1,5 +1,7 @@
 import maya.cmds as cmds
 import maya.mel as mel
+import maya.api.OpenMaya as om2
+import maya.api.OpenMayaAnim as oma2
 
 
 class CorrectiveBSError(Exception):
@@ -47,6 +49,72 @@ def setVertexPositions(mesh, positions, worldSpace=True):
     for i, pos in enumerate(positions):
         cmds.xform('%s.vtx[%d]' % (mesh, i),
                    worldSpace=worldSpace, translation=pos)
+
+
+# ── skin matrix computation ──────────────────────────────────────────────────
+
+def _computeSkinMatrices(mesh):
+    """
+    Per-vertex composite skin matrix via OpenMaya 2.
+
+    For vertex i:  W_i = Σ( weight_ij * bindPreMatrix_j * worldMatrix_j )
+
+    Returns list of MMatrix (one per vertex), or None if no skin cluster.
+    """
+    sc = getSkinCluster(mesh)
+    if sc is None:
+        return None
+
+    shape = getMeshShape(mesh)
+
+    sel = om2.MSelectionList()
+    sel.add(sc)
+    fn_skin = oma2.MFnSkinCluster(sel.getDependNode(0))
+
+    sel_mesh = om2.MSelectionList()
+    sel_mesh.add(shape)
+    mesh_dag = sel_mesh.getDagPath(0)
+
+    influences = fn_skin.influenceObjects()
+    num_inf = len(influences)
+
+    bind_pre = []
+    for i in range(num_inf):
+        mat = cmds.getAttr('%s.bindPreMatrix[%d]' % (sc, i))
+        bind_pre.append(om2.MMatrix(mat))
+
+    world_mats = [inf.inclusiveMatrix() for inf in influences]
+
+    joint_flat = []
+    for j in range(num_inf):
+        jm = bind_pre[j] * world_mats[j]
+        flat = []
+        for r in range(4):
+            for c in range(4):
+                flat.append(jm.getElement(r, c))
+        joint_flat.append(flat)
+
+    vtx_count = cmds.polyEvaluate(mesh, vertex=True)
+    fn_comp = om2.MFnSingleIndexedComponent()
+    comp_obj = fn_comp.create(om2.MFn.kMeshVertComponent)
+    fn_comp.setCompleteData(vtx_count)
+
+    weights, inf_count = fn_skin.getWeights(mesh_dag, comp_obj)
+
+    matrices = []
+    for vi in range(vtx_count):
+        result = [0.0] * 16
+        base = vi * inf_count
+        for ji in range(inf_count):
+            w = weights[base + ji]
+            if w < 1e-10:
+                continue
+            jf = joint_flat[ji]
+            for k in range(16):
+                result[k] += w * jf[k]
+        matrices.append(om2.MMatrix(result))
+
+    return matrices
 
 
 # ── deformer management ───────────────────────────────────────────────────────
@@ -169,51 +237,43 @@ def startCorrection(mesh, target_name):
 
 # ── delta extraction ──────────────────────────────────────────────────────────
 
-def extractDelta(mesh, sculpted_mesh, posed_mesh):
+def extractDelta(mesh, sculpted_mesh):
     """
-    Compute corrective blendshape target vertex positions.
+    Compute corrective blendshape target positions via per-vertex
+    skin-matrix inversion.
 
-      T[i] = Q[i] + (S[i] - P[i])
+    For each vertex i the skin cluster computes:
+      world[i] = preskin[i] * W_i
+    where W_i = Σ( weight_ij * bindPreMatrix_j * worldMatrix_j )
 
-      Q[i]  pre-skin vertex — skin cluster muted, blendShapes active (world space)
-      S[i]  sculpted vertex from dup_a (LOCAL space — invariant to user translation)
-      P[i]  posed snapshot vertex from dup_b (world space, skin included)
+    Inverting gives the pre-skin position that produces a desired world
+    output:  preskin_target[i] = sculpted[i] * W_i⁻¹
 
-    S is read in local space so that moving dup_a away from the rig for
-    visibility does not corrupt the delta.  dup_a was unparented to world
-    origin at creation, so its local frame equals the original world frame;
-    the user-applied translate lives only on the transform node and vanishes
-    when we read vertices locally.  P is still read in world space because
-    dup_b sits in the rig hierarchy and its local == world at capture time.
-    (S - P) therefore isolates the pure sculpt correction.
+    This is exact regardless of joint rotation.
+
+    The sculpt mesh is read in local space so that moving it away from
+    the rig for visibility does not corrupt the result (dup_a was
+    unparented to world origin at creation).
+
+    Falls back to raw sculpted positions when no skin cluster exists.
     """
     sculpted_pos = getVertexPositions(sculpted_mesh, worldSpace=False)
-    posed_pos    = getVertexPositions(posed_mesh,    worldSpace=True)
     vtx_count    = cmds.polyEvaluate(mesh, vertex=True)
 
     if len(sculpted_pos) != vtx_count:
         raise CorrectiveBSError(
             'Vertex count mismatch: mesh %d, sculpt %d' % (vtx_count, len(sculpted_pos)))
-    if len(posed_pos) != vtx_count:
-        raise CorrectiveBSError(
-            'Vertex count mismatch: mesh %d, pose ref %d' % (vtx_count, len(posed_pos)))
 
-    sc = getSkinCluster(mesh)
-    if sc:
-        old_env = cmds.getAttr(sc + '.envelope')
-        cmds.setAttr(sc + '.envelope', 0)
-    try:
-        pre_skin_pos = getVertexPositions(mesh, worldSpace=True)
-    finally:
-        if sc:
-            cmds.setAttr(sc + '.envelope', old_env)
+    matrices = _computeSkinMatrices(mesh)
+    if matrices is None:
+        return sculpted_pos
 
-    return [
-        (q[0] + s[0] - p[0],
-         q[1] + s[1] - p[1],
-         q[2] + s[2] - p[2])
-        for q, s, p in zip(pre_skin_pos, sculpted_pos, posed_pos)
-    ]
+    result = []
+    for i, (sx, sy, sz) in enumerate(sculpted_pos):
+        pt = om2.MPoint(sx, sy, sz) * matrices[i].inverse()
+        result.append((pt.x, pt.y, pt.z))
+
+    return result
 
 
 # ── blendshape target building ────────────────────────────────────────────────
@@ -312,31 +372,44 @@ def addCorrectiveTarget(mesh, target_positions, target_name):
     return bs_node, target_index
 
 
-def updateCorrectiveTarget(mesh, target_name, sculpted_mesh, posed_mesh):
+def updateCorrectiveTarget(mesh, target_name, sculpted_mesh):
     """Replace vertex data for an existing target without touching SDK wiring."""
     bs_node = getBlendShapeNode(mesh)
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    _writeTargetDeltas(bs_node, target_index, sculpted_mesh, posed_mesh)
+    _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh)
 
 
-def _writeTargetDeltas(bs_node, target_index, sculpted_mesh, posed_mesh):
+def _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh):
     """
-    Write corrective deltas (S - P) directly into the blendShape node's ipt/ict.
+    Write corrective deltas into the blendShape node's ipt/ict using
+    skin-matrix inversion.
 
-    cmds.blendShape(edit=True, target=...) silently does nothing on an existing
-    target index — it is for adding targets, not replacing them.  Writing ipt/ict
-    directly is the only reliable way to update stored target data.
+    For each vertex the stored delta is:
+      delta[i] = W_i⁻¹ * sculpted[i]  -  base[i]
 
-    ipt stores per-vertex deltas: target_pos - blendShape_input_at_pose = S - P.
-    ict lists which vertex indices are included (sparse; unaffected verts omitted).
+    where base is the mesh with all deformers muted (the blendShape's
+    upstream input at bind pose).
 
-    Uses mel.eval for the setAttr calls: cmds.setAttr with *args + keyword args
-    has binding issues in Maya's Python layer for pointArray/componentList types.
+    Falls back to sculpted_local - base when no skin cluster exists.
     """
     sculpted_pos = getVertexPositions(sculpted_mesh, worldSpace=False)
-    posed_pos    = getVertexPositions(posed_mesh,    worldSpace=True)
+
+    matrices = _computeSkinMatrices(mesh)
+
+    sc = getSkinCluster(mesh)
+    saved = {}
+    if sc:
+        saved[sc] = cmds.getAttr(sc + '.envelope')
+        cmds.setAttr(sc + '.envelope', 0)
+    saved[bs_node] = cmds.getAttr(bs_node + '.envelope')
+    cmds.setAttr(bs_node + '.envelope', 0)
+    try:
+        base_pos = getVertexPositions(mesh, worldSpace=True)
+    finally:
+        for node, val in saved.items():
+            cmds.setAttr(node + '.envelope', val)
 
     ipt_attr = (bs_node + '.inputTarget[0].inputTargetGroup[%d]'
                 '.inputTargetItem[6000].inputPointsTarget') % target_index
@@ -346,8 +419,14 @@ def _writeTargetDeltas(bs_node, target_index, sculpted_mesh, posed_mesh):
     threshold = 1e-5
     deltas     = []
     components = []
-    for i, (s, p) in enumerate(zip(sculpted_pos, posed_pos)):
-        dx, dy, dz = s[0] - p[0], s[1] - p[1], s[2] - p[2]
+    for i, (s, b) in enumerate(zip(sculpted_pos, base_pos)):
+        if matrices is not None:
+            pt = om2.MPoint(s[0], s[1], s[2]) * matrices[i].inverse()
+            tx, ty, tz = pt.x, pt.y, pt.z
+        else:
+            tx, ty, tz = s
+
+        dx, dy, dz = tx - b[0], ty - b[1], tz - b[2]
         if abs(dx) > threshold or abs(dy) > threshold or abs(dz) > threshold:
             deltas.append((dx, dy, dz))
             components.append(i)
@@ -460,7 +539,7 @@ def _wireCustomDriver(bs_node, target_index, driver_attr, driver_value):
 
 # ── high-level operations ─────────────────────────────────────────────────────
 
-def bakeCorrection(mesh, sculpted_mesh, posed_mesh, target_name,
+def bakeCorrection(mesh, sculpted_mesh, target_name,
                    bs_states=None, custom_driver_attr=None, custom_driver_value=None):
     """
     Step 2. Call with the rig still at the same pose as startCorrection().
@@ -470,12 +549,12 @@ def bakeCorrection(mesh, sculpted_mesh, posed_mesh, target_name,
       custom_driver_attr    → single SDK from any attribute (joints, controls, breathing)
     Returns (blendshape_node, target_index).
     """
-    for obj in (mesh, sculpted_mesh, posed_mesh):
+    for obj in (mesh, sculpted_mesh):
         if not cmds.objExists(obj):
             raise CorrectiveBSError('Object not found: ' + obj)
         getMeshShape(obj)
 
-    target_positions      = extractDelta(mesh, sculpted_mesh, posed_mesh)
+    target_positions      = extractDelta(mesh, sculpted_mesh)
     bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
 
     if custom_driver_attr and custom_driver_value is not None:

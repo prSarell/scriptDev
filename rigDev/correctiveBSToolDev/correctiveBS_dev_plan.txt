@@ -1,6 +1,6 @@
 CORRECTIVE BLENDSHAPE TOOL — DEVELOPMENT PLAN
 ===============================================
-Last updated: 2026-06-16
+Last updated: 2026-06-17
 
 
 CURRENT STATE
@@ -14,118 +14,51 @@ The tool is functional for the core workflow:
   - Delete Target: removes a target from the corrective blendShape node
   - Target list: shows all existing targets on the loaded mesh
   - Driver modes: Auto (captures active blendShape weights) and Custom Attribute
+  - Session recovery: reconnects sculpt/poseRef meshes on mesh load
+  - Duplicate name guard: catches alias conflicts before bake
+  - Sculpt/PoseRef picker buttons for manual reconnection
 
-Known limitation: the delta extraction uses a world-space subtraction (Q + S - P)
-which breaks down when skin joints have significant rotation — the correction vector
-in world space is not the same as the correction vector in pre-skin space. A test
-on 2026-06-16 confirmed this produces visibly wrong results even with minimal rotation.
+Delta extraction uses per-vertex skin-matrix inversion (maya.api.OpenMaya):
+  For each vertex i:
+    W_i = Σ( weight_ij * bindPreMatrix_j * worldMatrix_j )
+    preskin_target[i] = sculpted[i] * W_i⁻¹
+  This is exact regardless of joint rotation. Falls back to raw sculpted
+  positions when no skin cluster exists.
 
-
-DEVELOPMENT ROADMAP
--------------------
-Work in this order. Steps 1-3 are UI/workflow fixes independent of the delta math.
-Step 4 is the math upgrade. Doing it this order means you only debug one thing at
-a time, and the tool is usable for testing throughout.
-
-
-STEP 1 — Session Recovery
---------------------------
-Problem: closing the tool loses all in-memory state (self._dup_a, self._dup_b,
-self._bs_states etc.). Reopening requires starting from scratch even if sculpt
-meshes and pose references are still in the scene.
-
-Fix:
-  - When a mesh is loaded into the tool, scan the scene for meshes named
-    {target}_sculpt and {target}_poseRef for each target that exists on the
-    corrective blendShape node.
-  - If found, reconnect self._dup_a and self._dup_b automatically and update
-    the capture status label to reflect the recovered state.
-  - Log which targets were recovered so the user knows what was found.
-
-Implementation notes:
-  - Trigger the scan in _loadMesh() after _refreshTargetList().
-  - Only reconnect if BOTH the sculpt and poseRef meshes exist for a given target.
-  - If the tool finds multiple potential sculpt meshes (e.g. spam_sculpt and
-    spam_sculpt1 from a naming collision), warn the user and don't auto-connect.
+The pose reference mesh (dup_b) is still created in Step 1 as a visual
+reference but is no longer required for the bake or update math paths.
 
 
-STEP 2 — Robust Update Path
------------------------------
-Problem: Update Target requires self._dup_a to have been set through the tool's
-own Step 1 flow. After a session break, even if the sculpt mesh is in the scene,
-the user cannot point the tool at it.
+COMPLETED STEPS
+---------------
 
-Fix:
-  - Add a "pick sculpt mesh" load button to the Update Target section, mirroring
-    the existing mesh picker pattern (select in viewport, click arrow button).
-  - This sets self._dup_a directly from the scene selection, bypassing the
-    requirement that it was created by Step 1.
-  - The poseRef lookup (target_name + '_poseRef') stays automatic since it follows
-    the naming convention and is hidden in the hierarchy.
-  - Also add a "pick pose reference" button for cases where the poseRef was
-    renamed or lives at a non-standard name.
+STEP 1 — Session Recovery                              [DONE 2026-06-16]
+STEP 2 — Robust Update Path (sculpt/poseRef pickers)   [DONE 2026-06-16]
+STEP 3 — Duplicate Name Guard                          [DONE 2026-06-16]
+STEP 4 — Matrix Inversion Delta Extraction              [DONE 2026-06-17]
+  Replaced Q + (S - P) world-space approximation with per-vertex skin
+  matrix inversion via maya.api.OpenMaya. Both extractDelta() and
+  _writeTargetDeltas() now use the same inversion path. The posed_mesh
+  parameter has been removed from extractDelta, _writeTargetDeltas,
+  updateCorrectiveTarget, and bakeCorrection.
 
 
-STEP 3 — Duplicate Name Guard
--------------------------------
-Problem: if the user bakes a target named "spam", closes the tool, reopens it,
-enters "spam" again and clicks Bake, addCorrectiveTarget() silently adds a second
-target at the next index and tries to assign the same alias — which conflicts with
-the existing one.
-
-Fix:
-  - At the start of _onBake(), check whether a target with the entered name
-    already exists on the corrective blendShape node (via listCorrectiveTargets).
-  - If it does, show a dialog: "Target 'spam' already exists. Update it instead,
-    or choose a different name."
-  - Offering to route to Update Target from this dialog would be ideal UX.
-
-
-STEP 4 — Matrix Inversion Delta Extraction
--------------------------------------------
-Problem: the current Q + (S - P) formula approximates the corrective delta in
-world space. When skin joints have rotation, the local frame rotates with them,
-so the world-space correction does not equal the pre-skin-space correction. The
-error scales with joint rotation — confirmed visually in testing.
-
-Why matrix inversion is correct:
-  For each vertex i, the skin cluster computes:
-    world_output[i] = W_i * pre_skin[i]
-  where W_i = sum over joints j of (weight_ij * pose_matrix_j * bind_inverse_j)
-
-  To find the pre-skin position that produces a desired world output S[i]:
-    pre_skin_target[i] = W_i^{-1} * S[i]
-
-  This is exact regardless of joint rotation, translation, or scale.
-
-Implementation:
-  - Replace extractDelta() with a matrix inversion version using maya.api.OpenMaya.
-  - For each vertex:
-      1. Get skinning weights from MFnSkinCluster.getWeights()
-      2. Get influence world matrices (current pose) from each joint's MFnTransform
-      3. Get bind pre-matrices from skinCluster.bindPreMatrix[j] attribute
-      4. Compute composite matrix W_i = sum(w_ij * pose_mat_j * bind_pre_mat_j)
-      5. Target pre-skin position = W_i.inverse() * sculpted_world_position[i]
-  - The sculpted positions are read in world space from the sculpt mesh.
-  - All other code (blendShape creation, ipt/ict write, SDK wiring, UI) is unchanged.
-  - The poseRef mesh (dup_b) may no longer be needed since the skin matrices
-    encode the pose implicitly — revisit whether it can be removed from the workflow.
-
-Performance note: inverting a 4x4 matrix per vertex is fast. For a 10k-vertex mesh
-the loop will be the bottleneck; consider batching with numpy if Maya's Python is too
-slow, or moving the loop into OpenMaya's C++ layer via MFnMesh iteration.
-
-
-OPEN QUESTIONS
+REMAINING WORK
 --------------
-- With matrix inversion, can we drop the poseRef mesh entirely? The pose is
-  encoded in the joint matrices at bake time. The sculpt mesh (dup_a) would still
-  be needed. Simplifies the workflow if yes.
 
-- Should the tool support baking without a skin cluster (mesh with only blendShapes,
-  no skin)? Currently getSkinCluster() returns None and the blendShape is added
-  post-deformer. Worth explicitly testing this path.
+IN-MAYA TESTING
+  - Test bake with joint rotation (the case that broke the old formula)
+  - Test bake on mesh with no skin cluster (blendShape-only deformation)
+  - Test update path after session recovery
+  - Test multi-target workflow (bake several targets in sequence)
+  - Performance check on dense meshes (matrix inversion per vertex)
 
-- Multi-joint pose readers (out of scope for v1 per original brief) — matrix
-  inversion makes this more tractable since the composite matrix already handles
-  multi-joint influence. Worth revisiting after Step 4.
+FUTURE CONSIDERATIONS
+  - Dual quaternion skinning: current implementation assumes linear (classic)
+    skinning. Dual quaternion blending uses a different formula and would
+    need separate handling. Worth adding a check/warning.
+  - Multi-joint pose readers (out of scope for v1)
+  - Left/right mirroring (out of scope for v1)
+  - In-betweens (out of scope for v1)
+  - Consider removing poseRef from workflow entirely if testing confirms
+    it has no practical use after the matrix inversion switch.
