@@ -1005,6 +1005,13 @@ class KeyboardWidget(QtWidgets.QWidget):
     def mods(self):
         return self._mods['alt'], self._mods['ctrl'], self._mods['shift']
 
+    def set_mods(self, alt, ctrl, shift):
+        for mod, active in (('alt', alt), ('ctrl', ctrl), ('shift', shift)):
+            self._mods[mod] = active
+            for btn in self._mod_btns[mod]:
+                btn.set_active(active)
+        self.modifiers_changed.emit()
+
     def set_mod(self, mod, active):
         if self._mods[mod] == active:
             return
@@ -1035,20 +1042,9 @@ class KeyboardWidget(QtWidgets.QWidget):
 
     # ── visual update ───────────────────────────────────────
 
-    def update_states(self, category_hotkeys, default_bindings):
-        alt, ctrl, shift = self.mods()
+    def update_states(self, category_hotkeys=None, default_bindings=None):
         for key, btn in self._key_btns.items():
-            if key == self._selected:
-                btn.set_state('selected')
-                continue
-            slug = _slug(key, alt, ctrl, shift)
-            if slug in category_hotkeys:
-                state = 'muted' if category_hotkeys[slug].get('muted') else 'mine'
-            elif slug in default_bindings:
-                state = 'default'
-            else:
-                state = 'free'
-            btn.set_state(state)
+            btn.set_state('selected' if key == self._selected else 'free')
 
 
 # ---------------------------------------------------------------------------
@@ -1058,11 +1054,13 @@ class KeyboardWidget(QtWidgets.QWidget):
 class _HotkeyRow(QtWidgets.QWidget):
     mute_toggled   = QtCore.Signal(str, bool)   # slug, muted
     delete_clicked = QtCore.Signal(str)          # slug
+    row_clicked    = QtCore.Signal(str)          # slug
 
     def __init__(self, slug, hk_data, parent=None):
         super().__init__(parent)
         self.slug = slug
         self.setObjectName('hotkeyRow')
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         h = QtWidgets.QHBoxLayout(self)
         h.setContentsMargins(6, 0, 4, 0)
@@ -1087,6 +1085,10 @@ class _HotkeyRow(QtWidgets.QWidget):
         del_btn.setToolTip('Remove hotkey')
         del_btn.clicked.connect(lambda: self.delete_clicked.emit(slug))
         h.addWidget(del_btn)
+
+    def mousePressEvent(self, event):
+        self.row_clicked.emit(self.slug)
+        super().mousePressEvent(event)
 
 
 class _SpaceRow(QtWidgets.QWidget):
@@ -1155,7 +1157,8 @@ class _ShotCamRow(QtWidgets.QWidget):
 
 
 class MainPanel(QtWidgets.QWidget):
-    set_selected = QtCore.Signal(str)
+    set_selected    = QtCore.Signal(str)
+    hotkey_clicked  = QtCore.Signal(str)   # slug
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -1322,6 +1325,7 @@ class MainPanel(QtWidgets.QWidget):
                 lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
             row.delete_clicked.connect(
                 lambda s_, sn=set_name: self._on_delete(sn, s_))
+            row.row_clicked.connect(self.hotkey_clicked)
             self._hotkey_layout.insertWidget(i + 2, row)
 
     def refresh_hotkeys(self, set_name):
@@ -1580,6 +1584,11 @@ class KeyBinderPanel(QtCore.QObject):
         if key:
             self._on_key_selected(key)
 
+    def select_slug(self, slug):
+        key, alt, ctrl, shift = _slug_to_mods(slug)
+        self._keyboard.set_mods(alt, ctrl, shift)
+        self._keyboard.select_key(key)
+
     def _on_key_selected(self, key):
         set_name   = self._main.current_set()
         is_builtin = set_name == _BUILTIN_SET
@@ -1814,6 +1823,7 @@ class ShortCutsUI(QtWidgets.QDialog):
         self.setMinimumSize(900, 660)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window |
+            QtCore.Qt.WindowType.WindowMinimizeButtonHint |
             QtCore.Qt.WindowType.WindowCloseButtonHint
         )
         self.setStyleSheet(STYLESHEET)
@@ -1838,20 +1848,21 @@ class ShortCutsUI(QtWidgets.QDialog):
         self._ref        = ReferenceBrowser()
 
         self._main_panel.set_selected.connect(self._key_binder.refresh)
+        self._main_panel.hotkey_clicked.connect(self._key_binder.select_slug)
         self._key_binder.hotkey_assigned.connect(self._main_panel.refresh_hotkeys)
 
         # ── Right panel: 3-tab widget ──────────────────────
-        right_tabs = QtWidgets.QTabWidget()
+        self._right_tabs = QtWidgets.QTabWidget()
 
-        right_tabs.addTab(self._key_binder.keyboard_widget(), 'Keyboard')
-        right_tabs.addTab(self._key_binder.assign_widget(),   'Runtime Command')
-        right_tabs.addTab(self._ref,                          'Reference')
-        right_tabs.currentChanged.connect(self._on_right_tab_changed)
+        self._right_tabs.addTab(self._key_binder.keyboard_widget(), 'Keyboard')
+        self._right_tabs.addTab(self._key_binder.assign_widget(),   'Runtime Command')
+        self._right_tabs.addTab(self._ref,                          'Reference')
+        self._right_tabs.currentChanged.connect(self._on_right_tab_changed)
 
         # ── Horizontal splitter ────────────────────────────
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         splitter.addWidget(self._main_panel)
-        splitter.addWidget(right_tabs)
+        splitter.addWidget(self._right_tabs)
         splitter.setSizes([300, 600])
         splitter.setChildrenCollapsible(False)
 

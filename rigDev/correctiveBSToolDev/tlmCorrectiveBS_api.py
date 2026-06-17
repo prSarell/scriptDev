@@ -192,6 +192,46 @@ def captureBlendShapeStates(mesh):
     return states
 
 
+# ── driver auto-detection ────────────────────────────────────────────────────
+
+def _getJointDrivers(mesh, threshold=1.0):
+    """Return skin-influence joints whose rotations are off bind pose."""
+    sc = getSkinCluster(mesh)
+    if sc is None:
+        return []
+    influences = cmds.skinCluster(sc, query=True, influence=True) or []
+    drivers = []
+    for joint in influences:
+        if cmds.nodeType(joint) != 'joint':
+            continue
+        for axis in ('rotateX', 'rotateY', 'rotateZ'):
+            val = cmds.getAttr(joint + '.' + axis)
+            if abs(val) > threshold:
+                drivers.append((joint + '.' + axis, val))
+    drivers.sort(key=lambda x: abs(x[1]), reverse=True)
+    return drivers
+
+
+def detectDriverMode(mesh):
+    """
+    Auto-detect what's driving the current pose.
+    Returns (mode, data):
+      ('blendshape', [(attr, value), ...])
+      ('joint', [(attr, value), ...])
+      ('attribute', None)
+    """
+    bs_states = captureBlendShapeStates(mesh)
+    active_bs = [(attr, val) for attr, val in bs_states if abs(val) > 1e-4]
+    if active_bs:
+        return 'blendshape', active_bs
+
+    joint_drivers = _getJointDrivers(mesh)
+    if joint_drivers:
+        return 'joint', joint_drivers
+
+    return 'attribute', None
+
+
 # ── pose capture ──────────────────────────────────────────────────────────────
 
 def startCorrection(mesh, target_name):
@@ -349,17 +389,13 @@ def addCorrectiveTarget(mesh, target_positions, target_name):
         if bs_node is None:
             sc    = getSkinCluster(mesh)
             short = mesh.split('|')[-1].split(':')[-1]
-            bs_node      = cmds.blendShape(tmp_mesh, mesh,
-                                           name=short + '_correctiveBS',
-                                           origin='local')[0]
+            bs_node = cmds.blendShape(mesh, name=short + '_correctiveBS',
+                                      origin='local')[0]
             target_index = 0
             if sc:
                 _insertBeforeSkin(bs_node, sc)
-                # The delta was computed while the BS was still post-skin.
-                # Re-add the target now that the BS is pre-skin so Maya
-                # recomputes the delta against the correct pre-skin input.
-                cmds.blendShape(bs_node, edit=True,
-                                target=(mesh, target_index, tmp_mesh, 1.0))
+            cmds.blendShape(bs_node, edit=True,
+                            target=(mesh, target_index, tmp_mesh, 1.0))
         else:
             target_index = cmds.blendShape(bs_node, query=True, weightCount=True) or 0
             cmds.blendShape(bs_node, edit=True,

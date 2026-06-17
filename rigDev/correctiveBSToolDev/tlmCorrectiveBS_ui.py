@@ -84,11 +84,6 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         self._stackLabel.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
         root.addWidget(self._stackLabel)
 
-        printStack = QtWidgets.QPushButton('Print Deformation Stack')
-        printStack.setToolTip('Print the full deformation stack for this mesh to the log.')
-        printStack.clicked.connect(self._onPrintStack)
-        root.addWidget(printStack)
-
         root.addWidget(self._divider())
 
         # ── Driver mode ──
@@ -176,6 +171,17 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                 self.MID, self.BORDER, self.ACCENT))
         self._targetList.itemSelectionChanged.connect(self._onTargetSelected)
         root.addWidget(self._targetList)
+
+        addShape = QtWidgets.QPushButton('Add Shape')
+        addShape.setToolTip(
+            'Select a mesh in the scene and click to add it as a\n'
+            'new target. Driver is auto-detected from active\n'
+            'blendShapes, joint rotations, or a custom attribute.')
+        addShape.setStyleSheet(
+            'QPushButton { background: %s; } '
+            'QPushButton:hover { background: %s; }' % (self.GREEN, '#5a8a5a'))
+        addShape.clicked.connect(self._onAddShape)
+        root.addWidget(addShape)
 
         sculpt_row = QtWidgets.QHBoxLayout()
         sculpt_row.addWidget(QtWidgets.QLabel('Sculpt:'))
@@ -412,19 +418,17 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._log_msg('Baked "%s" → %s [%d]' % (name, bs_node, idx))
             self._log_msg(wire_text)
             self._onPrintStack()
+
+            self._bs_states = []
+            self._custom_driver_attr  = None
+            self._custom_driver_value = None
+            self._captureStatus.setText('Bake done. Pose to next problem pose, enter a new target name, then use Step 1.')
+            self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
+
             self._refreshTargetList()
             items = self._targetList.findItems(name, QtCore.Qt.MatchExactly)
             if items:
                 self._targetList.setCurrentItem(items[0])
-            self._dup_a = None
-            self._dup_b = None
-            self._bs_states = []
-            self._custom_driver_attr  = None
-            self._custom_driver_value = None
-            self._sculptField.clear()
-            self._poseRefField.clear()
-            self._captureStatus.setText('Bake done. Pose to next problem pose, enter a new target name, then use Step 1.')
-            self._captureStatus.setStyleSheet('color: %s; font-size: 10px;' % self.DIM)
         except Exception as e:
             self._warn(str(e))
 
@@ -433,18 +437,18 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             return
         target_name = self._targetList.selectedItems()[0].text()
         sculpt_name = target_name + '_sculpt'
-        matches = cmds.ls(sculpt_name, type='transform') or []
-        if len(matches) == 1:
-            self._dup_a = matches[0]
-            self._sculptField.setText(matches[0])
+        if cmds.objExists(sculpt_name):
+            self._dup_a = sculpt_name
+            self._sculptField.setText(sculpt_name)
         else:
+            self._dup_a = None
             self._sculptField.clear()
         pose_name = target_name + '_poseRef'
-        matches = cmds.ls(pose_name, type='transform') or []
-        if len(matches) == 1:
-            self._dup_b = matches[0]
-            self._poseRefField.setText(matches[0])
+        if cmds.objExists(pose_name):
+            self._dup_b = pose_name
+            self._poseRefField.setText(pose_name)
         else:
+            self._dup_b = None
             self._poseRefField.clear()
 
     def _resolveSelectedTarget(self):
@@ -480,10 +484,15 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             return
 
         if not self._dup_a or not cmds.objExists(self._dup_a):
-            self._warn(
-                'Sculpt mesh not in scene.\n'
-                'Use Step 1 or pick a sculpt mesh below the target list.')
-            return
+            fallback = target_name + '_sculpt'
+            if cmds.objExists(fallback):
+                self._dup_a = fallback
+                self._sculptField.setText(fallback)
+            else:
+                self._warn(
+                    'Sculpt mesh not in scene.\n'
+                    'Use Step 1 or pick a sculpt mesh below the target list.')
+                return
 
         try:
             api.updateCorrectiveTarget(mesh, target_name, self._dup_a)
@@ -518,6 +527,102 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
         except api.CorrectiveBSError as e:
             self._warn(str(e))
 
+    def _onAddShape(self):
+        mesh = self._meshField.text()
+        if not mesh:
+            self._warn('Load a mesh first.')
+            return
+
+        sel = cmds.ls(sl=True, transforms=True)
+        if not sel:
+            self._warn('Select a shape mesh to add.')
+            return
+        shape_mesh = sel[0]
+        if shape_mesh == mesh:
+            self._warn('Select the shape mesh, not the base mesh.')
+            return
+        try:
+            api.getMeshShape(shape_mesh)
+        except api.CorrectiveBSError as e:
+            self._warn(str(e))
+            return
+
+        target_name = shape_mesh.split('|')[-1].split(':')[-1]
+
+        existing = api.listCorrectiveTargets(mesh)
+        if target_name in existing:
+            self._warn('Target "%s" already exists. Rename the mesh or use Update.' % target_name)
+            return
+
+        mode, data = api.detectDriverMode(mesh)
+
+        try:
+            if mode == 'blendshape':
+                self._log_msg('Detected: BS-driven')
+                for attr, val in data:
+                    self._log_msg('  %s = %.3f' % (attr, val))
+                bs_node, idx = api.bakeCorrection(
+                    mesh, shape_mesh, target_name, bs_states=data)
+            elif mode == 'joint':
+                driver_attr, driver_val = data[0]
+                self._log_msg('Detected: joint-driven')
+                self._log_msg('  %s = %.1f' % (driver_attr, driver_val))
+                bs_node, idx = api.bakeCorrection(
+                    mesh, shape_mesh, target_name,
+                    custom_driver_attr=driver_attr,
+                    custom_driver_value=driver_val)
+            else:
+                driver_attr, driver_val = self._promptForAttribute()
+                if driver_attr is None:
+                    return
+                self._log_msg('Attribute-driven')
+                self._log_msg('  %s = %.3f' % (driver_attr, driver_val))
+                bs_node, idx = api.bakeCorrection(
+                    mesh, shape_mesh, target_name,
+                    custom_driver_attr=driver_attr,
+                    custom_driver_value=driver_val)
+
+            self._log_msg('Added "%s" → %s [%d]' % (target_name, bs_node, idx))
+            self._refreshTargetList()
+            items = self._targetList.findItems(target_name, QtCore.Qt.MatchExactly)
+            if items:
+                self._targetList.setCurrentItem(items[0])
+        except Exception as e:
+            self._warn(str(e))
+
+    def _promptForAttribute(self):
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle('Attribute Driver')
+        msg.setText(
+            'No active blendShapes or joint rotations detected.\n\n'
+            'Select a control and highlight an attribute in the\n'
+            'Channel Box, then click OK.')
+        msg.setStandardButtons(
+            QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
+        if msg.exec_() != QtWidgets.QMessageBox.Ok:
+            return None, None
+
+        sel = cmds.ls(sl=True)
+        if not sel:
+            self._warn('No object selected.')
+            return None, None
+        attrs = cmds.channelBox('mainChannelBox', query=True,
+                                selectedMainAttributes=True) or []
+        if not attrs:
+            self._warn('No attribute selected in Channel Box.')
+            return None, None
+
+        driver_attr = sel[0] + '.' + attrs[0]
+        if not cmds.objExists(driver_attr):
+            self._warn('Attribute not found: ' + driver_attr)
+            return None, None
+
+        driver_val = cmds.getAttr(driver_attr)
+        if abs(driver_val) < 1e-4:
+            driver_val = 1.0
+
+        return driver_attr, driver_val
+
     def _recoverSession(self, mesh):
         targets = api.listCorrectiveTargets(mesh)
         if not targets:
@@ -528,18 +633,11 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             sculpt_name = target_name + '_sculpt'
             pose_name   = target_name + '_poseRef'
 
-            sculpt_matches = cmds.ls(sculpt_name, type='transform') or []
-            pose_matches   = cmds.ls(pose_name,   type='transform') or []
+            has_sculpt = cmds.objExists(sculpt_name)
+            has_pose   = cmds.objExists(pose_name)
 
-            if len(sculpt_matches) > 1:
-                self._log_msg('Multiple "%s" found — skipping' % sculpt_name, error=True)
-                continue
-            if len(pose_matches) > 1:
-                self._log_msg('Multiple "%s" found — skipping' % pose_name, error=True)
-                continue
-
-            if sculpt_matches and pose_matches:
-                recovered.append((target_name, sculpt_matches[0], pose_matches[0]))
+            if has_sculpt and has_pose:
+                recovered.append((target_name, sculpt_name, pose_name))
 
         if not recovered:
             return

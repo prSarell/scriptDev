@@ -75,6 +75,52 @@ OUT OF SCOPE (for now)
 - Corrective layering / in-betweens
 
 
+COMPARABLE TOOLS — FEATURE REFERENCE
+--------------------------------------
+Date: 2026-06-17
+
+SHAPES (Brave Rabbit) — industry standard, ~$250
+  - Shape inversion (skin matrix)
+  - Live deformer on sculpt mesh (edits invert in real-time)
+  - SHAPESBrush (custom sculpting brush)
+  - Mudbox round-trip (send mesh, sculpt, return)
+  - Weight maps — split one shape into L/R targets
+  - Mirroring — mirror entire BS setups across the rig
+  - Shape organisation — groups, folders for hundreds of targets
+  - weightDriver — RBF (radial basis function) multi-pose blending
+  - RampWeights — weight falloff splitting
+  - WeightsServer — weight control node
+  - Standard Maya nodes only, no proprietary formats
+
+cvShapeInverter (Chad Vernon) — free, open source
+  - Shape inversion via live deformer (edits update in real-time)
+  - Minimal UI — select skinned mesh + corrected mesh, run
+  - No driver wiring, no shape management
+  - Python-only, no compile needed
+
+Maya Built-in (Shape Editor / Pose Space Deformation)
+  - Basic corrective blendshape workflow
+  - No auto-inversion — manual delta extraction
+  - Combination shapes via Shape Editor combo system
+  - No RBF, no mirroring automation
+
+Our tool vs the field:
+  Advantages —
+    Auto driver detection (BS / joint / attribute) — unique
+    One-click Add Shape with auto-wiring — unique
+    Joint-driven SDK wiring built in
+    BS-driven multiply network built in
+    Teaching-oriented (minimal decisions, clear steps)
+  Gaps —
+    No live sculpt inversion (biggest UX gap)
+    No mirroring (L/R shapes)
+    No weight maps / L-R split
+    No RBF multi-pose driver
+    No shape organisation / grouping
+    No custom sculpt brush
+    No external app round-trip
+
+
 TECH NOTES
 ----------
 - maya.cmds only, PySide6 UI
