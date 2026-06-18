@@ -9,6 +9,7 @@ Two-mesh follicle-based architecture matching the jack.ma reference:
   - GRP.inverseMatrix → SK2.bindPreMatrix cancels surface tracking
 """
 
+import math
 import maya.cmds as cmds
 import follicleRig_api as fol
 
@@ -36,12 +37,21 @@ def _lock_hide(node):
     cmds.setAttr(node + '.visibility', False, lock=True)
 
 
-def _make_circle_ctrl(name, radius=5.0):
-    ctl = cmds.circle(name=name, normal=(0, 1, 0), radius=radius, ch=False)[0]
-    shape = cmds.listRelatives(ctl, shapes=True)[0]
-    cmds.setAttr(shape + '.overrideEnabled', True)
-    cmds.setAttr(shape + '.overrideColor', 17)
-    return ctl
+def _make_ctrl(name, height=5.0, radius=1.5, sides=8):
+    pole = cmds.curve(name=name, degree=1,
+                      point=[(0, 0, 0), (0, 0, height)])
+    angle = 2.0 * math.pi / sides
+    points = [(radius * math.cos(i * angle),
+               radius * math.sin(i * angle), height)
+              for i in range(sides + 1)]
+    sign = cmds.curve(degree=1, point=points)
+    sign_shape = cmds.listRelatives(sign, shapes=True)[0]
+    cmds.parent(sign_shape, pole, relative=True, shape=True)
+    cmds.delete(sign)
+    for shape in cmds.listRelatives(pole, shapes=True) or []:
+        cmds.setAttr(shape + '.overrideEnabled', True)
+        cmds.setAttr(shape + '.overrideColor', 17)
+    return pole
 
 
 def _next_index():
@@ -191,7 +201,7 @@ def prep_rig(mesh):
 
 # ── Add follicle joints ─────────────────────────────────────────────────────
 
-def add_follicle_joint(original_mesh, components, setup_dict, ctrl_radius=5.0):
+def add_follicle_joint(original_mesh, components, setup_dict):
     """
     Create one follicle/GRP/CTL/JNT per component (face/edge/vert).
     Follicles ride the original mesh.  GRP/CTL/JNT live under DSFR_GRP.
@@ -212,7 +222,7 @@ def add_follicle_joint(original_mesh, components, setup_dict, ctrl_radius=5.0):
         grp = cmds.group(empty=True, name=name + '_GRP', parent=master_grp)
         cmds.parentConstraint(follicle, grp, maintainOffset=False)
 
-        ctl = _make_circle_ctrl(name + '_CTL', ctrl_radius)
+        ctl = _make_ctrl(name + '_CTL')
         cmds.parent(ctl, grp)
         cmds.setAttr(ctl + '.translate', 0, 0, 0)
         cmds.setAttr(ctl + '.rotate', 0, 0, 0)
@@ -321,6 +331,99 @@ def list_follicle_joints(setup_dict):
     return results
 
 
+# ── UV driver controls ───────────────────────────────────────────────────────
+
+def _get_follicle_from_grp(grp):
+    """Find the follicle driving a GRP via its parentConstraint."""
+    constraints = cmds.listRelatives(
+        grp, children=True, type='parentConstraint') or []
+    for con in constraints:
+        targets = cmds.parentConstraint(con, query=True, targetList=True) or []
+        if targets:
+            return targets[0]
+    return None
+
+
+def _has_uv_control(follicle):
+    """Check if a follicle already has a UV driver control connected."""
+    fol_shape = fol.getFollicleShape(follicle)
+    conns = cmds.listConnections(
+        fol_shape + '.parameterU', source=True, destination=False) or []
+    return bool(conns)
+
+
+def add_uv_controls(setup_dict):
+    """
+    Create UV driver controls for all follicles that don't have one yet.
+    Anchor follicles are parented into DSFR_follicle_GRP.
+    Returns list of (uv_ctrl, anchor) tuples.
+    """
+    fol_grp = setup_dict.get('follicle_grp')
+    original = setup_dict.get('original')
+    pairs = list_follicle_joints(setup_dict)
+    results = []
+
+    for grp, jnt in pairs:
+        follicle = _get_follicle_from_grp(grp)
+        if not follicle or _has_uv_control(follicle):
+            continue
+
+        uv_ctrl, anchor = fol.createUVDriverControl(follicle, original)
+        if fol_grp:
+            cmds.parent(anchor, fol_grp)
+        results.append((uv_ctrl, anchor))
+
+    return results
+
+
+# ── Auto skin falloff ────────────────────────────────────────────────────────
+
+def _auto_skin_falloff(sk2, duplicate, root_jnt, pairs, falloff=5.0):
+    """
+    Distance-based weight falloff from each follicle position.
+    Within 1 unit: full weight on the surface joint.
+    At falloff distance: nearly zero.  Beyond: zero.
+    Remaining weight stays on the root joint.
+    """
+    vtx_count = cmds.polyEvaluate(duplicate, vertex=True)
+
+    jnt_positions = []
+    for grp, jnt in pairs:
+        follicle = _get_follicle_from_grp(grp)
+        if follicle:
+            pos = cmds.xform(follicle, query=True, worldSpace=True,
+                             translation=True)
+        else:
+            pos = cmds.xform(jnt, query=True, worldSpace=True,
+                             translation=True)
+        jnt_positions.append((jnt, pos))
+
+    for vi in range(vtx_count):
+        vtx = '{}.vtx[{}]'.format(duplicate, vi)
+        vpos = cmds.pointPosition(vtx, world=True)
+
+        weights = []
+        for jnt, jpos in jnt_positions:
+            dist = sum((a - b) ** 2 for a, b in zip(vpos, jpos)) ** 0.5
+            if dist >= falloff:
+                w = 0.0
+            elif dist <= 1.0:
+                w = 1.0
+            else:
+                w = 1.0 - ((dist - 1.0) / (falloff - 1.0))
+                w = w * w
+            weights.append((jnt, w))
+
+        total = sum(w for _, w in weights)
+        if total > 1.0:
+            weights = [(j, w / total) for j, w in weights]
+            total = 1.0
+        root_w = max(1.0 - total, 0.0)
+
+        tv = [(root_jnt, root_w)] + weights
+        cmds.skinPercent(sk2, vtx, transformValue=tv)
+
+
 # ── Build rig ────────────────────────────────────────────────────────────────
 
 def build_rig(setup_dict):
@@ -364,6 +467,7 @@ def build_rig(setup_dict):
                 '{}.bindPreMatrix[{}]'.format(sk2, i),
                 force=True)
 
+        add_uv_controls(setup_dict)
         return sk2
 
     joints_to_bind = all_jnts + [root_jnt]
@@ -392,12 +496,8 @@ def build_rig(setup_dict):
                 '{}.bindPreMatrix[{}]'.format(sk2, i),
                 force=True)
 
-    # Flood all weight to root joint — student paints surface joints manually
-    vtx_count = cmds.polyEvaluate(duplicate, vertex=True)
-    for i, jnt in enumerate(influences):
-        value = 1.0 if jnt == root_jnt else 0.0
-        cmds.skinPercent(sk2, '{}.vtx[0:{}]'.format(duplicate, vtx_count - 1),
-                         transformValue=(jnt, value))
+    _auto_skin_falloff(sk2, duplicate, root_jnt, pairs, falloff=5.0)
 
     setup_dict['sk2'] = sk2
+    add_uv_controls(setup_dict)
     return sk2
