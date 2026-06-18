@@ -19,6 +19,7 @@ RIGTOOL_SCRIPTS = [
     "mh_rig_assemble/mh_dna_repair.py",
     "correctiveBSToolDev/tlmCorrectiveBS_api.py",
     "correctiveBSToolDev/tlmCorrectiveBS_ui.py",
+    "poseCapture/pose_capture.py",
     "doubleSkinFaceRig/dsfr_api.py",
     "doubleSkinFaceRig/dsfr_ui.py",
     "metahumanVP/vp_shader_api.py",
@@ -114,11 +115,12 @@ BUTTONS = [
     },
     {
         "label": "DoubleSkin",
-        "tooltip": "Open Double Skin Face Rig — build a two-cluster face rig with blendshape layer and surface-riding uvPin joints",
+        "tooltip": "Open Double Skin Face Rig — add fine surface-joint control to an existing face rig mid-production",
         "icon": "iconDsfr.png",
         "command": (
             "import importlib\n"
-            "import dsfr_api, dsfr_ui\n"
+            "import pose_capture, dsfr_api, dsfr_ui\n"
+            "importlib.reload(pose_capture)\n"
             "importlib.reload(dsfr_api)\n"
             "importlib.reload(dsfr_ui)\n"
             "dsfr_ui.show()"

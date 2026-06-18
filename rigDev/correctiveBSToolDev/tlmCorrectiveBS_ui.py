@@ -70,6 +70,10 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         # ── Mesh ──
         root.addWidget(self._sectionLabel('MESH'))
+        root.addWidget(self._guideLabel(
+            'Select the mesh that needs a corrective shape. This is '
+            'typically a body or face mesh that already has a skin '
+            'cluster bound to the skeleton.'))
         mesh_row = QtWidgets.QHBoxLayout()
         self._meshField = QtWidgets.QLineEdit()
         self._meshField.setPlaceholderText('Select mesh and click  ←')
@@ -88,6 +92,10 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         # ── Driver mode ──
         root.addWidget(self._sectionLabel('DRIVER MODE'))
+        root.addWidget(self._guideLabel(
+            'Auto detects what is driving the current pose — active '
+            'blendShapes or joint rotations. Use Custom to wire the '
+            'corrective to a specific attribute instead.'))
 
         self._modeAuto   = QtWidgets.QRadioButton('Auto — BlendShapes')
         self._modeCustom = QtWidgets.QRadioButton('Custom Attribute')
@@ -116,6 +124,11 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         # ── Step 1: Capture Pose ──
         root.addWidget(self._sectionLabel('STEP 1  —  CAPTURE POSE'))
+        root.addWidget(self._guideLabel(
+            'Put the rig into the problem pose, name your corrective '
+            'target, then Capture. This duplicates the mesh at its '
+            'current deformed state — sculpt the correction on the '
+            'visible copy.'))
 
         name_row = QtWidgets.QHBoxLayout()
         name_row.addWidget(QtWidgets.QLabel('Target name:'))
@@ -141,6 +154,11 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         # ── Step 2: Bake ──
         root.addWidget(self._sectionLabel('STEP 2  —  BAKE CORRECTION'))
+        root.addWidget(self._guideLabel(
+            'After sculpting, bake the correction. The tool inverts '
+            'the skin deformation to extract a clean delta and wires '
+            'the driver automatically so the shape activates at the '
+            'right pose.'))
 
         self._bakeBtn = QtWidgets.QPushButton('Bake Corrective Target')
         self._bakeBtn.setToolTip(
@@ -162,6 +180,10 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         # ── Target list ──
         root.addWidget(self._sectionLabel('TARGETS ON MESH'))
+        root.addWidget(self._guideLabel(
+            'All corrective targets on this mesh. Select one to update '
+            'its sculpt or delete it. Add Shape lets you bring in an '
+            'external sculpted mesh as a new target.'))
 
         self._targetList = QtWidgets.QListWidget()
         self._targetList.setFixedHeight(100)
@@ -706,6 +728,13 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
     def _warn(self, msg):
         self._log_msg(msg, error=True)
         QtWidgets.QMessageBox.warning(self, 'Corrective BS', msg)
+
+    def _guideLabel(self, text):
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(
+            'color: %s; font-size: 10px; padding: 4px 8px 2px 8px;' % self.DIM)
+        lbl.setWordWrap(True)
+        return lbl
 
     def _headerLabel(self, text):
         lbl = QtWidgets.QLabel(text)

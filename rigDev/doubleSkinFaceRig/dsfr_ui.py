@@ -1,6 +1,11 @@
 """
 dsfr_ui.py — Double Skin Face Rig UI
-Four-phase PySide6 interface for dsfr_api.
+
+Selection-driven 4-step workflow:
+  1. Capture/Apply pose from shot file
+  2. Prep My Rig (duplicate mesh, wrap blendShape, master group)
+  3. Add follicle joints from component selection
+  4. Build Rig (SK2 on duplicate mesh)
 """
 
 import sys
@@ -8,8 +13,13 @@ import os
 
 import maya.cmds as cmds
 from maya import OpenMayaUI as omui
-from PySide6 import QtWidgets, QtCore, QtGui
-import shiboken6
+
+try:
+    from PySide6 import QtWidgets, QtCore, QtGui
+    from shiboken6 import wrapInstance
+except ImportError:
+    from PySide2 import QtWidgets, QtCore, QtGui
+    from shiboken2 import wrapInstance
 
 _DIR = os.path.dirname(__file__)
 if _DIR not in sys.path:
@@ -19,352 +29,359 @@ import dsfr_api as api
 
 
 def _maya_main_window():
-    return shiboken6.wrapInstance(int(omui.MQtUtil.mainWindow()), QtWidgets.QWidget)
+    return wrapInstance(int(omui.MQtUtil.mainWindow()), QtWidgets.QWidget)
 
 
-# ── Phase section widget ──────────────────────────────────────────────────────
+# ── Main window ──────────────────────────────────────────────────────────────
 
-class _PhaseBox(QtWidgets.QGroupBox):
-    """A numbered phase section with a coloured status badge."""
+class DSFRWindow(QtWidgets.QWidget):
 
-    def __init__(self, number, title, parent=None):
-        super().__init__('{} — {}'.format(number, title), parent)
-        self._layout = QtWidgets.QVBoxLayout(self)
-        self._layout.setSpacing(6)
-        self._status = QtWidgets.QLabel('not built')
-        self._status.setStyleSheet('color: #888888; font-size: 11px;')
-        self._layout.addWidget(self._status)
-
-    def add_row(self, widget):
-        self._layout.addWidget(widget)
-
-    def add_layout(self, layout):
-        self._layout.addLayout(layout)
-
-    def set_done(self, node_name):
-        self._status.setText('✔  {}'.format(node_name))
-        self._status.setStyleSheet('color: #55bb55; font-size: 11px; font-weight: bold;')
-
-    def set_error(self, msg):
-        self._status.setText('✖  {}'.format(msg))
-        self._status.setStyleSheet('color: #cc4444; font-size: 11px;')
-
-    def set_pending(self, msg='not built'):
-        self._status.setText(msg)
-        self._status.setStyleSheet('color: #888888; font-size: 11px;')
-
-
-# ── Multi-item list widget ─────────────────────────────────────────────────────
-
-class _SelectionList(QtWidgets.QWidget):
-    """Read-only list + 'From Sel' button — stores Maya node names."""
-
-    def __init__(self, placeholder='', parent=None):
-        super().__init__(parent)
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self._list = QtWidgets.QListWidget()
-        self._list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self._list.setMaximumHeight(72)
-        self._list.setToolTip(placeholder)
-
-        btn_col = QtWidgets.QVBoxLayout()
-        self._btn_sel = QtWidgets.QPushButton('From\nSel')
-        self._btn_sel.setFixedWidth(52)
-        self._btn_clr = QtWidgets.QPushButton('Clear')
-        self._btn_clr.setFixedWidth(52)
-        btn_col.addWidget(self._btn_sel)
-        btn_col.addWidget(self._btn_clr)
-        btn_col.addStretch()
-
-        layout.addWidget(self._list)
-        layout.addLayout(btn_col)
-
-        self._btn_sel.clicked.connect(self._from_selection)
-        self._btn_clr.clicked.connect(self._list.clear)
-
-    def _from_selection(self):
-        items = cmds.ls(selection=True) or []
-        self._list.clear()
-        for item in items:
-            self._list.addItem(item)
-
-    def items(self):
-        return [self._list.item(i).text() for i in range(self._list.count())]
-
-    def set_items(self, names):
-        self._list.clear()
-        for n in names:
-            self._list.addItem(n)
-
-
-# ── Main dialog ───────────────────────────────────────────────────────────────
-
-class DSFRDialog(QtWidgets.QDialog):
-
-    TITLE = 'Double Skin Face Rig'
+    DARK   = '#1e1e1e'
+    MID    = '#2a2a2a'
+    LIGHT  = '#3a3a3a'
+    BORDER = '#4a4a4a'
+    TEXT   = '#cccccc'
+    DIM    = '#777777'
+    ACCENT = '#7a6fa0'
+    GREEN  = '#4a7a4a'
+    RED    = '#7a3a3a'
 
     def __init__(self, parent=None):
-        super().__init__(parent or _maya_main_window())
-        self.setWindowTitle(self.TITLE)
-        self.setMinimumWidth(460)
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        super().__init__(parent)
+        self.setWindowTitle('Double Skin Face Rig')
+        self.setWindowFlags(QtCore.Qt.Tool)
+        self.setMinimumWidth(420)
+        self.setStyleSheet(self._stylesheet())
 
-        # Cached node names set after each phase
-        self._uvpin_node = None
-        self._sk1_node   = None
-        self._bs_node    = None
-        self._sk2_node   = None
+        self._setup = None
 
         self._build_ui()
-        self._auto_detect_mesh()
-        self._sync_from_scene()
 
-    # ── Build UI ──────────────────────────────────────────────────────────────
+    # ── Build UI ─────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ── Face mesh ──────────────────────────────────────────────────────────
-        mesh_box = QtWidgets.QGroupBox('Face Mesh')
-        mesh_layout = QtWidgets.QHBoxLayout(mesh_box)
-        self._mesh_field = QtWidgets.QLineEdit()
-        self._mesh_field.setPlaceholderText('e.g. head_mesh')
-        auto_btn = QtWidgets.QPushButton('Auto')
-        auto_btn.setFixedWidth(42)
-        auto_btn.clicked.connect(self._auto_detect_mesh)
-        sel_btn = QtWidgets.QPushButton('From Sel')
-        sel_btn.setFixedWidth(60)
-        sel_btn.clicked.connect(self._mesh_from_sel)
-        mesh_layout.addWidget(self._mesh_field)
-        mesh_layout.addWidget(auto_btn)
-        mesh_layout.addWidget(sel_btn)
-        root.addWidget(mesh_box)
+        root.addWidget(self._headerLabel('DOUBLE SKIN FACE RIG'))
 
-        # ── Phase 1 — Surface joints ───────────────────────────────────────────
-        self._p1_box = _PhaseBox('①', 'Surface Joints')
+        # ── Prep Rig ─────────────────────────────────────────────────────
+        root.addWidget(self._sectionLabel('PREP RIG'))
+        root.addWidget(self._guideLabel(
+            'Select the face mesh and click Prep My Rig. This '
+            'duplicates the mesh, wraps it to the original, and '
+            'sets up the two-mesh architecture needed for the '
+            'second skin cluster.'))
 
-        self._p1_box.add_row(QtWidgets.QLabel(
-            'Select locators placed on the face mesh, then click Create.'
-        ))
+        prep_row = QtWidgets.QHBoxLayout()
+        prep_row.setContentsMargins(8, 4, 8, 2)
+        self._btn_prep = QtWidgets.QPushButton('Prep My Rig')
+        self._btn_prep.setMinimumHeight(28)
+        self._btn_prep.clicked.connect(self._on_prep)
+        prep_row.addWidget(self._btn_prep)
+        root.addLayout(prep_row)
 
-        radius_row = QtWidgets.QHBoxLayout()
-        radius_row.addWidget(QtWidgets.QLabel('Control radius:'))
-        self._radius_spin = QtWidgets.QDoubleSpinBox()
-        self._radius_spin.setRange(0.01, 100.0)
-        self._radius_spin.setValue(0.5)
-        self._radius_spin.setSingleStep(0.1)
-        self._radius_spin.setDecimals(2)
-        self._radius_spin.setFixedWidth(70)
-        radius_row.addWidget(self._radius_spin)
-        radius_row.addStretch()
-        self._p1_box.add_layout(radius_row)
+        self._prep_status = self._statusLabel()
+        root.addWidget(self._prep_status)
+        root.addWidget(self._divider())
 
-        self._p1_btn = QtWidgets.QPushButton('Create from Selected Locators')
-        self._p1_btn.setMinimumHeight(30)
-        self._p1_btn.clicked.connect(self._run_phase1)
-        self._p1_box.add_row(self._p1_btn)
-        root.addWidget(self._p1_box)
+        # ── Follicles ────────────────────────────────────────────────────
+        root.addWidget(self._sectionLabel('FOLLICLES'))
+        root.addWidget(self._guideLabel(
+            'Select faces, edges, or vertices on the face where you '
+            'want fine control, then click Add Selected. Each '
+            'component becomes a follicle-driven joint that tracks '
+            'the mesh surface. You can add more at any time.'))
 
-        # ── Phase 2 — Coarse bind ──────────────────────────────────────────────
-        self._p2_box = _PhaseBox('②', 'Coarse Bind  (SkinCluster 1)')
-        self._p2_box.add_row(QtWidgets.QLabel('Select skeleton joints (head, neck, jaw, etc.):'))
-        self._p2_list = _SelectionList('Head/neck/jaw skeleton joints')
-        self._p2_box.add_row(self._p2_list)
+        add_row = QtWidgets.QHBoxLayout()
+        add_row.setContentsMargins(8, 4, 8, 2)
+        self._btn_add = QtWidgets.QPushButton('Add Selected')
+        self._btn_add.setMinimumHeight(28)
+        self._btn_add.clicked.connect(self._on_add)
+        add_row.addWidget(self._btn_add)
+        root.addLayout(add_row)
 
-        self._p2_btn = QtWidgets.QPushButton('Bind')
-        self._p2_btn.setMinimumHeight(30)
-        self._p2_btn.clicked.connect(self._run_phase2)
-        self._p2_box.add_row(self._p2_btn)
-        root.addWidget(self._p2_box)
+        self._fol_status = self._statusLabel()
+        root.addWidget(self._fol_status)
+        root.addWidget(self._divider())
 
-        # ── Phase 3 — BlendShape ───────────────────────────────────────────────
-        self._p3_box = _PhaseBox('③', 'BlendShape Layer')
-        self._p3_box.add_row(QtWidgets.QLabel('Select target meshes (one per shape):'))
-        self._p3_list = _SelectionList('Sculpted target meshes')
-        self._p3_box.add_row(self._p3_list)
+        # ── Build ────────────────────────────────────────────────────────
+        root.addWidget(self._sectionLabel('BUILD'))
+        root.addWidget(self._guideLabel(
+            'Creates the second skin cluster on the duplicate mesh. '
+            'On first build, joints get default weights. If adding '
+            'joints to an existing rig, new joints start at zero '
+            'weight so you can paint them in without affecting '
+            'existing weights.'))
 
-        self._p3_btn = QtWidgets.QPushButton('Add BlendShape')
-        self._p3_btn.setMinimumHeight(30)
-        self._p3_btn.clicked.connect(self._run_phase3)
-        self._p3_box.add_row(self._p3_btn)
-        root.addWidget(self._p3_box)
+        build_row = QtWidgets.QHBoxLayout()
+        build_row.setContentsMargins(8, 4, 8, 2)
+        self._btn_build = QtWidgets.QPushButton('Build Rig')
+        self._btn_build.setMinimumHeight(28)
+        self._btn_build.setStyleSheet(self._green_btn_style())
+        self._btn_build.clicked.connect(self._on_build)
+        build_row.addWidget(self._btn_build)
+        root.addLayout(build_row)
 
-        # ── Phase 4 — Fine bind ────────────────────────────────────────────────
-        self._p4_box = _PhaseBox('④', 'Fine Bind  (SkinCluster 2)')
-        self._p4_box.add_row(QtWidgets.QLabel(
-            'Binds all surface joints as SK2 and wires bindPreMatrix\n'
-            'so only animator-driven offsets fire the cluster.'
-        ))
-        self._p4_btn = QtWidgets.QPushButton('Bind Surface Joints')
-        self._p4_btn.setMinimumHeight(30)
-        self._p4_btn.clicked.connect(self._run_phase4)
-        self._p4_box.add_row(self._p4_btn)
-        root.addWidget(self._p4_box)
+        self._build_status = self._statusLabel()
+        root.addWidget(self._build_status)
+        root.addWidget(self._divider())
 
-        # ── Log ────────────────────────────────────────────────────────────────
-        log_box = QtWidgets.QGroupBox('Log')
-        log_layout = QtWidgets.QVBoxLayout(log_box)
-        self._log = QtWidgets.QPlainTextEdit()
+        # ── Remove ───────────────────────────────────────────────────────
+        root.addWidget(self._sectionLabel('REMOVE'))
+        root.addWidget(self._guideLabel(
+            'Select any part of an existing control (CTL, joint, or '
+            'follicle) in the viewport, then click Remove. The skin '
+            'cluster is updated automatically if active.'))
+
+        remove_row = QtWidgets.QHBoxLayout()
+        remove_row.setContentsMargins(8, 4, 8, 2)
+        self._btn_remove = QtWidgets.QPushButton('Remove Selected')
+        self._btn_remove.setMinimumHeight(28)
+        self._btn_remove.setStyleSheet(self._red_btn_style())
+        self._btn_remove.clicked.connect(self._on_remove)
+        remove_row.addWidget(self._btn_remove)
+        root.addLayout(remove_row)
+
+        self._remove_status = self._statusLabel()
+        root.addWidget(self._remove_status)
+        root.addWidget(self._divider())
+
+        # ── Log ──────────────────────────────────────────────────────────
+        log_header = QtWidgets.QHBoxLayout()
+        log_header.setContentsMargins(8, 4, 8, 2)
+        log_header.addWidget(self._sectionLabel('LOG'))
+        log_header.addStretch()
+        clr_btn = QtWidgets.QPushButton('Clear')
+        clr_btn.setFixedWidth(42)
+        clr_btn.clicked.connect(lambda: self._log.clear())
+        log_header.addWidget(clr_btn)
+        root.addLayout(log_header)
+
+        self._log = QtWidgets.QTextEdit()
         self._log.setReadOnly(True)
-        self._log.setMaximumHeight(110)
-        self._log.setFont(QtGui.QFont('Courier New', 9))
-        log_layout.addWidget(self._log)
-        root.addWidget(log_box)
+        self._log.setMaximumHeight(100)
+        self._log.setStyleSheet(
+            'QTextEdit { background: #1a1a1a; border: 1px solid %s;'
+            'font-family: "Courier New"; font-size: 10px;'
+            'color: %s; }' % (self.BORDER, self.TEXT))
+        log_wrap = QtWidgets.QHBoxLayout()
+        log_wrap.setContentsMargins(8, 0, 8, 8)
+        log_wrap.addWidget(self._log)
+        root.addLayout(log_wrap)
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # ── Prep Rig ─────────────────────────────────────────────────────────
 
-    def _log_msg(self, msg):
-        self._log.appendPlainText(msg)
-        self._log.verticalScrollBar().setValue(self._log.verticalScrollBar().maximum())
-
-    def _face_mesh(self):
-        return self._mesh_field.text().strip()
-
-    def _auto_detect_mesh(self):
-        mesh = api.find_face_mesh()
-        if mesh:
-            self._mesh_field.setText(mesh)
-
-    def _mesh_from_sel(self):
+    def _on_prep(self):
         sel = cmds.ls(selection=True, transforms=True)
-        if sel:
-            self._mesh_field.setText(sel[0])
-
-    def _sync_from_scene(self):
-        """Populate status badges from any existing rig nodes on the face mesh."""
-        mesh = self._face_mesh()
-        if not mesh or not cmds.objExists(mesh):
-            return
-        nodes = api.get_rig_nodes(mesh)
-        if nodes['uvpin']:
-            self._uvpin_node = nodes['uvpin']
-            n = len(api._collect_surface_joints(nodes['uvpin']))
-            self._p1_box.set_done('{} ({} joints)'.format(nodes['uvpin'], n))
-        if nodes['sk1']:
-            self._sk1_node = nodes['sk1']
-            self._p2_box.set_done(nodes['sk1'])
-        if nodes['bs']:
-            self._bs_node = nodes['bs']
-            self._p3_box.set_done(nodes['bs'])
-        if nodes['sk2']:
-            self._sk2_node = nodes['sk2']
-            self._p4_box.set_done(nodes['sk2'])
-
-    # ── Phase actions ─────────────────────────────────────────────────────────
-
-    def _run_phase1(self):
-        mesh = self._face_mesh()
-        if not mesh:
-            self._p1_box.set_error('Set a face mesh first.')
-            return
-        locs = cmds.ls(selection=True) or []
-        locs = [l for l in locs if cmds.objExists(l)]
-        if not locs:
-            self._p1_box.set_error('Select locators in the viewport first.')
+        if not sel:
+            self._log_msg('Select a face mesh first.', error=True)
             return
 
-        self._p1_btn.setEnabled(False)
+        mesh = sel[0]
         try:
-            top_grp, uvpin, results = api.create_surface_joints(
-                mesh, locs, ctrl_radius=self._radius_spin.value()
-            )
-            self._uvpin_node = uvpin
-            self._log_msg('Phase 1: {} joints created under {}'.format(len(results), top_grp))
-            for pin_grp, ctl, jnt in results:
-                self._log_msg('  {} → {} → {}'.format(pin_grp, ctl, jnt))
-            self._p1_box.set_done('{} ({} joints)'.format(uvpin, len(results)))
+            self._setup = api.prep_rig(mesh)
+            if self._setup.get('sk2'):
+                self._set_status(self._prep_status,
+                                 'Existing setup found on {}'.format(mesh))
+                self._log_msg('Detected existing DSFR setup on {}'.format(mesh))
+            else:
+                self._set_status(self._prep_status,
+                                 'Prepped: {} → {}'.format(
+                                     mesh, self._setup['duplicate']))
+                self._log_msg('Prepped rig: duplicate={}, wrap={}'.format(
+                    self._setup['duplicate'], self._setup['wrap_bs']))
         except Exception as e:
-            self._p1_box.set_error(str(e))
-            self._log_msg('ERROR phase 1: {}'.format(e))
-        finally:
-            self._p1_btn.setEnabled(True)
+            self._log_msg('Error prepping rig: {}'.format(e), error=True)
 
-    def _run_phase2(self):
-        mesh = self._face_mesh()
-        if not mesh:
-            self._p2_box.set_error('Set a face mesh first.')
-            return
-        joints = self._p2_list.items()
-        if not joints:
-            self._p2_box.set_error('Add skeleton joints to the list first.')
+    # ── Follicles ────────────────────────────────────────────────────────
+
+    def _on_add(self):
+        if not self._setup:
+            self._log_msg('Run Prep My Rig first.', error=True)
             return
 
-        self._p2_btn.setEnabled(False)
+        sel = cmds.ls(selection=True, flatten=True) or []
+        components = [s for s in sel if '.' in s]
+        if not components:
+            self._log_msg(
+                'Select faces, edges, or vertices on the mesh.',
+                error=True)
+            return
+
         try:
-            sk1 = api.bind_coarse(mesh, joints)
-            self._sk1_node = sk1
-            self._log_msg('Phase 2: {} created ({} influences)'.format(sk1, len(joints)))
-            self._p2_box.set_done(sk1)
+            results = api.add_follicle_joint(
+                self._setup['original'], components, self._setup)
+            self._log_msg('Added {} follicle joints'.format(len(results)))
+            for fol, grp, ctl, jnt in results:
+                self._log_msg('  {} → {}'.format(ctl, jnt))
         except Exception as e:
-            self._p2_box.set_error(str(e))
-            self._log_msg('ERROR phase 2: {}'.format(e))
-        finally:
-            self._p2_btn.setEnabled(True)
+            self._log_msg('Error adding joints: {}'.format(e), error=True)
 
-    def _run_phase3(self):
-        mesh = self._face_mesh()
-        if not mesh:
-            self._p3_box.set_error('Set a face mesh first.')
-            return
-        if not self._sk1_node:
-            self._p3_box.set_error('Run Phase 2 (Coarse Bind) first.')
-            return
-        targets = self._p3_list.items()
-        if not targets:
-            self._p3_box.set_error('Add blendshape target meshes to the list first.')
+    def _on_remove(self):
+        if not self._setup:
+            self._log_msg('Run Prep My Rig first.', error=True)
             return
 
-        self._p3_btn.setEnabled(False)
+        sel = cmds.ls(selection=True) or []
+        if not sel:
+            self._log_msg(
+                'Select a control, joint, or follicle to remove.',
+                error=True)
+            return
+
+        grps_to_remove = set()
+        for node in sel:
+            grp = api.resolve_to_grp(node)
+            if grp:
+                grps_to_remove.add(grp)
+
+        if not grps_to_remove:
+            self._log_msg(
+                'Selection is not part of a DSFR follicle rig.',
+                error=True)
+            return
+
+        for grp in grps_to_remove:
+            try:
+                api.remove_follicle_joint(self._setup, grp)
+                self._log_msg('Removed {}'.format(grp))
+            except Exception as e:
+                self._log_msg('Error removing {}: {}'.format(grp, e),
+                              error=True)
+
+    # ── Build ────────────────────────────────────────────────────────────
+
+    def _on_build(self):
+        if not self._setup:
+            self._log_msg('Run Prep My Rig first.', error=True)
+            return
+
         try:
-            bs = api.add_blendshape(mesh, targets, self._sk1_node)
-            self._bs_node = bs
-            self._log_msg('Phase 3: {} created ({} targets), reordered after {}'.format(
-                bs, len(targets), self._sk1_node))
-            self._p3_box.set_done(bs)
-        except Exception as e:
-            self._p3_box.set_error(str(e))
-            self._log_msg('ERROR phase 3: {}'.format(e))
-        finally:
-            self._p3_btn.setEnabled(True)
-
-    def _run_phase4(self):
-        mesh = self._face_mesh()
-        if not mesh:
-            self._p4_box.set_error('Set a face mesh first.')
-            return
-        if not self._uvpin_node:
-            self._p4_box.set_error('Run Phase 1 (Surface Joints) first.')
-            return
-
-        self._p4_btn.setEnabled(False)
-        try:
-            sk2 = api.bind_surface_joints(mesh, self._uvpin_node)
-            self._sk2_node = sk2
+            sk2 = api.build_rig(self._setup)
             infs = cmds.skinCluster(sk2, query=True, influence=True) or []
-            self._log_msg('Phase 4: {} created ({} influences), bindPreMatrix wired'.format(
+            self._set_status(self._build_status,
+                             '{} ({} influences)'.format(sk2, len(infs)))
+            self._log_msg('SK2 created: {} ({} influences)'.format(
                 sk2, len(infs)))
-            self._p4_box.set_done(sk2)
         except Exception as e:
-            self._p4_box.set_error(str(e))
-            self._log_msg('ERROR phase 4: {}'.format(e))
-        finally:
-            self._p4_btn.setEnabled(True)
+            self._log_msg('Error building rig: {}'.format(e), error=True)
+
+    # ── Logging ──────────────────────────────────────────────────────────
+
+    def _log_msg(self, msg, error=False):
+        color = '#d65f5f' if error else '#6fbf73'
+        self._log.append(
+            '<span style="color:{}">{}</span>'.format(
+                color,
+                msg.replace('&', '&amp;').replace('<', '&lt;').replace(
+                    '>', '&gt;')))
+
+    # ── UI helpers ───────────────────────────────────────────────────────
+
+    def _set_status(self, label, text, success=True):
+        color = '#6fbf73' if success else self.DIM
+        label.setText(text)
+        label.setStyleSheet(
+            'color: %s; font-size: 10px; padding: 2px 8px 6px 8px;' % color)
+
+    def _statusLabel(self):
+        lbl = QtWidgets.QLabel('')
+        lbl.setStyleSheet(
+            'color: %s; font-size: 10px; padding: 2px 8px 6px 8px;' % self.DIM)
+        lbl.setWordWrap(True)
+        return lbl
+
+    def _guideLabel(self, text):
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(
+            'color: %s; font-size: 10px; padding: 4px 8px 2px 8px;' % self.DIM)
+        lbl.setWordWrap(True)
+        return lbl
+
+    def _headerLabel(self, text):
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(
+            'background: %s; color: %s; font-size: 11px; font-weight: bold;'
+            'padding: 5px; letter-spacing: 1px;' % (self.LIGHT, self.TEXT))
+        lbl.setAlignment(QtCore.Qt.AlignCenter)
+        return lbl
+
+    def _sectionLabel(self, text):
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(
+            'background: %s; color: %s; font-size: 10px; font-weight: bold;'
+            'padding: 3px 5px; letter-spacing: 1px;' % (self.MID, self.DIM))
+        return lbl
+
+    def _divider(self):
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.HLine)
+        line.setStyleSheet('color: %s;' % self.BORDER)
+        return line
+
+    def _green_btn_style(self):
+        return ('QPushButton { background: %s; border: 1px solid %s; }'
+                'QPushButton:hover { background: %s; }' % (
+                    self.GREEN, self.BORDER, self.ACCENT))
+
+    def _red_btn_style(self):
+        return ('QPushButton { background: %s; border: 1px solid %s; }'
+                'QPushButton:hover { background: %s; }' % (
+                    self.RED, self.BORDER, self.ACCENT))
+
+    def _stylesheet(self):
+        return '''
+            QWidget {
+                background: %(DARK)s;
+                color: %(TEXT)s;
+                font-family: Arial;
+                font-size: 11px;
+            }
+            QLineEdit {
+                background: %(MID)s;
+                border: 1px solid %(BORDER)s;
+                padding: 3px 5px;
+                color: %(TEXT)s;
+            }
+            QLineEdit:focus {
+                border: 1px solid %(ACCENT)s;
+            }
+            QPushButton {
+                background: %(LIGHT)s;
+                border: 1px solid %(BORDER)s;
+                padding: 4px 10px;
+                color: %(TEXT)s;
+            }
+            QPushButton:hover {
+                background: %(ACCENT)s;
+            }
+            QListWidget {
+                background: %(MID)s;
+                border: 1px solid %(BORDER)s;
+                color: %(TEXT)s;
+            }
+            QLabel {
+                color: %(TEXT)s;
+            }
+        ''' % {
+            'DARK': self.DARK, 'MID': self.MID, 'LIGHT': self.LIGHT,
+            'BORDER': self.BORDER, 'TEXT': self.TEXT, 'ACCENT': self.ACCENT,
+        }
 
 
-# ── Launch ────────────────────────────────────────────────────────────────────
+# ── Launch ───────────────────────────────────────────────────────────────────
 
 _instance = None
 
 
 def show():
     global _instance
-    if _instance and not shiboken6.isValid(_instance):
-        _instance = None
-    if _instance is None:
-        _instance = DSFRDialog()
+    try:
+        _instance.close()
+        _instance.deleteLater()
+    except Exception:
+        pass
+    _instance = DSFRWindow(parent=_maya_main_window())
     _instance.show()
-    _instance.raise_()
-    _instance.activateWindow()
