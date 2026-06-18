@@ -220,7 +220,8 @@ def add_follicle_joint(original_mesh, components, setup_dict):
         cmds.parent(follicle, fol_grp)
 
         grp = cmds.group(empty=True, name=name + '_GRP', parent=master_grp)
-        cmds.parentConstraint(follicle, grp, maintainOffset=False)
+        cmds.connectAttr(follicle + '.translate', grp + '.translate')
+        cmds.connectAttr(follicle + '.rotate', grp + '.rotate')
 
         ctl = _make_ctrl(name + '_CTL')
         cmds.parent(ctl, grp)
@@ -260,21 +261,16 @@ def resolve_to_grp(node):
             return current
         current = parent[0]
 
-    if cmds.objectType(node) == 'parentConstraint':
-        parent = cmds.listRelatives(node, parent=True)
-        if parent:
-            return resolve_to_grp(parent[0])
-
     if cmds.objectType(node, isAType='transform'):
         shape = cmds.listRelatives(node, shapes=True, type='follicle')
         if shape:
-            constraints = cmds.listConnections(
+            grps = cmds.listConnections(
                 node + '.translate', destination=True,
-                type='parentConstraint') or []
-            for con in constraints:
-                con_parent = cmds.listRelatives(con, parent=True)
-                if con_parent:
-                    return resolve_to_grp(con_parent[0])
+                type='transform') or []
+            for grp in grps:
+                resolved = resolve_to_grp(grp)
+                if resolved:
+                    return resolved
 
     return None
 
@@ -292,13 +288,7 @@ def remove_follicle_joint(setup_dict, grp):
             if jnt in influences:
                 cmds.skinCluster(sk2, edit=True, removeInfluence=jnt)
 
-    constraints = cmds.listRelatives(
-        grp, children=True, type='parentConstraint') or []
-    follicle = None
-    for con in constraints:
-        targets = cmds.parentConstraint(con, query=True, targetList=True) or []
-        if targets:
-            follicle = targets[0]
+    follicle = _get_follicle_from_grp(grp)
 
     cmds.delete(grp)
 
@@ -334,46 +324,14 @@ def list_follicle_joints(setup_dict):
 # ── UV driver controls ───────────────────────────────────────────────────────
 
 def _get_follicle_from_grp(grp):
-    """Find the follicle driving a GRP via its parentConstraint."""
-    constraints = cmds.listRelatives(
-        grp, children=True, type='parentConstraint') or []
-    for con in constraints:
-        targets = cmds.parentConstraint(con, query=True, targetList=True) or []
-        if targets:
-            return targets[0]
+    """Find the follicle driving a GRP via its translate connection."""
+    conns = cmds.listConnections(
+        grp + '.translate', source=True, destination=False) or []
+    for node in conns:
+        if cmds.listRelatives(node, shapes=True, type='follicle'):
+            return node
     return None
 
-
-def _has_uv_control(follicle):
-    """Check if a follicle already has a UV driver control connected."""
-    fol_shape = fol.getFollicleShape(follicle)
-    conns = cmds.listConnections(
-        fol_shape + '.parameterU', source=True, destination=False) or []
-    return bool(conns)
-
-
-def add_uv_controls(setup_dict):
-    """
-    Create UV driver controls for all follicles that don't have one yet.
-    Anchor follicles are parented into DSFR_follicle_GRP.
-    Returns list of (uv_ctrl, anchor) tuples.
-    """
-    fol_grp = setup_dict.get('follicle_grp')
-    original = setup_dict.get('original')
-    pairs = list_follicle_joints(setup_dict)
-    results = []
-
-    for grp, jnt in pairs:
-        follicle = _get_follicle_from_grp(grp)
-        if not follicle or _has_uv_control(follicle):
-            continue
-
-        uv_ctrl, anchor = fol.createUVDriverControl(follicle, original)
-        if fol_grp:
-            cmds.parent(anchor, fol_grp)
-        results.append((uv_ctrl, anchor))
-
-    return results
 
 
 # ── Auto skin falloff ────────────────────────────────────────────────────────
@@ -467,7 +425,6 @@ def build_rig(setup_dict):
                 '{}.bindPreMatrix[{}]'.format(sk2, i),
                 force=True)
 
-        add_uv_controls(setup_dict)
         return sk2
 
     joints_to_bind = all_jnts + [root_jnt]
@@ -499,5 +456,4 @@ def build_rig(setup_dict):
     _auto_skin_falloff(sk2, duplicate, root_jnt, pairs, falloff=5.0)
 
     setup_dict['sk2'] = sk2
-    add_uv_controls(setup_dict)
     return sk2
