@@ -259,7 +259,7 @@ def _install(root):
     )
 
 
-def onMayaDroppedPythonFile(obj):
+def onMayaDroppedPythonFile(_obj):
     """Called by Maya when this file is dragged onto the viewport."""
-    root = os.path.dirname(obj).replace("\\", "/")
+    root = os.path.dirname(os.path.abspath(__file__))
     _install(root)
