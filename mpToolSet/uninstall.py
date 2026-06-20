@@ -23,6 +23,13 @@ _BACKUPS_DIR = "mpToolSet_backups"
 
 # -- paths -----------------------------------------------------------------
 
+def _app_plugins_dir():
+    return os.path.join(
+        os.environ.get("APPDATA", ""),
+        "Autodesk", "ApplicationPlugins"
+    ).replace("\\", "/")
+
+
 def _maya_scripts_dir():
     return os.path.join(
         cmds.internalVar(userAppDir=True), "scripts"
@@ -171,6 +178,18 @@ def _restore_from(backup_dir):
             src_path = os.path.join(dirs_src, dname)
             if os.path.isdir(src_path):
                 dst_path = os.path.join(scripts_dst, dname)
+                if os.path.exists(dst_path):
+                    shutil.rmtree(dst_path)
+                shutil.copytree(src_path, dst_path)
+                dirs_restored += 1
+
+    app_plugins_src = os.path.join(backup_dir, "app_plugins")
+    if os.path.isdir(app_plugins_src):
+        plugins_dst = _app_plugins_dir()
+        for dname in os.listdir(app_plugins_src):
+            src_path = os.path.join(app_plugins_src, dname)
+            if os.path.isdir(src_path):
+                dst_path = os.path.join(plugins_dst, dname)
                 if os.path.exists(dst_path):
                     shutil.rmtree(dst_path)
                 shutil.copytree(src_path, dst_path)

@@ -27,6 +27,13 @@ _BACKUPS_DIR = "mpToolSet_backups"
 
 # -- paths -----------------------------------------------------------------
 
+def _app_plugins_dir():
+    return os.path.join(
+        os.environ.get("APPDATA", ""),
+        "Autodesk", "ApplicationPlugins"
+    ).replace("\\", "/")
+
+
 def _maya_scripts_dir():
     return os.path.join(
         cmds.internalVar(userAppDir=True), "scripts"
@@ -226,6 +233,17 @@ def _install(root):
             dst = _copy_tree(studio_src, studio_dst, backup_dir, "dirs")
             all_dirs.append(dst)
 
+        ngskin_src = os.path.join(shelf_path, "ngskintools2")
+        if os.path.isdir(ngskin_src):
+            plugins_dst = _app_plugins_dir()
+            os.makedirs(plugins_dst, exist_ok=True)
+            ngskin_dst = os.path.join(plugins_dst, "ngskintools2")
+            _backup_directory(ngskin_dst, backup_dir, "app_plugins")
+            if os.path.exists(ngskin_dst):
+                shutil.rmtree(ngskin_dst)
+            shutil.copytree(ngskin_src, ngskin_dst)
+            all_dirs.append(ngskin_dst.replace("\\", "/"))
+
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
             name, btn_count = _build_shelf(config_file, backup_dir)
@@ -238,17 +256,28 @@ def _install(root):
     if version == 0:
         backup_label += " (original pre-install state)"
 
+    ngskin_installed = any("ngskintools2" in d for d in all_dirs)
+
+    restart_note = (
+        "\n  ** Restart Maya for ngSkinTools2 to become available. **\n"
+        if ngskin_installed else ""
+    )
+
     summary = (
         "mpToolSet installed successfully!\n\n"
         "  Scripts: {} files -> {}\n"
         "  Icons:   {} files -> {}\n"
-        "  Shelves: {}\n\n"
+        "  Shelves: {}\n"
+        "  ngSkinTools2: {}\n"
+        "{}\n"
         "  Backup saved: {}\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
     ).format(
         sum(1 for f in all_files if f.endswith(".py")), scripts_dst,
         sum(1 for f in all_files if f.endswith(".png")), icons_dst,
         ", ".join(shelves_built) if shelves_built else "none",
+        "installed" if ngskin_installed else "not found",
+        restart_note,
         backup_label,
     )
     print(summary)

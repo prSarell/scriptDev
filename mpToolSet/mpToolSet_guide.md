@@ -96,9 +96,9 @@ Strips namespaces, adds prefix/suffix, and supports reverting names on selected 
 - Use Add Prefix/Suffix to batch-rename
 - Click Revert to restore original names (stored on each node)
 
-### ngSkinTools (3rd Party)
+### ngSkinTools
 
-Layer-based skin weight painting and editing. Requires separate installation of ngSkinTools2.
+Layer-based skin weight painting and editing. Installed automatically with mpToolSet.
 
 ### Corrective Blendshape Tool (WIP Development)
 
