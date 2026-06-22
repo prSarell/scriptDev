@@ -1503,7 +1503,7 @@ class NavPanel(QtWidgets.QWidget):
         layout.setSpacing(0)
 
         layout.addWidget(self._make_section_widget(
-            "PROJECTS", self._add_project, store_add_btn_as="_proj_add_btn"
+            "PROJECTS", self._add_project
         ))
         self.project_list = self._make_list()
         self.project_list.currentTextChanged.connect(

@@ -8,32 +8,54 @@ Maya Python tool development workspace for a 3D animation teaching pipeline. Scr
 
 **Maya versions:** Maya 2025 (primary), with Maya 2026 migration planned. Both use Python 3.x — maintain compatibility with both where possible.
 
-## Folder Structure
+## Folder Structure & Development Workflow
 
-- `rigDev/` — rigging tools
-- `animDev/` — animation tools
-- `simDev/` — simulation tools
-- `renderDev/` — rendering tools
-- `pipeDev/` — pipeline tools
-- `shelfDev/` — Maya shelf tools and buttons
-- `mpToolSet/` — **student deployment package only** (see below)
+Development follows the existing folder structure — always save files in the correct location, never create ad-hoc locations.
 
-## mpToolSet Workflow
+### Three-stage pipeline
 
-`mpToolSet/` is the student-facing install package. All development and testing happens in the `*Dev/` folders — never edit tool scripts directly in `mpToolSet/`. Scripts and icons inside `mpToolSet/mpRig/` and `mpToolSet/mpAnim/` are copies from dev folders and must be updated by re-copying from the source, not by editing in place.
+1. **Develop** — tool scripts are written and iterated on in the `*Dev/` folders:
+   - `rigDev/` — rigging tool scripts
+   - `animDev/` — animation tool scripts
+   - `simDev/` — simulation tool scripts
+   - `renderDev/` — rendering tool scripts
+   - `pipeDev/` — pipeline tool scripts
 
-Files that live exclusively in `mpToolSet/` and can be edited there:
+2. **Stage for testing** — when a tool is ready to test in Maya, its scripts and icons go into the corresponding `shelfDev/` subfolder:
+   - `shelfDev/mpRig/scripts/` — rigging tool scripts ready for shelf
+   - `shelfDev/mpRig/icons/` — rigging shelf icons
+   - `shelfDev/mpAnim/scripts/` — animation tool scripts ready for shelf
+   - `shelfDev/mpAnim/icons/` — animation shelf icons
+   - The mpToolSet installer (`install.py`) deploys from here to Maya's prefs folders for testing.
+
+3. **Deploy to students** — copy final scripts and icons from `shelfDev/` into `mpToolSet/` for student rollout:
+   - `mpToolSet/mpRig/scripts/`, `mpToolSet/mpRig/icons/`
+   - `mpToolSet/mpAnim/scripts/`, `mpToolSet/mpAnim/icons/`
+
+### Rules
+
+- Never edit tool scripts or icons directly in `mpToolSet/` — always update from the source folders.
+- Never save files outside the established folder structure (no loose files in `scriptDev/` root, etc.).
+- Icons always live in the `icons/` folder within their specific `shelfDev/` shelf folder.
+
+### mpToolSet-only files (can be edited in place)
+
 - `install.py` / `uninstall.py` — drag-and-drop installer/uninstaller
 - `shelf_config.py` (in each shelf folder) — shelf button definitions
 - `mpToolSet_guide.md` — student documentation
 
 The end goal is two drag-and-drop files: one to install/update, one to uninstall. Each file should handle everything on its own — students should never need to run extra steps.
 
-Third-party tools:
+### Third-party tools
+
 - **SHAPES** is dev-only — do not include in mpToolSet or distribute to students.
 - **ngSkinTools2** is bundled in `mpToolSet/mpRig/ngskintools2/` and installed automatically.
 
-After making changes to scripts in the `*Dev/` folders, check whether the corresponding files in `mpToolSet/` need to be updated to match.
+## Icons
+
+- All new shelf/tool icons must be **256×256 pixels**, PNG format, with **rounded corners**.
+- MetaHuman-related tool icons include a small dot with an "m" in the bottom-right corner: black dot / white "m" by default, or white dot / black "m" if the icon background is black.
+- Exceptions: Studio Library and ngSkinTools icons keep their original dimensions.
 
 ## Code Conventions
 
