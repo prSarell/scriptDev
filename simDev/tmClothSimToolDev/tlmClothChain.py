@@ -103,7 +103,7 @@ class SimClothRig():
 		if parent == 'clothChain_mainWindow':
 			if cmds.window("clothChain_mainWindow", exists=True):
 				cmds.deleteUI("clothChain_mainWindow")
-			cmds.window("clothChain_mainWindow", sizeable=True, mnb=True, mxb=False, title="SimClothRig", widthHeight=(490, 800))
+			cmds.window("clothChain_mainWindow", sizeable=True, mnb=True, mxb=True, title="SimClothRig", widthHeight=(490, 800))
 
 		cmds.formLayout('SimClothRig_form', p=parent)
 		cmds.scrollLayout('scrollLayout', hst=15, vst=15, cr=True)
