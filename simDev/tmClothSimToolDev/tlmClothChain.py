@@ -103,7 +103,7 @@ class SimClothRig():
 		if parent == 'clothChain_mainWindow':
 			if cmds.window("clothChain_mainWindow", exists=True):
 				cmds.deleteUI("clothChain_mainWindow")
-			cmds.window("clothChain_mainWindow", tlb=1, sizeable=True, mxb=False, title="SimClothRig", widthHeight=(490, 800))
+			cmds.window("clothChain_mainWindow", sizeable=True, mnb=True, mxb=False, title="SimClothRig", widthHeight=(490, 800))
 
 		cmds.formLayout('SimClothRig_form', p=parent)
 		cmds.scrollLayout('scrollLayout', hst=15, vst=15, cr=True)
@@ -901,6 +901,9 @@ class SimClothRig():
 		cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
 		for node in cache_nodes:
 			cmds.delete(node)
+		history_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='historySwitch') or []
+		for node in history_nodes:
+			cmds.delete(node)
 
 		for ctrl in controlsList:
 			for c in cmds.listRelatives(ctrl, type='parentConstraint') or []:
@@ -942,6 +945,9 @@ class SimClothRig():
 
 			cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
 			for node in cache_nodes:
+				cmds.delete(node)
+			history_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='historySwitch') or []
+			for node in history_nodes:
 				cmds.delete(node)
 
 			cmds.delete(clothRigName + '_preview_grp')
