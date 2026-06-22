@@ -272,7 +272,26 @@ def startCorrection(mesh, target_name):
     for attr in ('tx', 'ty', 'tz', 'rx', 'ry', 'rz'):
         cmds.setAttr(dup_a + '.' + attr, lock=False)
 
+    cmds.addAttr(dup_a, longName='correctiveSourceMesh', dataType='string')
+    cmds.setAttr(dup_a + '.correctiveSourceMesh', mesh, type='string')
+
     return dup_a, dup_b, bs_states
+
+
+# ── sculpt transform safety ──────────────────────────────────────────────────
+
+def _zero_sculpt_transforms(sculpt_mesh):
+    saved = {}
+    for attr in ('tx', 'ty', 'tz', 'rx', 'ry', 'rz'):
+        full = sculpt_mesh + '.' + attr
+        saved[attr] = cmds.getAttr(full)
+        cmds.setAttr(full, 0)
+    return saved
+
+
+def _restore_sculpt_transforms(sculpt_mesh, saved):
+    for attr, val in saved.items():
+        cmds.setAttr(sculpt_mesh + '.' + attr, val)
 
 
 # ── delta extraction ──────────────────────────────────────────────────────────
@@ -414,7 +433,11 @@ def updateCorrectiveTarget(mesh, target_name, sculpted_mesh):
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh)
+    saved_xforms = _zero_sculpt_transforms(sculpted_mesh)
+    try:
+        _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh)
+    finally:
+        _restore_sculpt_transforms(sculpted_mesh, saved_xforms)
 
 
 def _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh):
@@ -590,8 +613,12 @@ def bakeCorrection(mesh, sculpted_mesh, target_name,
             raise CorrectiveBSError('Object not found: ' + obj)
         getMeshShape(obj)
 
-    target_positions      = extractDelta(mesh, sculpted_mesh)
-    bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
+    saved_xforms = _zero_sculpt_transforms(sculpted_mesh)
+    try:
+        target_positions      = extractDelta(mesh, sculpted_mesh)
+        bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
+    finally:
+        _restore_sculpt_transforms(sculpted_mesh, saved_xforms)
 
     if custom_driver_attr and custom_driver_value is not None:
         _wireCustomDriver(bs_node, target_index, custom_driver_attr, custom_driver_value)
