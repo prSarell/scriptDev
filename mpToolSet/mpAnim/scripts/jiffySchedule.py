@@ -1716,9 +1716,12 @@ class JiffySchedule(QtWidgets.QWidget):
         self.resize(1200, 900)
         self.setStyleSheet(f"QWidget{{background:{DARK_BG};color:white;}}")
         self._active_project = ""
+        self._workspace_job = None
         self._build()
         self._make_dockable()
         self.load_data()
+        self._workspace_job = cmds.scriptJob(
+            event=['workspaceChanged', self._update_project_banner])
 
     def _build(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -1750,6 +1753,22 @@ class JiffySchedule(QtWidgets.QWidget):
         tl.addWidget(self.tab_bar)
         tl.addStretch()
         layout.addWidget(title_bar)
+
+        workspace = cmds.workspace(query=True, rootDirectory=True).rstrip("/\\")
+        project_name = os.path.basename(workspace)
+        if not project_name or project_name == "default":
+            banner_text = "Project:  No project set"
+            banner_color = "#e05050"
+        else:
+            banner_text = f"Project:  {project_name}"
+            banner_color = "#4caf50"
+        self._project_banner = QtWidgets.QLabel(banner_text)
+        self._project_banner.setFixedHeight(36)
+        self._project_banner.setStyleSheet(
+            f"background:#1a1a1a; color:{banner_color}; font-size:15px; font-weight:bold;"
+            f"padding-left:16px; border-bottom:1px solid {BORDER};"
+        )
+        layout.addWidget(self._project_banner)
 
         body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         body.setHandleWidth(1)
@@ -1958,9 +1977,35 @@ class JiffySchedule(QtWidgets.QWidget):
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Load Error", str(e))
 
+    def _update_project_banner(self):
+        workspace = cmds.workspace(query=True, rootDirectory=True).rstrip("/\\")
+        project_name = os.path.basename(workspace)
+        if not project_name or project_name == "default":
+            self._project_banner.setText("Project:  No project set")
+            self._project_banner.setStyleSheet(
+                f"background:#1a1a1a; color:#e05050; font-size:15px; font-weight:bold;"
+                f"padding-left:16px; border-bottom:1px solid {BORDER};"
+            )
+        else:
+            self._project_banner.setText(f"Project:  {project_name}")
+            self._project_banner.setStyleSheet(
+                f"background:#1a1a1a; color:#4caf50; font-size:15px; font-weight:bold;"
+                f"padding-left:16px; border-bottom:1px solid {BORDER};"
+            )
+        self.load_data()
+
     def _save_path(self):
         root = cmds.workspace(query=True, rootDirectory=True)
         return os.path.join(root, "jiffyShotData", "jiffyschedule.json")
+
+    def closeEvent(self, event):
+        if self._workspace_job is not None:
+            try:
+                cmds.scriptJob(kill=self._workspace_job, force=True)
+            except Exception:
+                pass
+            self._workspace_job = None
+        super().closeEvent(event)
 
     def _make_dockable(self):
         ptr = omui.MQtUtil.mainWindow()
