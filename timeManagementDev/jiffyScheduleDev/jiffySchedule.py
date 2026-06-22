@@ -1493,7 +1493,7 @@ class NavPanel(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._group_label = "Scene"
-        self.setFixedWidth(170)
+        self.setMinimumWidth(140)
         self.setStyleSheet(f"background:{PANEL_BG};")
         self._build()
 
@@ -1503,7 +1503,7 @@ class NavPanel(QtWidgets.QWidget):
         layout.setSpacing(0)
 
         layout.addWidget(self._make_section_widget(
-            "PROJECTS", self._add_project
+            "PROJECTS", self._add_project, self._remove_project
         ))
         self.project_list = self._make_list()
         self.project_list.currentTextChanged.connect(
@@ -1524,8 +1524,9 @@ class NavPanel(QtWidgets.QWidget):
         gvl.setContentsMargins(0, 0, 0, 0)
         gvl.setSpacing(0)
         gvl.addWidget(self._make_section_widget(
-            "SCENES", self._add_group,
+            "SCENES", self._add_group, self._remove_group,
             store_add_btn_as="_group_add_btn",
+            store_remove_btn_as="_group_remove_btn",
             store_label_as="_group_header_lbl",
         ))
         self.group_list = self._make_list()
@@ -1544,7 +1545,8 @@ class NavPanel(QtWidgets.QWidget):
         mvl.setContentsMargins(0, 0, 0, 0)
         mvl.setSpacing(0)
         mvl.addWidget(self._make_section_widget(
-            "MILESTONES", lambda: self.milestone_add_requested.emit()
+            "MILESTONES", lambda: self.milestone_add_requested.emit(),
+            self._remove_milestone,
         ))
         ms_scroll = QtWidgets.QScrollArea()
         ms_scroll.setWidgetResizable(True)
@@ -1561,8 +1563,15 @@ class NavPanel(QtWidgets.QWidget):
 
         layout.addWidget(self._bottom_stack)
 
-    def _make_section_widget(self, title, add_cb,
-                              store_add_btn_as=None, store_label_as=None):
+    def _make_section_widget(self, title, add_cb, remove_cb=None,
+                              store_add_btn_as=None, store_remove_btn_as=None,
+                              store_label_as=None):
+        _GREEN_BTN = (
+            "QPushButton{background:#2e5a2e;color:white;border:none;border-radius:3px;"
+            "font-size:16px;font-weight:bold;}"
+            "QPushButton:hover{background:#3a7a3a;}"
+            "QPushButton:disabled{background:#333;color:#555;}"
+        )
         h = QtWidgets.QWidget()
         h.setFixedHeight(32)
         h.setStyleSheet(
@@ -1571,24 +1580,30 @@ class NavPanel(QtWidgets.QWidget):
         )
         hl = QtWidgets.QHBoxLayout(h)
         hl.setContentsMargins(12, 0, 8, 0)
+        hl.setSpacing(4)
         lbl = QtWidgets.QLabel(title)
         lbl.setStyleSheet(
             f"font-size:10px; font-weight:bold; color:{SUBTEXT}; letter-spacing:1px;"
         )
         hl.addWidget(lbl)
         hl.addStretch()
-        btn = QtWidgets.QPushButton("+")
-        btn.setFixedSize(22, 22)
-        btn.setStyleSheet(
-            "QPushButton{background:#2e5a2e;color:white;border:none;border-radius:3px;font-size:14px;}"
-            "QPushButton:hover{background:#3a7a3a;}"
-            "QPushButton:disabled{background:#333;color:#555;}"
-        )
-        btn.clicked.connect(add_cb)
-        hl.addWidget(btn)
+        add_btn = QtWidgets.QPushButton("+")
+        add_btn.setFixedSize(24, 24)
+        add_btn.setStyleSheet(_GREEN_BTN)
+        add_btn.clicked.connect(add_cb)
+        hl.addWidget(add_btn)
         if store_add_btn_as:
-            setattr(self, store_add_btn_as, btn)
-            btn.setEnabled(False)
+            setattr(self, store_add_btn_as, add_btn)
+            add_btn.setEnabled(False)
+        rem_btn = QtWidgets.QPushButton("−")
+        rem_btn.setFixedSize(24, 24)
+        rem_btn.setStyleSheet(_GREEN_BTN)
+        if remove_cb:
+            rem_btn.clicked.connect(remove_cb)
+        hl.addWidget(rem_btn)
+        if store_remove_btn_as:
+            setattr(self, store_remove_btn_as, rem_btn)
+            rem_btn.setEnabled(False)
         if store_label_as:
             setattr(self, store_label_as, lbl)
         return h
@@ -1621,6 +1636,7 @@ class NavPanel(QtWidgets.QWidget):
         self._group_label = group_label
         self._group_header_lbl.setText(f"{group_label.upper()}S")
         self._group_add_btn.setEnabled(enabled)
+        self._group_remove_btn.setEnabled(enabled)
         self.group_list.blockSignals(True)
         self.group_list.clear()
         for g in groups:
@@ -1662,6 +1678,49 @@ class NavPanel(QtWidgets.QWidget):
         self.project_list.addItem(name)
         self.project_added.emit(name)
         self.project_list.setCurrentRow(self.project_list.count() - 1)
+
+    def _remove_project(self):
+        item = self.project_list.currentItem()
+        if not item:
+            return
+        name = item.text()
+        reply = QtWidgets.QMessageBox.question(
+            self, "Remove Project",
+            f"Remove '{name}' and all its contents?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            self.project_list.blockSignals(True)
+            self.project_list.takeItem(self.project_list.row(item))
+            self.project_list.setCurrentRow(0)
+            self.project_list.blockSignals(False)
+            self.project_removed.emit(name)
+            self.project_changed.emit("")
+
+    def _remove_group(self):
+        item = self.group_list.currentItem()
+        if not item:
+            return
+        name = item.text()
+        reply = QtWidgets.QMessageBox.question(
+            self, f"Remove {self._group_label}",
+            f"Remove '{name}' and all its contents?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            self.group_list.blockSignals(True)
+            self.group_list.takeItem(self.group_list.row(item))
+            self.group_list.setCurrentRow(0)
+            self.group_list.blockSignals(False)
+            self.group_removed.emit(name)
+            self.group_changed.emit("")
+
+    def _remove_milestone(self):
+        ms_count = self._ms_vbox.count() - 1
+        if ms_count <= 0:
+            return
+        last_idx = ms_count - 1
+        self.milestone_delete_requested.emit(last_idx)
 
     def _add_group(self):
         name, ok = QtWidgets.QInputDialog.getText(
@@ -1801,6 +1860,7 @@ class JiffySchedule(QtWidgets.QWidget):
 
         body.addWidget(self.nav)
         body.addWidget(self.stack)
+        body.setSizes([220, 980])
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
         layout.addWidget(body)
@@ -1974,6 +2034,8 @@ class JiffySchedule(QtWidgets.QWidget):
                     win.get("x", 100), win.get("y", 100),
                     win.get("w", 1200), win.get("h", 900)
                 )
+            if projects:
+                self._on_project_changed(projects[0])
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Load Error", str(e))
 
