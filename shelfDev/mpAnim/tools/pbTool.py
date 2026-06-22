@@ -35,6 +35,9 @@ import re
 import glob
 import shutil
 
+import subprocess
+import sys
+
 import maya.cmds as cmds
 
 # Qt binding in Maya
@@ -124,6 +127,7 @@ class PBTool(object):
         )
         inner = cmds.columnLayout(adj=True)
         self.widgets["keep_files"] = cmds.checkBox(label="Keep Playblast Files", value=True)
+        self.widgets["use_rv"] = cmds.checkBox(label="Open in RV  (uncheck for fCheck)", value=True)
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -520,12 +524,14 @@ class PBTool(object):
             panel = self.get_active_model_panel()
             render_width, render_height = self.get_render_resolution()
 
+            use_rv = cmds.checkBox(self.widgets["use_rv"], q=True, value=True)
+
             cmds.playblast(
                 format="image",
                 filename=prefix,
                 sequenceTime=False,
                 clearCache=True,
-                viewer=True,
+                viewer=not use_rv,
                 showOrnaments=False,
                 offScreen=True,
                 percent=100,
@@ -543,6 +549,9 @@ class PBTool(object):
 
             if self.last_created_files:
                 self.apply_burnins_to_sequence(self.last_created_files)
+
+            if use_rv and self.last_created_files:
+                self._launch_rv(self.last_created_files)
 
             self.refresh_ui_state()
 
@@ -610,6 +619,24 @@ class PBTool(object):
 
         except Exception as exc:
             cmds.warning("Failed to open output folder: {0}".format(exc))
+
+    def _launch_rv(self, files):
+        if sys.platform == "darwin":
+            rv_path = "/Applications/RV.app/Contents/MacOS/RV"
+        else:
+            rv_path = "C:/Program Files/Autodesk/RV-2025.1.0/bin/rv.exe"
+
+        if not os.path.isfile(rv_path):
+            cmds.warning("RV not found at: {0} — falling back to fCheck".format(rv_path))
+            cmds.launch(viewer=True, movie=files[0])
+            return
+
+        first = files[0]
+        seq = re.sub(r'\.\d{4}\.jpg$', '.####.jpg', first)
+        try:
+            subprocess.Popen([rv_path, seq])
+        except Exception as exc:
+            cmds.warning("Failed to launch RV: {0}".format(exc))
 
 
 def show_pbTool():
