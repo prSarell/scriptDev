@@ -25,61 +25,88 @@
 		<ComponentEntry ModuleName="./Contents/scripts/ngskintools2_load.mel" />
 	</Components>
 
-	
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2018" SeriesMax="2018" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2018" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2018/ngSkinTools2.mll" />
-        </Components>
-        
+	<!-- Windows -->
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2018" SeriesMax="2018" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2018" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2018/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2019" SeriesMax="2019" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2019" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2019/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2020" SeriesMax="2020" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2020" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2020/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2022" SeriesMax="2022" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2022" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2022/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2023" SeriesMax="2023" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2023" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2023/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2024" SeriesMax="2024" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2024" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2024/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2025" SeriesMax="2025" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2025" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2025/ngSkinTools2.mll" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2026" SeriesMax="2026" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2026" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2026/ngSkinTools2.mll" />
+	</Components>
 
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2019" SeriesMax="2019" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2019" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2019/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2020" SeriesMax="2020" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2020" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2020/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2022" SeriesMax="2022" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2022" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2022/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2023" SeriesMax="2023" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2023" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2023/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2024" SeriesMax="2024" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2024" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2024/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2025" SeriesMax="2025" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2025" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2025/ngSkinTools2.mll" />
-        </Components>
-        
-
-        <Components>
-            <RuntimeRequirements SupportPath="./Contents/docs/" OS="win64" Platform="Maya" SeriesMin="2026" SeriesMax="2026" />
-            <MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2026" />
-            <ComponentEntry ModuleName="./Contents/plug-ins/2026/ngSkinTools2.mll" />
-        </Components>
-        
+	<!-- macOS -->
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2018" SeriesMax="2018" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2018" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2018/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2019" SeriesMax="2019" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2019" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2019/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2020" SeriesMax="2020" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2020" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2020/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2022" SeriesMax="2022" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2022" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2022/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2023" SeriesMax="2023" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2023" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2023/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2024" SeriesMax="2024" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2024" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2024/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2025" SeriesMax="2025" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2025" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2025/ngSkinTools2.bundle" />
+	</Components>
+	<Components>
+		<RuntimeRequirements SupportPath="./Contents/docs/" OS="macOS" Platform="Maya" SeriesMin="2026" SeriesMax="2026" />
+		<MayaEnv expr="MAYA_PLUG_IN_PATH+:=plug-ins/2026" />
+		<ComponentEntry ModuleName="./Contents/plug-ins/2026/ngSkinTools2.bundle" />
+	</Components>
 
 </ApplicationPackage>
