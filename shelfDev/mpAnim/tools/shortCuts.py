@@ -186,7 +186,7 @@ QWidget {{
 #sidebar {{
     background-color: {_BG_SIDE};
     border-right: 1px solid {_BORDER};
-    min-width: 130px; max-width: 130px;
+    min-width: 100px;
 }}
 QListWidget {{
     background-color: transparent; border: none; outline: none; padding: 4px 0px;
@@ -196,8 +196,10 @@ QListWidget::item:hover {{ background-color: {_HOVER}; }}
 QListWidget::item:selected {{ background-color: {_SEL}; color: white; }}
 
 #sidebarBtn {{
-    background: transparent; color: {_FG_DIM}; font-size: 16px;
-    padding: 4px; min-width: 28px; max-width: 28px; min-height: 24px;
+    background: transparent; color: {_FG_DIM}; font-size: 18px;
+    font-weight: bold; padding: 2px;
+    min-width: 32px; max-width: 32px; min-height: 28px; max-height: 28px;
+    border-radius: 3px;
 }}
 #sidebarBtn:hover {{ color: {_FG}; background: {_HOVER}; }}
 #applyBtn {{
@@ -223,12 +225,6 @@ QCheckBox::indicator:hover    {{ border-color: {_ACCENT}; }}
     background: rgba(255,255,255,18); border-radius: 3px; padding: 1px 5px;
 }}
 #descLabel  {{ color: {_FG}; }}
-#warnLabel  {{ color: #CC9900; font-size: 13px; }}
-#deleteBtn {{
-    background: transparent; color: {_FG_DIM}; font-size: 13px;
-    padding: 2px 5px; min-width: 20px; max-width: 20px;
-}}
-#deleteBtn:hover {{ color: #e05555; background: {_HOVER}; }}
 
 /* ── Key Binder panel ── */
 #keyBinderPanel {{ background: {_BG_SIDE}; border-top: 1px solid {_BORDER}; }}
@@ -1053,7 +1049,6 @@ class KeyboardWidget(QtWidgets.QWidget):
 
 class _HotkeyRow(QtWidgets.QWidget):
     mute_toggled   = QtCore.Signal(str, bool)   # slug, muted
-    delete_clicked = QtCore.Signal(str)          # slug
     row_clicked    = QtCore.Signal(str)          # slug
 
     def __init__(self, slug, hk_data, parent=None):
@@ -1080,80 +1075,10 @@ class _HotkeyRow(QtWidgets.QWidget):
         desc.setObjectName('descLabel')
         h.addWidget(desc, 1)
 
-        del_btn = QtWidgets.QPushButton('✕')
-        del_btn.setObjectName('deleteBtn')
-        del_btn.setToolTip('Remove hotkey')
-        del_btn.clicked.connect(lambda: self.delete_clicked.emit(slug))
-        h.addWidget(del_btn)
-
     def mousePressEvent(self, event):
         self.row_clicked.emit(self.slug)
         super().mousePressEvent(event)
 
-
-class _SpaceRow(QtWidgets.QWidget):
-    toggled = QtCore.Signal(bool)
-
-    def __init__(self, enabled, parent=None):
-        super().__init__(parent)
-        self.setObjectName('hotkeyRow')
-
-        h = QtWidgets.QHBoxLayout(self)
-        h.setContentsMargins(6, 0, 4, 0)
-        h.setSpacing(8)
-
-        self._cb = QtWidgets.QCheckBox()
-        self._cb.setChecked(enabled)
-        self._cb.toggled.connect(self.toggled)
-        h.addWidget(self._cb)
-
-        chip = QtWidgets.QLabel('Space')
-        chip.setObjectName('keyChip')
-        h.addWidget(chip)
-
-        desc = QtWidgets.QLabel('Toggle play / Hotbox (hold)')
-        desc.setObjectName('descLabel')
-        h.addWidget(desc, 1)
-
-        warn = QtWidgets.QLabel('⚠')
-        warn.setObjectName('warnLabel')
-        warn.setToolTip('Tap = play/stop  |  Hold 400ms = hotbox')
-        h.addWidget(warn)
-
-    def set_checked(self, val):
-        self._cb.blockSignals(True)
-        self._cb.setChecked(val)
-        self._cb.blockSignals(False)
-
-
-class _ShotCamRow(QtWidgets.QWidget):
-    toggled = QtCore.Signal(bool)
-
-    def __init__(self, enabled, parent=None):
-        super().__init__(parent)
-        self.setObjectName('hotkeyRow')
-
-        h = QtWidgets.QHBoxLayout(self)
-        h.setContentsMargins(6, 0, 4, 0)
-        h.setSpacing(8)
-
-        self._cb = QtWidgets.QCheckBox()
-        self._cb.setChecked(enabled)
-        self._cb.toggled.connect(self.toggled)
-        h.addWidget(self._cb)
-
-        chip = QtWidgets.QLabel('`')
-        chip.setObjectName('keyChip')
-        h.addWidget(chip)
-
-        desc = QtWidgets.QLabel('Toggle shot camera')
-        desc.setObjectName('descLabel')
-        h.addWidget(desc, 1)
-
-    def set_checked(self, val):
-        self._cb.blockSignals(True)
-        self._cb.setChecked(val)
-        self._cb.blockSignals(False)
 
 
 class MainPanel(QtWidgets.QWidget):
@@ -1163,6 +1088,7 @@ class MainPanel(QtWidgets.QWidget):
     def __init__(self, data, parent=None):
         super().__init__(parent)
         self._data = data
+        self._selected_slug = None
         self._build_ui()
         active = data.get('active') or 'ps_anim'
         self._refresh_list(select=active)
@@ -1174,23 +1100,12 @@ class MainPanel(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        body = QtWidgets.QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        body.setChildrenCollapsible(False)
         body.addWidget(self._make_sidebar())
-        body.addWidget(self._make_content(), 1)
-        root.addLayout(body, 1)
-
-        footer = QtWidgets.QWidget()
-        footer.setObjectName('header')
-        fl = QtWidgets.QHBoxLayout(footer)
-        fl.setContentsMargins(8, 0, 8, 0)
-        fl.addStretch()
-        apply_btn = QtWidgets.QPushButton('Apply Category')
-        apply_btn.setObjectName('applyBtn')
-        apply_btn.clicked.connect(self._apply)
-        fl.addWidget(apply_btn)
-        root.addWidget(footer)
+        body.addWidget(self._make_content())
+        body.setSizes([180, 360])
+        root.addWidget(body, 1)
 
     def _make_sidebar(self):
         w = QtWidgets.QWidget()
@@ -1199,13 +1114,9 @@ class MainPanel(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._list = QtWidgets.QListWidget()
-        self._list.currentTextChanged.connect(self._on_set_changed)
-        layout.addWidget(self._list, 1)
-
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setContentsMargins(4, 4, 4, 4)
-        btn_row.setSpacing(2)
+        btn_row.setSpacing(4)
 
         add_btn = QtWidgets.QPushButton('+')
         add_btn.setObjectName('sidebarBtn')
@@ -1213,7 +1124,7 @@ class MainPanel(QtWidgets.QWidget):
         add_btn.clicked.connect(self._new_set)
         btn_row.addWidget(add_btn)
 
-        self._del_btn = QtWidgets.QPushButton('✕')
+        self._del_btn = QtWidgets.QPushButton('−')
         self._del_btn.setObjectName('sidebarBtn')
         self._del_btn.setToolTip('Delete category')
         self._del_btn.clicked.connect(self._delete_set)
@@ -1221,6 +1132,15 @@ class MainPanel(QtWidgets.QWidget):
 
         btn_row.addStretch()
         layout.addLayout(btn_row)
+
+        self._list = QtWidgets.QListWidget()
+        self._list.currentTextChanged.connect(self._on_set_changed)
+        layout.addWidget(self._list, 1)
+
+        apply_btn = QtWidgets.QPushButton('Apply Category')
+        apply_btn.setObjectName('applyBtn')
+        apply_btn.clicked.connect(self._apply)
+        layout.addWidget(apply_btn)
         return w
 
     def _make_content(self):
@@ -1229,6 +1149,25 @@ class MainPanel(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setContentsMargins(4, 4, 4, 4)
+        btn_row.setSpacing(4)
+
+        self._add_hk_btn = QtWidgets.QPushButton('+')
+        self._add_hk_btn.setObjectName('sidebarBtn')
+        self._add_hk_btn.setToolTip('Add hotkey — select a key in the Keyboard tab')
+        self._add_hk_btn.clicked.connect(self._on_add_hotkey)
+        btn_row.addWidget(self._add_hk_btn)
+
+        self._del_hk_btn = QtWidgets.QPushButton('−')
+        self._del_hk_btn.setObjectName('sidebarBtn')
+        self._del_hk_btn.setToolTip('Remove selected hotkey')
+        self._del_hk_btn.clicked.connect(self._on_delete_selected)
+        btn_row.addWidget(self._del_hk_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         self._stack = QtWidgets.QStackedWidget()
 
@@ -1305,28 +1244,13 @@ class MainPanel(QtWidgets.QWidget):
 
         s = self._data.get('sets', {}).get(set_name, {})
 
-        # Shot camera toggle row
-        shotcam_row = _ShotCamRow(s.get('shotcam_toggle', True))
-        shotcam_row.toggled.connect(
-            lambda enabled: self._on_shotcam_toggled(set_name, enabled))
-        self._hotkey_layout.insertWidget(0, shotcam_row)
-
-        # Spacebar row
-        space_row = _SpaceRow(s.get('spacebar', False))
-        space_row.toggled.connect(
-            lambda enabled: self._on_spacebar_toggled(set_name, enabled))
-        self._hotkey_layout.insertWidget(1, space_row)
-
-        # Regular hotkeys
         hotkeys = s.get('hotkeys', {})
         for i, (slug, hk) in enumerate(hotkeys.items()):
             row = _HotkeyRow(slug, hk)
             row.mute_toggled.connect(
                 lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
-            row.delete_clicked.connect(
-                lambda s_, sn=set_name: self._on_delete(sn, s_))
-            row.row_clicked.connect(self.hotkey_clicked)
-            self._hotkey_layout.insertWidget(i + 2, row)
+            row.row_clicked.connect(self._on_row_selected)
+            self._hotkey_layout.insertWidget(i, row)
 
     def refresh_hotkeys(self, set_name):
         display = 'Default (Maya)' if set_name == _BUILTIN_SET else set_name
@@ -1343,22 +1267,33 @@ class MainPanel(QtWidgets.QWidget):
         self._load_hotkeys(set_name)
         self.set_selected.emit(set_name)
 
-    def _on_shotcam_toggled(self, set_name, enabled):
-        set_shotcam_toggle(set_name, enabled, self._data)
-
-    def _on_spacebar_toggled(self, set_name, enabled):
-        set_spacebar(set_name, enabled, self._data)
-
     def _on_mute(self, set_name, slug, muted):
         set_muted(set_name, slug, muted, self._data)
 
-    def _on_delete(self, set_name, slug):
+    def _on_row_selected(self, slug):
+        self._selected_slug = slug
+        self.hotkey_clicked.emit(slug)
+
+    def _on_add_hotkey(self):
+        set_name = self.current_set()
+        if not set_name or set_name == _BUILTIN_SET:
+            return
+        self.hotkey_clicked.emit('')
+
+    def _on_delete_selected(self):
+        set_name = self.current_set()
+        if not set_name or set_name == _BUILTIN_SET or not self._selected_slug:
+            return
+        hotkeys = self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
+        if self._selected_slug not in hotkeys:
+            return
         reply = QtWidgets.QMessageBox.question(
             self, 'Delete Hotkey', 'Remove this hotkey from the category?',
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
         if reply != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        remove_hotkey(set_name, slug, self._data)
+        remove_hotkey(set_name, self._selected_slug, self._data)
+        self._selected_slug = None
         self._load_hotkeys(set_name)
 
     def _apply(self):
