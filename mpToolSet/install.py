@@ -28,10 +28,12 @@ _BACKUPS_DIR = "mpToolSet_backups"
 # -- paths -----------------------------------------------------------------
 
 def _app_plugins_dir():
-    return os.path.join(
-        os.environ.get("APPDATA", ""),
-        "Autodesk", "ApplicationPlugins"
-    ).replace("\\", "/")
+    import sys
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("APPDATA", "")
+    return os.path.join(base, "Autodesk", "ApplicationPlugins").replace("\\", "/")
 
 
 def _maya_scripts_dir():
