@@ -387,11 +387,29 @@ def _apply_render(rdata: Dict[str, Any]) -> Tuple[int, int]:
 
 
 # -------------------------
+# Selection helper
+# -------------------------
+
+def _selected_camera() -> Optional[str]:
+    sel = cmds.ls(sl=True, long=False) or []
+    if not sel:
+        return None
+    node = sel[0]
+    if cmds.nodeType(node) == "camera":
+        parents = cmds.listRelatives(node, parent=True, fullPath=False) or []
+        if not parents:
+            return None
+        node = parents[0]
+    if _camera_shape(node):
+        return node
+    return None
+
+
+# -------------------------
 # UI
 # -------------------------
 
 _WIN = "psCamPresetSimpleWin"
-_FIELD = "psCamPresetSimple_camField"
 _PRESET_NAME_FIELD = "psCamPresetSimple_presetNameField"
 _PRESET_MENU = "psCamPresetSimple_presetMenu"
 _STATUS = "psCamPresetSimple_status"
@@ -400,17 +418,6 @@ _STATUS = "psCamPresetSimple_status"
 def _set_status(msg: str) -> None:
     if cmds.control(_STATUS, exists=True):
         cmds.text(_STATUS, e=True, label=msg)
-
-
-def _get_cam_from_field() -> Optional[str]:
-    if not cmds.control(_FIELD, exists=True):
-        return None
-    name = cmds.textField(_FIELD, q=True, text=True).strip()
-    if not name:
-        return None
-    if not cmds.objExists(name):
-        return None
-    return name
 
 
 def _get_preset_name_from_field() -> str:
@@ -471,47 +478,18 @@ def _refresh_preset_menu(select_name: Optional[str] = None) -> None:
             pass
 
 
-def _load_selected_preset_name_to_field(*_) -> None:
-    preset = _get_selected_preset()
-    if not preset:
-        return
-
-    if cmds.control(_PRESET_NAME_FIELD, exists=True):
-        cmds.textField(_PRESET_NAME_FIELD, e=True, text=preset)
-
-    _set_status("Loaded preset name into field: {}".format(preset))
-
-
-def _load_from_selection(*_) -> None:
-    sel = cmds.ls(sl=True, long=False) or []
-    if not sel:
-        _set_status("Select a camera transform (or its shape) first.")
-        return
-
-    node = sel[0]
-
-    if cmds.nodeType(node) == "camera":
-        parents = cmds.listRelatives(node, parent=True, fullPath=False) or []
-        if not parents:
-            _set_status("Could not find camera transform from selected shape.")
-            return
-        node = parents[0]
-
-    if not _camera_shape(node):
-        _set_status("Selection is not a camera transform.")
-        return
-
-    cmds.textField(_FIELD, e=True, text=node)
-    _set_status("Loaded camera: {}".format(node))
+def _no_camera_warning() -> None:
+    cmds.inViewMessage(
+        amg="<hl>No camera selected</hl> — select a camera first.",
+        pos="midCenter",
+        fade=True,
+    )
 
 
 def save_preset(*_) -> None:
-    cam = _get_cam_from_field()
+    cam = _selected_camera()
     if not cam:
-        _set_status("Camera field invalid. Use 'Load From Selection' or type a valid camera transform name.")
-        return
-    if not _camera_shape(cam):
-        _set_status("That node is not a camera transform.")
+        _no_camera_warning()
         return
 
     preset_name = _get_preset_name_from_field()
@@ -532,19 +510,17 @@ def save_preset(*_) -> None:
         path = _preset_path_from_name(preset_name)
         _write_json(path, preset)
         _refresh_preset_menu(select_name=preset_name)
-        _set_status("Saved preset '{}' → {}".format(preset_name, path))
+        cmds.textField(_PRESET_NAME_FIELD, e=True, text="")
+        _set_status("Saved '{}' from {}".format(preset_name, cam))
 
     except Exception as e:
         _set_status("Save failed: {}".format(e))
 
 
 def apply_selected_preset(*_) -> None:
-    cam = _get_cam_from_field()
+    cam = _selected_camera()
     if not cam:
-        _set_status("Camera field invalid. Use 'Load From Selection' or type a valid camera transform name.")
-        return
-    if not _camera_shape(cam):
-        _set_status("That node is not a camera transform.")
+        _no_camera_warning()
         return
 
     preset_name = _get_selected_preset()
@@ -555,21 +531,17 @@ def apply_selected_preset(*_) -> None:
     path = _preset_path_from_name(preset_name)
     preset = _read_json(path)
     if not preset:
-        _set_status("Could not read preset '{}' from disk.".format(preset_name))
+        _set_status("Could not read preset '{}'.".format(preset_name))
         return
 
     try:
-        r_edits, r_skips = _apply_render(preset.get("render", {}))
-        c_applied, c_skips = _apply_camera(cam, preset.get("camera", {}))
-        v_edits, v_skips = _apply_viewport_flags(preset.get("viewport", {}))
+        r_edits, _ = _apply_render(preset.get("render", {}))
+        c_applied, _ = _apply_camera(cam, preset.get("camera", {}))
+        v_edits, _ = _apply_viewport_flags(preset.get("viewport", {}))
 
         _set_status(
-            "Applied '{}' to '{}'. Render: {} ok/{} skip | Camera: {} ok/{} skip | Viewport: {} ok/{} skip".format(
-                preset_name,
-                cam,
-                r_edits, r_skips,
-                c_applied, c_skips,
-                v_edits, v_skips
+            "Applied '{}' to {}  (cam:{} vp:{} render:{})".format(
+                preset_name, cam, c_applied, v_edits, r_edits
             )
         )
 
@@ -598,77 +570,54 @@ def delete_selected_preset(*_) -> None:
 
     if _delete_preset_file(preset_name):
         _refresh_preset_menu()
-        _set_status("Deleted preset '{}'.".format(preset_name))
+        _set_status("Deleted '{}'.".format(preset_name))
     else:
-        _set_status("Could not delete preset '{}'.".format(preset_name))
-
-
-def refresh_presets(*_) -> None:
-    _refresh_preset_menu()
-    _set_status("Preset list refreshed.")
+        _set_status("Could not delete '{}'.".format(preset_name))
 
 
 def show() -> None:
     if cmds.window(_WIN, exists=True):
         cmds.deleteUI(_WIN)
 
-    cmds.window(_WIN, title="PS Camera Preset Manager", sizeable=False)
-    cmds.columnLayout(adj=True, rowSpacing=8, columnAttach=("both", 10))
+    cmds.window(_WIN, title="Camera Preset Manager", sizeable=False, width=200)
+    cmds.columnLayout(adj=True, rowSpacing=6, columnAttach=("both", 10))
 
-    cmds.text(label="Save and apply named camera/render presets for different project stages.")
+    cmds.separator(height=4, style="none")
+    cmds.text(label="Select a camera in the viewport, then save or apply presets.",
+              align="left")
+    cmds.separator(height=6, style="in")
 
-    cmds.rowLayout(
-        nc=3,
-        adjustableColumn=2,
-        columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)]
+    # ── Create Preset ──
+    cmds.text(label="CREATE PRESET", font="boldLabelFont", align="left")
+    cmds.separator(height=2, style="none")
+
+    cmds.textField(_PRESET_NAME_FIELD, placeholderText="Preset name  (e.g. previs_001)")
+    cmds.button(label="Save Preset", height=28, c=save_preset)
+
+    cmds.separator(height=6, style="in")
+
+    # ── Apply Preset ──
+    cmds.text(label="APPLY PRESET", font="boldLabelFont", align="left")
+    cmds.separator(height=2, style="none")
+
+    cmds.optionMenu(_PRESET_MENU)
+
+    cmds.separator(height=2, style="none")
+
+    btn_form = cmds.formLayout()
+    apply_btn = cmds.button(label="Apply Preset", height=32, c=apply_selected_preset)
+    delete_btn = cmds.button(label="Delete Preset", height=32, c=delete_selected_preset)
+    cmds.formLayout(btn_form, e=True,
+        attachForm=[(apply_btn, "left", 0), (apply_btn, "top", 0),
+                     (delete_btn, "right", 0), (delete_btn, "top", 0)],
+        attachPosition=[(apply_btn, "right", 2, 50),
+                        (delete_btn, "left", 2, 50)],
     )
-    cmds.text(label="Camera:")
-    cmds.textField(_FIELD, text="")
-    cmds.button(label="Load From Selection", c=_load_from_selection)
     cmds.setParent("..")
 
-    cmds.rowLayout(
-        nc=2,
-        adjustableColumn=2,
-        columnAttach=[(1, "both", 0), (2, "both", 6)]
-    )
-    cmds.text(label="Preset Name:")
-    cmds.textField(_PRESET_NAME_FIELD, text="")
-    cmds.setParent("..")
-
-    cmds.rowLayout(
-        nc=3,
-        adjustableColumn=2,
-        columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 6)]
-    )
-    cmds.text(label="Saved Presets:")
-    cmds.optionMenu(_PRESET_MENU, cc=_load_selected_preset_name_to_field)
-    cmds.button(label="Refresh List", c=refresh_presets)
-    cmds.setParent("..")
-
-    cmds.rowLayout(
-        nc=2,
-        columnWidth2=(200, 200),
-        columnAttach=[(1, "both", 0), (2, "both", 8)]
-    )
-    cmds.button(label="SAVE PRESET", height=34, c=save_preset)
-    cmds.button(label="APPLY SELECTED PRESET", height=34, c=apply_selected_preset)
-    cmds.setParent("..")
-
-    cmds.rowLayout(
-        nc=1,
-        adjustableColumn=1,
-        columnAttach=[(1, "both", 0)]
-    )
-    cmds.button(label="DELETE SELECTED PRESET", height=30, c=delete_selected_preset)
-    cmds.setParent("..")
-
-    cmds.separator(height=8, style="in")
+    cmds.separator(height=6, style="in")
     cmds.text(_STATUS, label="Ready.", align="left")
+    cmds.separator(height=4, style="none")
 
     cmds.showWindow(_WIN)
     _refresh_preset_menu()
-
-
-# Convenience if you want to run it quickly in Script Editor:
-# show()
