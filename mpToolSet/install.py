@@ -16,7 +16,9 @@ of which version to roll back to.
 """
 
 import os
+import subprocess
 import shutil
+import sys
 import maya.cmds as cmds
 import maya.mel as mel
 
@@ -244,6 +246,11 @@ def _install(root):
             if os.path.exists(ngskin_dst):
                 shutil.rmtree(ngskin_dst)
             shutil.copytree(ngskin_src, ngskin_dst)
+            if sys.platform == "darwin":
+                subprocess.run(
+                    ["xattr", "-dr", "com.apple.quarantine", ngskin_dst],
+                    check=False,
+                )
             all_dirs.append(ngskin_dst.replace("\\", "/"))
 
         config_file = os.path.join(shelf_path, "shelf_config.py")
