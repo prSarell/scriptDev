@@ -23,10 +23,16 @@ def toggle(shot_cam=None, persp_cam='persp'):
         return
 
     current = cmds.modelEditor(panel, q=True, camera=True)
-    current_shapes = set(cmds.listRelatives(current, shapes=True, path=True) or [current])
-    shot_shapes    = set(cmds.listRelatives(shot_cam, shapes=True, path=True) or [shot_cam])
+    current_cam = next((s for s in (cmds.listRelatives(current, shapes=True, path=True) or [current])
+                        if cmds.nodeType(s) == 'camera'), current)
+    shot_shape = next((s for s in (cmds.listRelatives(shot_cam, shapes=True, path=True) or [shot_cam])
+                       if cmds.nodeType(s) == 'camera'), None)
 
-    if current_shapes & shot_shapes:
+    if not shot_shape:
+        cmds.warning('toggleShotCam: no camera shape found under — ' + shot_cam)
+        return
+
+    if current_cam == shot_shape:
         cmds.modelEditor(panel, e=True, camera=persp_cam)
     else:
-        cmds.modelEditor(panel, e=True, camera=shot_cam)
+        cmds.modelEditor(panel, e=True, camera=shot_shape)
