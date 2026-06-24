@@ -256,6 +256,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                 '  Sculpt: %s  (%s)' % (node, target))
             if src:
                 self._sel_mesh_lbl.setText('  Mesh: %s' % src)
+                self._refresh_targets(src, select_name=target)
             else:
                 self._sel_mesh_lbl.setText('  Mesh: — (source not found)')
         else:
@@ -269,6 +270,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
                             len(sculpts), ', '.join(sculpts)))
                 else:
                     self._sel_sculpt_lbl.setText('  Sculpts: none')
+                self._refresh_targets(node)
             except api.CorrectiveBSError:
                 self._sel_mesh_lbl.setText('  Mesh: — (not a mesh)')
                 self._sel_sculpt_lbl.setText('  Sculpt: —')
@@ -397,7 +399,7 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
             self._set_status(self._bake_status,
                              'Baked "%s" → %s [%d]' % (target_name, bs_node, idx))
             self._log_msg('Baked "%s" → %s [%d]' % (target_name, bs_node, idx))
-            self._refresh_targets(mesh)
+            self._refresh_targets(mesh, select_name=target_name)
         except Exception as e:
             self._log_msg('Bake failed: %s' % e, error=True)
 
@@ -453,40 +455,54 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         self._refresh_targets(mesh)
 
-    def _refresh_targets(self, mesh):
+    def _refresh_targets(self, mesh, select_name=None):
         self._target_list.clear()
         targets = api.listCorrectiveTargets(mesh)
         for name in targets:
             self._target_list.addItem(name)
         self._target_list.setProperty('mesh', mesh)
+        if select_name:
+            for i in range(self._target_list.count()):
+                if self._target_list.item(i).text() == select_name:
+                    self._target_list.setCurrentRow(i)
+                    break
 
     def _on_update(self):
         items = self._target_list.selectedItems()
-        if not items:
-            self._log_msg('Select a target from the list first.', error=True)
-            return
-
-        target_name = items[0].text()
-        mesh = self._target_list.property('mesh')
-        if not mesh or not cmds.objExists(mesh):
-            self._log_msg('Refresh the target list first.', error=True)
-            return
-
         sel = cmds.ls(sl=True, transforms=True)
-        if not sel:
-            self._log_msg('Select the sculpt mesh in the viewport.', error=True)
-            return
 
-        sculpt_mesh = sel[0]
-        if not _is_sculpt_mesh(sculpt_mesh):
-            fallback = target_name + '_sculpt'
-            if cmds.objExists(fallback):
-                sculpt_mesh = fallback
-            else:
-                self._log_msg(
-                    'Select a sculpt mesh or ensure %s exists.' % fallback,
-                    error=True)
+        if not items and sel and _is_sculpt_mesh(sel[0]):
+            target_name = _target_name_from_sculpt(sel[0])
+            mesh = _get_source_mesh(sel[0])
+            sculpt_mesh = sel[0]
+            if not mesh:
+                self._log_msg('Source mesh not found for %s.' % sculpt_mesh,
+                              error=True)
                 return
+            self._refresh_targets(mesh, select_name=target_name)
+        elif items:
+            target_name = items[0].text()
+            mesh = self._target_list.property('mesh')
+            if not mesh or not cmds.objExists(mesh):
+                self._log_msg('Refresh the target list first.', error=True)
+                return
+            sculpt_mesh = None
+            if sel and _is_sculpt_mesh(sel[0]):
+                sculpt_mesh = sel[0]
+            else:
+                fallback = target_name + '_sculpt'
+                if cmds.objExists(fallback):
+                    sculpt_mesh = fallback
+            if not sculpt_mesh:
+                self._log_msg(
+                    'Select a sculpt mesh or ensure %s_sculpt exists.'
+                    % target_name, error=True)
+                return
+        else:
+            self._log_msg(
+                'Select a target from the list, or select a sculpt mesh '
+                'in the viewport.', error=True)
+            return
 
         try:
             api.updateCorrectiveTarget(mesh, target_name, sculpt_mesh)
@@ -498,14 +514,25 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
     def _on_delete(self):
         items = self._target_list.selectedItems()
-        if not items:
-            self._log_msg('Select a target from the list first.', error=True)
-            return
+        sel = cmds.ls(sl=True, transforms=True)
 
-        target_name = items[0].text()
-        mesh = self._target_list.property('mesh')
-        if not mesh or not cmds.objExists(mesh):
-            self._log_msg('Refresh the target list first.', error=True)
+        if not items and sel and _is_sculpt_mesh(sel[0]):
+            target_name = _target_name_from_sculpt(sel[0])
+            mesh = _get_source_mesh(sel[0])
+            if not mesh:
+                self._log_msg('Source mesh not found for %s.' % sel[0],
+                              error=True)
+                return
+        elif items:
+            target_name = items[0].text()
+            mesh = self._target_list.property('mesh')
+            if not mesh or not cmds.objExists(mesh):
+                self._log_msg('Refresh the target list first.', error=True)
+                return
+        else:
+            self._log_msg(
+                'Select a target from the list, or select a sculpt mesh '
+                'in the viewport.', error=True)
             return
 
         confirm = QtWidgets.QMessageBox.question(
@@ -517,7 +544,13 @@ class CorrectiveBSWindow(QtWidgets.QWidget):
 
         try:
             api.removeCorrectiveTarget(mesh, target_name)
+            for suffix in ('_sculpt', '_poseRef'):
+                node = target_name + suffix
+                if cmds.objExists(node):
+                    cmds.delete(node)
             self._refresh_targets(mesh)
+            if self._target_list.count():
+                self._target_list.setCurrentRow(0)
             self._set_status(self._target_status,
                              'Deleted "%s"' % target_name)
             self._log_msg('Deleted target "%s"' % target_name)

@@ -514,9 +514,46 @@ def removeCorrectiveTarget(mesh, target_name):
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    cmds.blendShape(bs_node, edit=True,
-                    remove=True,
-                    target=(mesh, target_index, mesh, 1.0))
+
+    weight_attr = '%s.weight[%d]' % (bs_node, target_index)
+
+    driver_nodes_to_delete = set()
+    connections = cmds.listConnections(
+        weight_attr, source=True, destination=False, plugs=True) or []
+    for plug in connections:
+        node = plug.split('.')[0]
+        cmds.disconnectAttr(plug, weight_attr)
+        nt = cmds.nodeType(node)
+        if nt in ('animCurveUU', 'animCurveUA', 'animCurveUL',
+                  'animCurveUT', 'setRange', 'floatMath'):
+            driver_nodes_to_delete.add(node)
+            upstream = cmds.listConnections(
+                node, source=True, destination=False) or []
+            for up in upstream:
+                if cmds.nodeType(up) in ('setRange', 'floatMath'):
+                    driver_nodes_to_delete.add(up)
+
+    for node in driver_nodes_to_delete:
+        if cmds.objExists(node):
+            cmds.delete(node)
+
+    cmds.setAttr(weight_attr, 0)
+
+    ipt_attr = ('%s.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputPointsTarget') % (bs_node, target_index)
+    ict_attr = ('%s.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputComponentsTarget') % (bs_node, target_index)
+    mel.eval('setAttr -type "pointArray" "%s" 0' % ipt_attr)
+    mel.eval('setAttr -type "componentList" "%s" 0' % ict_attr)
+
+    try:
+        cmds.aliasAttr(weight_attr, remove=True)
+    except Exception:
+        pass
+
+    aliases = cmds.aliasAttr(bs_node, query=True) or []
+    if not aliases:
+        cmds.delete(bs_node)
 
 
 def _resolveTargetIndex(bs_node, target_name):
