@@ -51,6 +51,10 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 - **SHAPES** is dev-only — do not include in mpToolSet or distribute to students.
 - **ngSkinTools2** is bundled in `mpToolSet/mpRig/ngskintools2/` and installed automatically.
 
+### Deferred work
+
+- **studio4AnimToolset** — a cut-down toolset for second-year students exists in `studio4AnimToolset/` but has no install package yet. Do not build this until mpToolSet is fully debugged and running cleanly on both Mac and Windows.
+
 ## Icons
 
 - All new shelf/tool icons must be **256×256 pixels**, PNG format, with **rounded corners**.
