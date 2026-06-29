@@ -733,7 +733,14 @@ def _init(data):
     if not _is_staff_set('ps_anim') and 'ps_anim' not in _STAFF_TEMPLATES:
         if not _set_exists('ps_anim'):
             cmds.hotkeySet('ps_anim', source=cmds.hotkeySet(query=True, current=True))
-        s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True})
+        s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True, 'shotcam_toggle': True})
+        _changed = False
+        for _flag, _default in (('spacebar', True), ('shotcam_toggle', True)):
+            if not s.get(_flag):
+                s[_flag] = _default
+                _changed = True
+        if _changed:
+            _save_data(data)
         for seed in _SEED_HOTKEYS:
             slug = _slug(seed['key'], seed['alt'], seed['ctrl'], seed['shift'])
             if slug not in s.get('hotkeys', {}):
@@ -1165,6 +1172,35 @@ class _HotkeyRow(QtWidgets.QWidget):
         super().mousePressEvent(event)
 
 
+class _SpecialRow(QtWidgets.QWidget):
+    toggled = QtCore.Signal(bool)
+
+    def __init__(self, key_label, desc, enabled, readonly=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName('hotkeyRow')
+
+        h = QtWidgets.QHBoxLayout(self)
+        h.setContentsMargins(6, 0, 4, 0)
+        h.setSpacing(8)
+
+        if readonly:
+            sp = QtWidgets.QWidget()
+            sp.setFixedWidth(21)
+            h.addWidget(sp)
+        else:
+            cb = QtWidgets.QCheckBox()
+            cb.setChecked(enabled)
+            cb.toggled.connect(self.toggled.emit)
+            h.addWidget(cb)
+
+        chip = QtWidgets.QLabel(key_label)
+        chip.setObjectName('keyChip')
+        h.addWidget(chip)
+
+        lbl = QtWidgets.QLabel(desc)
+        lbl.setObjectName('descLabel')
+        h.addWidget(lbl, 1)
+
 
 class MainPanel(QtWidgets.QWidget):
     set_selected    = QtCore.Signal(str)
@@ -1337,10 +1373,9 @@ class MainPanel(QtWidgets.QWidget):
         self._stack.setCurrentIndex(0)
 
         is_staff = _is_staff_set(set_name)
-        if is_staff:
-            hotkeys = _STAFF_SETS.get(set_name, {}).get('hotkeys', {})
-        else:
-            hotkeys = self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
+        set_entry = _STAFF_SETS.get(set_name, {}) if is_staff else \
+                    self._data.get('sets', {}).get(set_name, {})
+        hotkeys = set_entry.get('hotkeys', {})
 
         for i, (slug, hk) in enumerate(hotkeys.items()):
             row = _HotkeyRow(slug, hk, readonly=is_staff)
@@ -1349,6 +1384,19 @@ class MainPanel(QtWidgets.QWidget):
                     lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
             row.row_clicked.connect(self._on_row_selected)
             self._hotkey_layout.insertWidget(i, row)
+
+        idx = len(hotkeys)
+        space_row = _SpecialRow('Space', 'Tap to play  ·  Hold for hotbox',
+                                bool(set_entry.get('spacebar', False)), readonly=is_staff)
+        if not is_staff:
+            space_row.toggled.connect(lambda en, sn=set_name: set_spacebar(sn, en, self._data))
+        self._hotkey_layout.insertWidget(idx, space_row)
+
+        cam_row = _SpecialRow('`', 'Toggle shot camera',
+                              bool(set_entry.get('shotcam_toggle', False)), readonly=is_staff)
+        if not is_staff:
+            cam_row.toggled.connect(lambda en, sn=set_name: set_shotcam_toggle(sn, en, self._data))
+        self._hotkey_layout.insertWidget(idx + 1, cam_row)
 
     def refresh_hotkeys(self, set_name):
         display = 'Default (Maya)' if set_name == _BUILTIN_SET else set_name
