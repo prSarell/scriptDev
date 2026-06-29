@@ -253,12 +253,6 @@ def _install(root):
                 )
             all_dirs.append(ngskin_dst.replace("\\", "/"))
 
-        staff_src = os.path.join(shelf_path, "scripts", "staff_shortcuts")
-        if os.path.isdir(staff_src):
-            staff_dst = os.path.join(scripts_dst, "staff_shortcuts")
-            dst = _copy_tree(staff_src, staff_dst, backup_dir, "dirs")
-            all_dirs.append(dst)
-
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
             name, btn_count = _build_shelf(config_file, backup_dir)
