@@ -711,17 +711,22 @@ def _init(data):
             cmds.hotkeySet(set_name, source=cmds.hotkeySet(query=True, current=True))
         _restore_rtcs(set_name, set_data)
 
-    # Seed template sets into personal data on first encounter (editable)
+    # Seed template sets into personal data, merging any keys missing from saved data
     for set_name, tmpl in _STAFF_TEMPLATES.items():
         if not _set_exists(set_name):
             cmds.hotkeySet(set_name, source=cmds.hotkeySet(query=True, current=True))
-        if set_name not in data['sets']:
-            data['sets'][set_name] = {
-                'hotkeys': {k: v for k, v in tmpl.get('hotkeys', {}).items()
-                            if not v.get('muted')},
-                'spacebar': tmpl.get('spacebar', False),
-                'shotcam_toggle': tmpl.get('shotcam_toggle', False),
-            }
+        tmpl_hotkeys = {k: v for k, v in tmpl.get('hotkeys', {}).items() if not v.get('muted')}
+        entry = data['sets'].setdefault(set_name, {})
+        changed = False
+        for slug, hk in tmpl_hotkeys.items():
+            if slug not in entry.setdefault('hotkeys', {}):
+                entry['hotkeys'][slug] = hk
+                changed = True
+        for flag, default in (('spacebar', False), ('shotcam_toggle', False)):
+            if not entry.get(flag):
+                entry[flag] = tmpl.get(flag, default)
+                changed = True
+        if changed:
             _save_data(data)
 
     # Seed ps_anim only if it is not covered by a staff JSON or template
