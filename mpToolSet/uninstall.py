@@ -12,6 +12,7 @@ If versioned backups exist the student is offered a choice:
 """
 
 import os
+import re
 import shutil
 import maya.cmds as cmds
 import maya.mel as mel
@@ -19,6 +20,8 @@ import maya.mel as mel
 
 _MANIFEST_NAME = "mpToolSet_manifest.txt"
 _BACKUPS_DIR = "mpToolSet_backups"
+_US_START = "# -- mpToolSet BEGIN --"
+_US_END   = "# -- mpToolSet END --"
 
 
 # -- paths -----------------------------------------------------------------
@@ -77,6 +80,21 @@ def _available_versions():
 
 # -- remove installed files -------------------------------------------------
 
+def _strip_usersetup(path):
+    """Remove the mpToolSet startup block from userSetup.py."""
+    if not os.path.isfile(path):
+        return
+    with open(path, "r") as f:
+        content = f.read()
+    cleaned = re.sub(
+        r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
+        "", content, flags=re.DOTALL,
+    )
+    if cleaned != content:
+        with open(path, "w") as f:
+            f.write(cleaned)
+
+
 def _clean_pyc(path):
     parent = os.path.dirname(path)
     base = os.path.splitext(os.path.basename(path))[0]
@@ -126,6 +144,10 @@ def _remove_installed(lines):
                     dirs_removed += 1
                 except Exception as e:
                     errors.append("{}: {}".format(path, e))
+
+        elif line.startswith("usersetup:"):
+            path = line[len("usersetup:"):]
+            _strip_usersetup(path)
 
         elif line.startswith("file:"):
             path = line[len("file:"):]

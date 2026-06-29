@@ -16,6 +16,7 @@ of which version to roll back to.
 """
 
 import os
+import re
 import subprocess
 import shutil
 import sys
@@ -25,6 +26,8 @@ import maya.mel as mel
 
 _MANIFEST_NAME = "mpToolSet_manifest.txt"
 _BACKUPS_DIR = "mpToolSet_backups"
+_US_START = "# -- mpToolSet BEGIN --"
+_US_END   = "# -- mpToolSet END --"
 
 
 # -- paths -----------------------------------------------------------------
@@ -178,7 +181,7 @@ def _build_shelf(shelf_config_path, backup_dir):
 
 # -- manifest ---------------------------------------------------------------
 
-def _write_manifest(files, dirs, shelves):
+def _write_manifest(files, dirs, shelves, usersetups=None):
     path = _manifest_path()
     seen = set()
     with open(path, "w") as f:
@@ -186,10 +189,42 @@ def _write_manifest(files, dirs, shelves):
             f.write("shelf:{}\n".format(shelf_name))
         for d in dirs:
             f.write("dir:{}\n".format(d))
+        for us in (usersetups or []):
+            f.write("usersetup:{}\n".format(us))
         for fp in files:
             if fp not in seen:
                 f.write("file:{}\n".format(fp))
                 seen.add(fp)
+
+
+def _patch_usersetup(scripts_dir, backup_dir):
+    """Append (or replace) the mpToolSet startup hook in userSetup.py."""
+    path = os.path.join(scripts_dir, "userSetup.py").replace("\\", "/")
+    _backup_file(path, backup_dir, "scripts")
+
+    content = ""
+    if os.path.isfile(path):
+        with open(path, "r") as f:
+            content = f.read()
+
+    content = re.sub(
+        r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
+        "", content, flags=re.DOTALL,
+    )
+
+    block = (
+        "\n{start}\n"
+        "try:\n"
+        "    import shortCuts; shortCuts.init_hotkeys()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "{end}\n"
+    ).format(start=_US_START, end=_US_END)
+
+    with open(path, "w") as f:
+        f.write(content.rstrip("\n") + block)
+
+    return path
 
 
 # -- install ----------------------------------------------------------------
@@ -259,7 +294,8 @@ def _install(root):
             shelves_built.append("{} ({} buttons)".format(name, btn_count))
             shelf_names.append(name)
 
-    _write_manifest(all_files, all_dirs, shelf_names)
+    usersetup_path = _patch_usersetup(scripts_dst, backup_dir)
+    _write_manifest(all_files, all_dirs, shelf_names, usersetups=[usersetup_path])
 
     backup_label = "v{:03d}".format(version)
     if version == 0:
@@ -278,6 +314,7 @@ def _install(root):
         "  Icons:   {} files -> {}\n"
         "  Shelves: {}\n"
         "  ngSkinTools2: {}\n"
+        "  Startup hook: userSetup.py updated\n"
         "{}\n"
         "  Backup saved: {}\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
