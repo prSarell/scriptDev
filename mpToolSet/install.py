@@ -233,9 +233,15 @@ def _install(root):
 
         studio_src = os.path.join(shelf_path, "studiolibrary")
         if os.path.isdir(studio_src):
-            studio_dst = os.path.join(scripts_dst, "studiolibrary")
-            dst = _copy_tree(studio_src, studio_dst, backup_dir, "dirs")
-            all_dirs.append(dst)
+            for name in os.listdir(studio_src):
+                src = os.path.join(studio_src, name)
+                if os.path.isdir(src):
+                    dst = os.path.join(scripts_dst, name)
+                    _backup_directory(dst, backup_dir, "dirs")
+                    if os.path.exists(dst):
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                    all_dirs.append(dst.replace("\\", "/"))
 
         ngskin_src = os.path.join(shelf_path, "ngskintools2")
         if os.path.isdir(ngskin_src):
