@@ -1,0 +1,36 @@
+{
+  "hotkeys": {
+    "z": {
+      "key": "z", "alt": false, "ctrl": false, "shift": false,
+      "desc": "Step back one frame",
+      "command": "PreviousFrame;",
+      "lang": "mel"
+    },
+    "x": {
+      "key": "x", "alt": false, "ctrl": false, "shift": false,
+      "desc": "Step forward one frame",
+      "command": "NextFrame;",
+      "lang": "mel"
+    },
+    "m": {
+      "key": "m", "alt": false, "ctrl": false, "shift": false,
+      "desc": "Cycle forward",
+      "command": "setInfinity -poi cycle;",
+      "lang": "mel"
+    },
+    "n": {
+      "key": "n", "alt": false, "ctrl": false, "shift": false,
+      "desc": "Cycle back",
+      "command": "setInfinity -pri cycle;",
+      "lang": "mel"
+    },
+    "o": {
+      "key": "o", "alt": false, "ctrl": false, "shift": false,
+      "desc": "Focus timeline",
+      "command": "import maya.cmds as cmds\nimport maya.mel as mel\n\nslider = mel.eval('$tmpVar=$gPlayBackSlider')\nr = cmds.timeControl(slider, q=True, rangeArray=True)\nsel_start = r[0]\nsel_end = r[1] - 1\n\nfocused = cmds.optionVar(q='tlmFocusRangeActive') if cmds.optionVar(exists='tlmFocusRangeActive') else 0\n\nif focused:\n    cmds.playbackOptions(\n        min=cmds.optionVar(q='tlmFocusRangeShotMin'),\n        max=cmds.optionVar(q='tlmFocusRangeShotMax'))\n    cmds.optionVar(iv=('tlmFocusRangeActive', 0))\nelse:\n    if sel_end > sel_start:\n        cmds.optionVar(fv=('tlmFocusRangeShotMin', cmds.playbackOptions(q=True, min=True)))\n        cmds.optionVar(fv=('tlmFocusRangeShotMax', cmds.playbackOptions(q=True, max=True)))\n        cmds.playbackOptions(min=sel_start, max=sel_end)\n        cmds.optionVar(iv=('tlmFocusRangeActive', 1))",
+      "lang": "python"
+    }
+  },
+  "spacebar": true,
+  "shotcam_toggle": true
+}

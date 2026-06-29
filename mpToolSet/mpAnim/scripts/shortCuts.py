@@ -1,6 +1,8 @@
 import os
 import re
 import json
+import subprocess
+import sys
 import maya.cmds as cmds
 import maya.mel as mel
 from PySide6 import QtWidgets, QtCore, QtGui
@@ -12,6 +14,8 @@ WINDOW_NAME  = 'mpAnimShortCuts'
 DATA_FILE    = 'shortcuts_data.json'
 _BUILTIN_SET = 'Maya_Default'
 _HOLD_MS     = 400
+_STAFF_FOLDER = 'staff_shortcuts'
+_STAFF_SETS   = {}   # {set_name: set_data} — loaded from deployed staff JSON files, read-only
 
 # ---------------------------------------------------------------------------
 # Keyboard layout
@@ -411,6 +415,44 @@ def _save_data(data):
 
 
 # ---------------------------------------------------------------------------
+# Staff shortcuts
+# ---------------------------------------------------------------------------
+
+def _is_staff_set(name):
+    return name in _STAFF_SETS
+
+
+def _load_staff_shortcuts():
+    global _STAFF_SETS
+    _STAFF_SETS = {}
+    folder = os.path.join(_maya_scripts_dir(), _STAFF_FOLDER)
+    if not os.path.isdir(folder):
+        return
+    for fname in sorted(os.listdir(folder)):
+        if not fname.endswith('.json'):
+            continue
+        name = fname[:-5]
+        try:
+            with open(os.path.join(folder, fname)) as f:
+                _STAFF_SETS[name] = json.load(f)
+        except Exception:
+            pass
+
+
+def _open_shortcuts_folder():
+    f = _data_file()
+    folder = os.path.dirname(f) if f else None
+    if not folder:
+        cmds.warning('shortCuts: save location not configured.')
+        return
+    os.makedirs(folder, exist_ok=True)
+    if sys.platform == 'darwin':
+        subprocess.run(['open', folder], check=False)
+    else:
+        os.startfile(folder)
+
+
+# ---------------------------------------------------------------------------
 # Maya Default bindings cache
 # ---------------------------------------------------------------------------
 
@@ -543,7 +585,7 @@ def apply_set(name, data):
         _restore_backtick()
     elif _set_exists(name):
         cmds.hotkeySet(name, edit=True, current=True)
-        set_data = data.get('sets', {}).get(name, {})
+        set_data = _STAFF_SETS.get(name) if _is_staff_set(name) else data.get('sets', {}).get(name, {})
         if set_data.get('spacebar', False):
             _bind_spacebar()
         else:
@@ -651,28 +693,38 @@ def _restore_rtcs(set_name, set_data):
 
 
 def _init(data):
-    if not _set_exists('ps_anim'):
-        current = cmds.hotkeySet(query=True, current=True)
-        cmds.hotkeySet('ps_anim', source=current)
+    _load_staff_shortcuts()
 
-    s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True})
-    for seed in _SEED_HOTKEYS:
-        slug = _slug(seed['key'], seed['alt'], seed['ctrl'], seed['shift'])
-        if slug not in s.get('hotkeys', {}):
-            add_hotkey(
-                'ps_anim',
-                seed['key'], seed['alt'], seed['ctrl'], seed['shift'],
-                seed['desc'], seed['command'], seed['lang'],
-                data,
-            )
-
-    for set_name, set_data in data.get('sets', {}).items():
+    # Create and restore all staff hotkey sets
+    for set_name, set_data in _STAFF_SETS.items():
+        if not _set_exists(set_name):
+            cmds.hotkeySet(set_name, source=cmds.hotkeySet(query=True, current=True))
         _restore_rtcs(set_name, set_data)
 
-    active = data.get('active') or 'ps_anim'
+    # Seed ps_anim only if it is not covered by a staff JSON
+    if not _is_staff_set('ps_anim'):
+        if not _set_exists('ps_anim'):
+            cmds.hotkeySet('ps_anim', source=cmds.hotkeySet(query=True, current=True))
+        s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True})
+        for seed in _SEED_HOTKEYS:
+            slug = _slug(seed['key'], seed['alt'], seed['ctrl'], seed['shift'])
+            if slug not in s.get('hotkeys', {}):
+                add_hotkey(
+                    'ps_anim',
+                    seed['key'], seed['alt'], seed['ctrl'], seed['shift'],
+                    seed['desc'], seed['command'], seed['lang'],
+                    data,
+                )
+
+    # Restore personal sets (skip any whose name is now a staff set)
+    for set_name, set_data in data.get('sets', {}).items():
+        if not _is_staff_set(set_name):
+            _restore_rtcs(set_name, set_data)
+
+    active = data.get('active') or next(iter(_STAFF_SETS), 'ps_anim')
     if active != _BUILTIN_SET and _set_exists(active):
         cmds.hotkeySet(active, edit=True, current=True)
-        set_data = data.get('sets', {}).get(active, {})
+        set_data = _STAFF_SETS.get(active) if _is_staff_set(active) else data.get('sets', {}).get(active, {})
         if set_data.get('spacebar', False):
             _bind_spacebar()
         if set_data.get('shotcam_toggle', True):
@@ -1051,7 +1103,7 @@ class _HotkeyRow(QtWidgets.QWidget):
     mute_toggled   = QtCore.Signal(str, bool)   # slug, muted
     row_clicked    = QtCore.Signal(str)          # slug
 
-    def __init__(self, slug, hk_data, parent=None):
+    def __init__(self, slug, hk_data, readonly=False, parent=None):
         super().__init__(parent)
         self.slug = slug
         self.setObjectName('hotkeyRow')
@@ -1061,10 +1113,15 @@ class _HotkeyRow(QtWidgets.QWidget):
         h.setContentsMargins(6, 0, 4, 0)
         h.setSpacing(8)
 
-        cb = QtWidgets.QCheckBox()
-        cb.setChecked(not hk_data.get('muted', False))
-        cb.toggled.connect(lambda checked: self.mute_toggled.emit(slug, not checked))
-        h.addWidget(cb)
+        if readonly:
+            sp = QtWidgets.QWidget()
+            sp.setFixedWidth(21)
+            h.addWidget(sp)
+        else:
+            cb = QtWidgets.QCheckBox()
+            cb.setChecked(not hk_data.get('muted', False))
+            cb.toggled.connect(lambda checked: self.mute_toggled.emit(slug, not checked))
+            h.addWidget(cb)
 
         key, alt, ctrl, shift = _slug_to_mods(slug)
         chip = QtWidgets.QLabel(_key_display(key, alt, ctrl, shift))
@@ -1090,7 +1147,7 @@ class MainPanel(QtWidgets.QWidget):
         self._data = data
         self._selected_slug = None
         self._build_ui()
-        active = data.get('active') or 'ps_anim'
+        active = data.get('active') or next(iter(_STAFF_SETS), 'ps_anim')
         self._refresh_list(select=active)
 
     # ── build ──────────────────────────────────────────────
@@ -1204,14 +1261,23 @@ class MainPanel(QtWidgets.QWidget):
     def _refresh_list(self, select=None):
         self._list.blockSignals(True)
         self._list.clear()
-        # Built-in first
         self._list.addItem('Default (Maya)')
+
+        # Staff sets — amber tint, read-only tooltip
+        for name in sorted(_STAFF_SETS.keys()):
+            if _set_exists(name):
+                item = QtWidgets.QListWidgetItem(name)
+                item.setForeground(QtGui.QColor('#CC9900'))
+                item.setToolTip('Staff shortcuts — read only')
+                self._list.addItem(item)
+
+        # Personal sets
         managed = set(self._data.get('sets', {}).keys())
         for name in _user_sets():
-            if name in managed:
+            if name in managed and not _is_staff_set(name):
                 self._list.addItem(name)
-        target = select or 'ps_anim'
-        # Map display name back
+
+        target = select or next(iter(_STAFF_SETS), 'ps_anim')
         display = 'Default (Maya)' if target == _BUILTIN_SET else target
         items = self._list.findItems(display, QtCore.Qt.MatchFlag.MatchExactly)
         if items:
@@ -1242,13 +1308,17 @@ class MainPanel(QtWidgets.QWidget):
             return
         self._stack.setCurrentIndex(0)
 
-        s = self._data.get('sets', {}).get(set_name, {})
+        is_staff = _is_staff_set(set_name)
+        if is_staff:
+            hotkeys = _STAFF_SETS.get(set_name, {}).get('hotkeys', {})
+        else:
+            hotkeys = self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
 
-        hotkeys = s.get('hotkeys', {})
         for i, (slug, hk) in enumerate(hotkeys.items()):
-            row = _HotkeyRow(slug, hk)
-            row.mute_toggled.connect(
-                lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
+            row = _HotkeyRow(slug, hk, readonly=is_staff)
+            if not is_staff:
+                row.mute_toggled.connect(
+                    lambda s_, m, sn=set_name: self._on_mute(sn, s_, m))
             row.row_clicked.connect(self._on_row_selected)
             self._hotkey_layout.insertWidget(i, row)
 
@@ -1263,7 +1333,10 @@ class MainPanel(QtWidgets.QWidget):
     def _on_set_changed(self, display):
         set_name = self._display_to_set(display)
         is_builtin = set_name == _BUILTIN_SET
-        self._del_btn.setEnabled(not is_builtin and bool(display))
+        is_staff = _is_staff_set(set_name)
+        self._del_btn.setEnabled(not is_builtin and not is_staff and bool(display))
+        self._add_hk_btn.setEnabled(not is_staff)
+        self._del_hk_btn.setEnabled(not is_staff)
         self._load_hotkeys(set_name)
         self.set_selected.emit(set_name)
 
@@ -1276,13 +1349,13 @@ class MainPanel(QtWidgets.QWidget):
 
     def _on_add_hotkey(self):
         set_name = self.current_set()
-        if not set_name or set_name == _BUILTIN_SET:
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name):
             return
         self.hotkey_clicked.emit('')
 
     def _on_delete_selected(self):
         set_name = self.current_set()
-        if not set_name or set_name == _BUILTIN_SET or not self._selected_slug:
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name) or not self._selected_slug:
             return
         hotkeys = self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
         if self._selected_slug not in hotkeys:
@@ -1325,7 +1398,7 @@ class MainPanel(QtWidgets.QWidget):
 
     def _delete_set(self):
         name = self.current_set()
-        if not name or name == _BUILTIN_SET:
+        if not name or name == _BUILTIN_SET or _is_staff_set(name):
             return
         reply = QtWidgets.QMessageBox.question(
             self, 'Delete Category', f'Delete "{name}" and all its hotkeys?',
@@ -1494,10 +1567,16 @@ class KeyBinderPanel(QtCore.QObject):
         if set_name is None:
             set_name = self._main.current_set()
         is_builtin = set_name == _BUILTIN_SET
+        is_staff = _is_staff_set(set_name)
         self._assign_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._keyboard.clear_selection()
-        hint = 'Default set — read only' if is_builtin else 'Select a key'
+        if is_builtin:
+            hint = 'Default set — read only'
+        elif is_staff:
+            hint = 'Staff shortcuts — read only'
+        else:
+            hint = 'Select a key'
         self._key_lbl.setText(hint)
         self._assign_key_lbl.setText(hint)
         self._status_lbl.setText('')
@@ -1527,6 +1606,7 @@ class KeyBinderPanel(QtCore.QObject):
     def _on_key_selected(self, key):
         set_name   = self._main.current_set()
         is_builtin = set_name == _BUILTIN_SET
+        is_staff   = _is_staff_set(set_name)
         alt, ctrl, shift = self._keyboard.mods()
         slug    = _slug(key, alt, ctrl, shift)
         display = _key_display(key, alt, ctrl, shift)
@@ -1536,10 +1616,10 @@ class KeyBinderPanel(QtCore.QObject):
                    self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
         defaults = _get_default_bindings()
 
-        if is_builtin:
+        if is_builtin or is_staff:
             self._assign_btn.setEnabled(False)
             self._clear_btn.setEnabled(False)
-            self._status_lbl.setText('Default set is read-only.')
+            self._status_lbl.setText('Read only.' if is_staff else 'Default set is read-only.')
             return
 
         if slug in hotkeys:
@@ -1568,7 +1648,7 @@ class KeyBinderPanel(QtCore.QObject):
         if not key:
             return
         set_name = self._main.current_set()
-        if not set_name or set_name == _BUILTIN_SET:
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name):
             return
         alt, ctrl, shift = self._keyboard.mods()
         desc = self._desc_edit.text().strip()
@@ -1597,7 +1677,7 @@ class KeyBinderPanel(QtCore.QObject):
         if not key:
             return
         set_name = self._main.current_set()
-        if not set_name or set_name == _BUILTIN_SET:
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name):
             return
         alt, ctrl, shift = self._keyboard.mods()
         slug = _slug(key, alt, ctrl, shift)
@@ -1817,6 +1897,12 @@ class ShortCutsUI(QtWidgets.QDialog):
         title.setObjectName('headerTitle')
         row.addWidget(title, 1)
 
+        share = QtWidgets.QPushButton('↗')
+        share.setObjectName('headerSettings')
+        share.setToolTip('Open shortcuts folder')
+        share.clicked.connect(_open_shortcuts_folder)
+        row.addWidget(share)
+
         gear = QtWidgets.QPushButton('⚙')
         gear.setObjectName('headerSettings')
         gear.setToolTip('Save location settings')
@@ -1834,10 +1920,7 @@ class ShortCutsUI(QtWidgets.QDialog):
 # ---------------------------------------------------------------------------
 
 def init_hotkeys():
-    data = _load_data()
-    if not data.get('sets'):
-        return
-    _init(data)
+    _init(_load_data())
 
 
 def show():
