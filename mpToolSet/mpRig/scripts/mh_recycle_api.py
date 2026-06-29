@@ -192,18 +192,39 @@ def remove_rl_nodes():
 
 def delete_face_joints(namespace=':'):
     """
-    Delete all FACIAL_ joints except eye joints (head, neck, body and eye
-    joints are unaffected). Returns count of deleted joints.
+    Delete all FACIAL_ joints except those directly skinned to the eye meshes
+    and their immediate parents. Returns count of deleted joints.
     """
     prefix = '' if namespace in (':', '') else namespace
     all_joints = cmds.ls('{}FACIAL_*'.format(prefix), type='joint') or []
-    to_keep = [j for j in all_joints if 'eye' in j.lower()]
-    to_delete = [j for j in all_joints if 'eye' not in j.lower()]
+    if not all_joints:
+        return 0
 
-    # Unparent eye joints to world before deletion — without this, any eye
-    # joint whose parent is in to_delete would be taken with it.
-    if to_keep:
-        cmds.parent(to_keep, world=True)
+    # Find joints skinned directly to the eye meshes — more precise than
+    # filtering by name, which catches blink/eyelid joints too.
+    eye_driver_joints = set()
+    for pattern in ('*eyeLeft_lod0_mesh*', '*eyeRight_lod0_mesh*'):
+        for mesh in (cmds.ls(pattern, type='transform') or []):
+            for shape in (cmds.listRelatives(mesh, shapes=True) or []):
+                for sc in (cmds.ls(cmds.listHistory(shape) or [], type='skinCluster') or []):
+                    for jnt in (cmds.skinCluster(sc, query=True, influence=True) or []):
+                        eye_driver_joints.add(jnt)
+
+    # Keep those joints and their immediate parents
+    to_keep = set(eye_driver_joints)
+    for jnt in eye_driver_joints:
+        to_keep.update(cmds.listRelatives(jnt, parent=True) or [])
+
+    to_delete = [j for j in all_joints if j not in to_keep]
+    to_delete_set = set(to_delete)
+
+    # Unparent only kept joints whose direct parent is being deleted
+    for jnt in to_keep:
+        if not cmds.objExists(jnt):
+            continue
+        parents = cmds.listRelatives(jnt, parent=True) or []
+        if parents and parents[0] in to_delete_set:
+            cmds.parent(jnt, world=True)
 
     if to_delete:
         cmds.delete(to_delete)
