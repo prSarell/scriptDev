@@ -260,6 +260,13 @@ def _install(root):
         )
         all_files.extend(copied)
 
+        staff_src = os.path.join(shelf_path, "scripts", "staff_shortcuts")
+        if os.path.isdir(staff_src):
+            staff_dst = os.path.join(scripts_dst, "staff_shortcuts")
+            os.makedirs(staff_dst, exist_ok=True)
+            copied = _copy_flat(staff_src, staff_dst, backup_dir, "staff_shortcuts", ext=".json")
+            all_files.extend(copied)
+
         copied = _copy_flat(
             os.path.join(shelf_path, "icons"), icons_dst,
             backup_dir, "icons", ext=".png",
@@ -287,12 +294,6 @@ def _install(root):
                     check=False,
                 )
             all_dirs.append(ngskin_dst.replace("\\", "/"))
-
-        staff_src = os.path.join(shelf_path, "scripts", "staff_shortcuts")
-        if os.path.isdir(staff_src):
-            staff_dst = os.path.join(scripts_dst, "staff_shortcuts")
-            dst = _copy_tree(staff_src, staff_dst, backup_dir, "dirs")
-            all_dirs.append(dst)
 
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):

@@ -14,8 +14,9 @@ WINDOW_NAME  = 'mpAnimShortCuts'
 DATA_FILE    = 'shortcuts_data.json'
 _BUILTIN_SET = 'Maya_Default'
 _HOLD_MS     = 400
-_STAFF_FOLDER = 'staff_shortcuts'
-_STAFF_SETS   = {}   # {set_name: set_data} — loaded from deployed staff JSON files, read-only
+_STAFF_FOLDER     = 'staff_shortcuts'
+_STAFF_SETS       = {}   # {set_name: set_data} — readonly: loaded from staff JSONs without "readonly": false
+_STAFF_TEMPLATES  = {}   # {set_name: set_data} — editable: staff JSONs with "readonly": false, seeded into personal sets
 
 # ---------------------------------------------------------------------------
 # Keyboard layout
@@ -418,13 +419,18 @@ def _save_data(data):
 # Staff shortcuts
 # ---------------------------------------------------------------------------
 
+def _maya_scripts_dir():
+    return os.path.join(cmds.internalVar(userAppDir=True), 'scripts').replace('\\', '/')
+
+
 def _is_staff_set(name):
     return name in _STAFF_SETS
 
 
 def _load_staff_shortcuts():
-    global _STAFF_SETS
+    global _STAFF_SETS, _STAFF_TEMPLATES
     _STAFF_SETS = {}
+    _STAFF_TEMPLATES = {}
     folder = os.path.join(_maya_scripts_dir(), _STAFF_FOLDER)
     if not os.path.isdir(folder):
         return
@@ -434,7 +440,11 @@ def _load_staff_shortcuts():
         name = fname[:-5]
         try:
             with open(os.path.join(folder, fname)) as f:
-                _STAFF_SETS[name] = json.load(f)
+                set_data = json.load(f)
+            if set_data.get('readonly', True):
+                _STAFF_SETS[name] = set_data
+            else:
+                _STAFF_TEMPLATES[name] = set_data
         except Exception:
             pass
 
@@ -695,14 +705,27 @@ def _restore_rtcs(set_name, set_data):
 def _init(data):
     _load_staff_shortcuts()
 
-    # Create and restore all staff hotkey sets
+    # Create and restore all staff hotkey sets (readonly)
     for set_name, set_data in _STAFF_SETS.items():
         if not _set_exists(set_name):
             cmds.hotkeySet(set_name, source=cmds.hotkeySet(query=True, current=True))
         _restore_rtcs(set_name, set_data)
 
-    # Seed ps_anim only if it is not covered by a staff JSON
-    if not _is_staff_set('ps_anim'):
+    # Seed template sets into personal data on first encounter (editable)
+    for set_name, tmpl in _STAFF_TEMPLATES.items():
+        if not _set_exists(set_name):
+            cmds.hotkeySet(set_name, source=cmds.hotkeySet(query=True, current=True))
+        if set_name not in data['sets']:
+            data['sets'][set_name] = {
+                'hotkeys': {k: v for k, v in tmpl.get('hotkeys', {}).items()
+                            if not v.get('muted')},
+                'spacebar': tmpl.get('spacebar', False),
+                'shotcam_toggle': tmpl.get('shotcam_toggle', False),
+            }
+            _save_data(data)
+
+    # Seed ps_anim only if it is not covered by a staff JSON or template
+    if not _is_staff_set('ps_anim') and 'ps_anim' not in _STAFF_TEMPLATES:
         if not _set_exists('ps_anim'):
             cmds.hotkeySet('ps_anim', source=cmds.hotkeySet(query=True, current=True))
         s = data['sets'].setdefault('ps_anim', {'hotkeys': {}, 'spacebar': True})
