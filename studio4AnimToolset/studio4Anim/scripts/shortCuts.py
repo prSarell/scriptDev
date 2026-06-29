@@ -1945,10 +1945,7 @@ class ShortCutsUI(QtWidgets.QDialog):
 def init_hotkeys():
     if not mpAnimConfig.get_save_path_silent():
         return
-    data = _load_data()
-    if not data.get('sets'):
-        return
-    _init(data)
+    _init(_load_data())
 
 
 def show():
