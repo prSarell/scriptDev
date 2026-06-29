@@ -29,6 +29,11 @@ RIGTOOL_SCRIPTS = [
     "mh_body_clean/mh_body_clean_ui.py",
 ]
 
+# Scripts from renderDev/ — deployed flat to ~/maya/scripts/.
+RENDERDEV_SCRIPTS = [
+    "eucalyptusGen.py",
+]
+
 # Each entry defines one shelf button.
 BUTTONS = [
     {
@@ -144,6 +149,18 @@ BUTTONS = [
         "command": (
             "import ngSkinTools2\n"
             "ngSkinTools2.open_ui()"
+        ),
+    },
+    {
+        "label": "Gum Tree",
+        "tooltip": "Open Eucalyptus Generator — procedural Australian gum tree curves from biological growth data",
+        "icon": "iconGumTree.png",
+        "script": "eucalyptusGen.py",
+        "command": (
+            "import importlib\n"
+            "import eucalyptusGen_ui\n"
+            "importlib.reload(eucalyptusGen_ui)\n"
+            "eucalyptusGen_ui.show()"
         ),
     },
     {

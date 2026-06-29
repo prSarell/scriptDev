@@ -40,6 +40,8 @@ SIMTOOL_SCRIPTS = [
 # Scripts from animDev/ root — deployed flat to ~/maya/scripts/.
 ANIMDEV_SCRIPTS = [
     "toggleShotCam.py",
+    "smoothTool/smoothTool_api.py",
+    "smoothTool/smoothTool_ui.py",
 ]
 
 # Scripts from animDev/multiTool/ — all deployed flat to ~/maya/scripts/.
@@ -163,6 +165,19 @@ BUTTONS = [
             "import PlaybackTempoTool\n"
             "importlib.reload(PlaybackTempoTool)\n"
             "PlaybackTempoTool.show()"
+        ),
+    },
+    {
+        "label": "SmoothTool",
+        "tooltip": "Open Smooth Tool — smooth animation curves on NURBS controls with blend and aim-rig baking",
+        "icon": "iconSmoothTool.png",
+        "script": "smoothTool.py",
+        "command": (
+            "import importlib\n"
+            "import smoothTool_api, smoothTool_ui\n"
+            "importlib.reload(smoothTool_api)\n"
+            "importlib.reload(smoothTool_ui)\n"
+            "smoothTool_ui.show()"
         ),
     },
     {

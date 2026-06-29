@@ -109,6 +109,18 @@ BUTTONS = [
         ),
     },
     {
+        "label": "SmoothTool",
+        "tooltip": "Open Smooth Tool — smooth a control's animation by tracking surface points on a mesh",
+        "icon": "iconSmoothTool.png",
+        "command": (
+            "import importlib\n"
+            "import smoothTool_api, smoothTool_ui\n"
+            "importlib.reload(smoothTool_api)\n"
+            "importlib.reload(smoothTool_ui)\n"
+            "smoothTool_ui.show()"
+        ),
+    },
+    {
         "label": "MHTransfer",
         "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
         "icon": "iconMetahuman.png",
