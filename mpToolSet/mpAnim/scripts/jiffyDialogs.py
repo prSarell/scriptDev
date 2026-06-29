@@ -11,25 +11,31 @@ class RewardDialog(QtWidgets.QDialog):
     def __init__(self, message, parent=None):
         super(RewardDialog, self).__init__(parent)
         self.setWindowTitle("Great Job!")
-        # Window stays on top
         self.setWindowFlags(QtCore.Qt.Dialog | QtCore.Qt.WindowStaysOnTopHint)
+        self.setMinimumWidth(320)
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
 
         label = QtWidgets.QLabel(message)
+        label.setWordWrap(True)
         font = QtGui.QFont()
-        font.setPointSize(16)
+        font.setPointSize(14)
         font.setBold(True)
         label.setFont(font)
         label.setAlignment(QtCore.Qt.AlignCenter)
 
         bright_colors = [
-            "blue", "green", "yellow", "magenta", "cyan",
-            "orange", "purple", "pink", "lime", "teal"
+            "#4caf50", "#e0a030", "#4D90D4", "#9575cd",
+            "#e05050", "#26a69a", "#ef6c00", "#ec407a",
         ]
         label.setStyleSheet(f"color: {random.choice(bright_colors)};")
         layout.addWidget(label)
 
-        QtCore.QTimer.singleShot(4000, self.accept)
+        btn = QtWidgets.QPushButton("Got it!")
+        btn.setMinimumHeight(28)
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn)
 
 
 class NotificationDialog(QtWidgets.QDialog):
@@ -38,18 +44,25 @@ class NotificationDialog(QtWidgets.QDialog):
         logger.debug(f"Showing notification: {message}")
         self.setWindowTitle("Notification")
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        self.setMinimumWidth(320)
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
 
         label = QtWidgets.QLabel(message)
+        label.setWordWrap(True)
         label.setFont(QtGui.QFont("", 14, QtGui.QFont.Bold))
         label.setAlignment(QtCore.Qt.AlignCenter)
 
         colors = [
-            "blue", "green", "yellow", "magenta", "cyan",
-            "orange", "purple", "pink", "lime", "teal"
+            "#4caf50", "#e0a030", "#4D90D4", "#9575cd",
+            "#e05050", "#26a69a", "#ef6c00", "#ec407a",
         ]
         color = random.choice(colors)
         label.setStyleSheet(f"color: {color};")
         layout.addWidget(label)
 
-        QtCore.QTimer.singleShot(3000, self.accept)
+        btn = QtWidgets.QPushButton("Got it!")
+        btn.setMinimumHeight(28)
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn)
