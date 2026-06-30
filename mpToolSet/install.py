@@ -259,6 +259,20 @@ def _install(root):
                 )
             all_dirs.append(ngskin_dst.replace("\\", "/"))
 
+            # Copy the Python package to Maya's scripts dir so it is always
+            # importable regardless of whether the ApplicationPlugin mechanism
+            # adds Contents/scripts/ to sys.path (unreliable on macOS).
+            ngskin_py_src = os.path.join(
+                ngskin_src, "Contents", "scripts", "ngSkinTools2"
+            )
+            if os.path.isdir(ngskin_py_src):
+                ngskin_py_dst = os.path.join(scripts_dst, "ngSkinTools2")
+                _backup_directory(ngskin_py_dst, backup_dir, "dirs")
+                if os.path.exists(ngskin_py_dst):
+                    shutil.rmtree(ngskin_py_dst)
+                shutil.copytree(ngskin_py_src, ngskin_py_dst)
+                all_dirs.append(ngskin_py_dst.replace("\\", "/"))
+
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
             name, btn_count = _build_shelf(config_file, backup_dir)
