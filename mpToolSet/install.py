@@ -197,7 +197,7 @@ def _write_manifest(files, dirs, shelves, usersetups=None):
                 seen.add(fp)
 
 
-def _patch_usersetup(scripts_dir, backup_dir):
+def _patch_usersetup(scripts_dir, backup_dir, extra_syspaths=None, ngskin_install_path=None):
     """Append (or replace) the mpToolSet startup hook in userSetup.py."""
     path = os.path.join(scripts_dir, "userSetup.py").replace("\\", "/")
     _backup_file(path, backup_dir, "scripts")
@@ -212,14 +212,45 @@ def _patch_usersetup(scripts_dir, backup_dir):
         "", content, flags=re.DOTALL,
     )
 
+    syspath_lines = ""
+    for p in (extra_syspaths or []):
+        syspath_lines += (
+            "import sys as _sys\n"
+            "if {p!r} not in _sys.path:\n"
+            "    _sys.path.insert(0, {p!r})\n"
+        ).format(p=p)
+
+    ngskin_block = ""
+    if ngskin_install_path:
+        ngskin_block = (
+            "try:\n"
+            "    import os as _os, maya.cmds as _cmds\n"
+            "    _ver = _cmds.about(version=True).split('.')[0].split()[0]\n"
+            "    _plugin_dir = _os.path.join({ngskin!r}, 'Contents', 'plug-ins', _ver)\n"
+            "    if _os.path.isdir(_plugin_dir):\n"
+            "        _cur = _os.environ.get('MAYA_PLUG_IN_PATH', '')\n"
+            "        if _plugin_dir not in _cur:\n"
+            "            _os.environ['MAYA_PLUG_IN_PATH'] = _plugin_dir + _os.pathsep + _cur\n"
+            "    def _ng_load():\n"
+            "        try:\n"
+            "            import maya.cmds as _c; _c.loadPlugin('ngSkinTools2', quiet=True)\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    _cmds.evalDeferred(_ng_load)\n"
+            "except Exception:\n"
+            "    pass\n"
+        ).format(ngskin=ngskin_install_path)
+
     block = (
         "\n{start}\n"
+        "{syspaths}"
+        "{ngskin}"
         "try:\n"
         "    import shortCuts; shortCuts.init_hotkeys()\n"
         "except Exception:\n"
         "    pass\n"
         "{end}\n"
-    ).format(start=_US_START, end=_US_END)
+    ).format(start=_US_START, end=_US_END, syspaths=syspath_lines, ngskin=ngskin_block)
 
     with open(path, "w") as f:
         f.write(content.rstrip("\n") + block)
@@ -245,6 +276,8 @@ def _install(root):
     all_dirs = []
     shelves_built = []
     shelf_names = []
+    ngskin_scripts_paths = []
+    ngskin_install_path = None
 
     for shelf_dir_name in ("mpRig", "mpAnim"):
         shelf_path = os.path.join(root, shelf_dir_name)
@@ -275,9 +308,12 @@ def _install(root):
 
         studio_src = os.path.join(shelf_path, "studiolibrary")
         if os.path.isdir(studio_src):
-            studio_dst = os.path.join(scripts_dst, "studiolibrary")
-            dst = _copy_tree(studio_src, studio_dst, backup_dir, "dirs")
-            all_dirs.append(dst)
+            for pkg_name in sorted(os.listdir(studio_src)):
+                pkg_src = os.path.join(studio_src, pkg_name)
+                if os.path.isdir(pkg_src):
+                    pkg_dst = os.path.join(scripts_dst, pkg_name)
+                    dst = _copy_tree(pkg_src, pkg_dst, backup_dir, "dirs")
+                    all_dirs.append(dst)
 
         ngskin_src = os.path.join(shelf_path, "ngskintools2")
         if os.path.isdir(ngskin_src):
@@ -293,7 +329,12 @@ def _install(root):
                     ["xattr", "-dr", "com.apple.quarantine", ngskin_dst],
                     check=False,
                 )
-            all_dirs.append(ngskin_dst.replace("\\", "/"))
+            ngskin_dst_fwd = ngskin_dst.replace("\\", "/")
+            all_dirs.append(ngskin_dst_fwd)
+            ngskin_install_path = ngskin_dst_fwd
+            ngskin_scripts_paths.append(
+                os.path.join(ngskin_dst, "Contents", "scripts").replace("\\", "/")
+            )
 
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
@@ -301,7 +342,11 @@ def _install(root):
             shelves_built.append("{} ({} buttons)".format(name, btn_count))
             shelf_names.append(name)
 
-    usersetup_path = _patch_usersetup(scripts_dst, backup_dir)
+    usersetup_path = _patch_usersetup(
+        scripts_dst, backup_dir,
+        extra_syspaths=ngskin_scripts_paths,
+        ngskin_install_path=ngskin_install_path,
+    )
     _write_manifest(all_files, all_dirs, shelf_names, usersetups=[usersetup_path])
 
     backup_label = "v{:03d}".format(version)
