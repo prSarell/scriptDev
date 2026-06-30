@@ -389,4 +389,14 @@ def _install(root):
 def onMayaDroppedPythonFile(_obj):
     """Called by Maya when this file is dragged onto the viewport."""
     root = os.path.dirname(os.path.abspath(__file__))
-    _install(root)
+    try:
+        _install(root)
+    except Exception as e:
+        import traceback
+        msg = "mpToolSet install FAILED:\n\n{}\n\n{}".format(e, traceback.format_exc())
+        print(msg)
+        cmds.confirmDialog(
+            title="mpToolSet Installer — Error",
+            message="Install failed! See Script Editor for details.\n\n{}".format(e),
+            button=["OK"],
+        )
