@@ -1970,10 +1970,7 @@ class JiffySchedule(QtWidgets.QWidget):
             page    = self._active_page()
             label   = self._group_label_for_tab(index)
             groups  = page.get_groups_for_project(self._active_project)
-            if self._active_project:
-                self.nav.set_groups(groups, group_label=label, enabled=True)
-            else:
-                self.nav.show_bottom_section(False)
+            self.nav.set_groups(groups, group_label=label, enabled=bool(self._active_project))
 
     def _enter_progress_tab(self):
         proj = self._active_project
@@ -2006,10 +2003,7 @@ class JiffySchedule(QtWidgets.QWidget):
         else:
             label  = self._group_label_for_tab(self.tab_bar.currentIndex())
             groups = self._active_page().get_groups_for_project(project)
-            if project:
-                self.nav.set_groups(groups, group_label=label, enabled=True)
-            else:
-                self.nav.show_bottom_section(False)
+            self.nav.set_groups(groups, group_label=label, enabled=bool(project))
 
     def _on_project_added(self, name):
         self.shots_page.project_added(name)
