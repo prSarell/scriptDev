@@ -21,7 +21,7 @@
 
 from PySide6 import QtWidgets, QtCore, QtGui
 import os, json, time
-from datetime import date as _date, datetime as _datetime
+from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
 import maya.cmds as cmds
 from maya import OpenMayaUI as omui
 from shiboken6 import wrapInstance
@@ -664,7 +664,7 @@ class PieChartWidget(QtWidgets.QWidget):
 # Milestone dialog — DD-MM-YYYY, today default, optional extension note
 # ---------------------------------------------------------------------------
 class MilestoneDialog(QtWidgets.QDialog):
-    def __init__(self, data=None, parent=None):
+    def __init__(self, data=None, prod_settings=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Milestone" if data is None else "Edit Milestone")
         self.setMinimumWidth(340)
@@ -677,6 +677,7 @@ class MilestoneDialog(QtWidgets.QDialog):
         )
         self._data = data.copy() if data else {}
         self._is_new = data is None
+        self._prod_settings = prod_settings or {}
         self._build()
 
     def _build(self):
@@ -686,7 +687,7 @@ class MilestoneDialog(QtWidgets.QDialog):
         self.name_edit = QtWidgets.QLineEdit(self._data.get("name", ""))
         default_date = self._data.get("due_date", _today_dmy() if self._is_new else "")
         self.date_edit = QtWidgets.QLineEdit(default_date)
-        self.date_edit.setPlaceholderText("DD-MM-YYYY")
+        self.date_edit.setPlaceholderText("DD-MM-YYYY or W8")
         layout.addRow("Milestone:", self.name_edit)
         layout.addRow("Due Date:",  self.date_edit)
         btns = QtWidgets.QDialogButtonBox(
@@ -697,10 +698,25 @@ class MilestoneDialog(QtWidgets.QDialog):
         layout.addRow(btns)
 
     def get_data(self):
+        raw = self.date_edit.text().strip()
+        if raw and _parse_dmy(raw) is None:
+            raw = self._week_input_to_date(raw)
         return {
             "name":     self.name_edit.text().strip(),
-            "due_date": self.date_edit.text().strip(),
+            "due_date": raw,
         }
+
+    def _week_input_to_date(self, s):
+        """Convert 'W8' or '8' to DD-MM-YYYY using production settings. Returns s unchanged if it can't."""
+        w1 = _parse_dmy(self._prod_settings.get("week1_start", ""))
+        if w1 is None:
+            return s
+        token = s.strip().upper().lstrip("W")
+        try:
+            wk = int(token)
+        except ValueError:
+            return s
+        return (w1 + _timedelta(days=7 * (wk - 1))).strftime("%d-%m-%Y")
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +792,7 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self._settings = {}
         self._milestones = []
-        self.setMinimumHeight(90)
+        self.setMinimumHeight(100)
 
     def set_settings(self, settings, milestones=None):
         self._settings = settings
@@ -827,7 +843,7 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
         ms_strip_h = 18
         margin_x   = 14
         margin_y   = 6
-        label_h    = 14
+        label_h    = 24
         usable_w   = self.width() - 2 * margin_x
         avail_h    = self.height() - ms_strip_h - 2 * margin_y - label_h
         box_h      = min(avail_h, 28)
@@ -883,8 +899,18 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
                 p.setFont(f2)
                 p.setPen(QtGui.QColor("white") if is_curr else QtGui.QColor(SUBTEXT))
                 p.drawText(
-                    QtCore.QRectF(sx, box_y + box_h + 2, slot_w, label_h),
+                    QtCore.QRectF(sx, box_y + box_h + 2, slot_w, 11),
                     QtCore.Qt.AlignCenter, f"W{wk}"
+                )
+                wk_start = w1 + _timedelta(days=7 * (wk - 1))
+                f3 = QtGui.QFont()
+                f3.setPixelSize(7)
+                p.setFont(f3)
+                p.setPen(QtGui.QColor(SUBTEXT))
+                p.drawText(
+                    QtCore.QRectF(sx, box_y + box_h + 13, slot_w, 11),
+                    QtCore.Qt.AlignCenter,
+                    f"{wk_start.day} {wk_start.strftime('%b')}",
                 )
 
         # Draw milestone markers in the strip above the week blocks
@@ -1224,7 +1250,8 @@ class ProgressPage(QtWidgets.QWidget):
         self._production.pop(name, None)
 
     def add_milestone(self):
-        dlg = MilestoneDialog(parent=self)
+        prod = self._production.get(self._current_project, {})
+        dlg = MilestoneDialog(prod_settings=prod, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             data = dlg.get_data()
             if data["name"]:
@@ -1441,7 +1468,7 @@ class ProgressPage(QtWidgets.QWidget):
         # ── Week timeline ──
         timeline = _WeekTimelineWidget()
         timeline.set_settings(prod_settings, milestones=self._milestones.get(proj, []))
-        timeline.setFixedHeight(90)
+        timeline.setFixedHeight(100)
         timeline.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
         vl.addWidget(timeline)
 
