@@ -685,7 +685,7 @@ class MilestoneDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
         self.name_edit = QtWidgets.QLineEdit(self._data.get("name", ""))
-        default_date = self._data.get("due_date", _today_dmy() if self._is_new else "")
+        default_date = self._data.get("due_date", "")
         self.date_edit = QtWidgets.QLineEdit(default_date)
         self.date_edit.setPlaceholderText("DD-MM-YYYY or W8")
         layout.addRow("Milestone:", self.name_edit)
@@ -1532,7 +1532,8 @@ class ProgressPage(QtWidgets.QWidget):
     def _edit_milestone(self, proj, idx):
         ms = self._milestones.get(proj, [])
         if 0 <= idx < len(ms):
-            dlg = MilestoneDialog(data=ms[idx], parent=self)
+            prod = self._production.get(proj, {})
+            dlg = MilestoneDialog(data=ms[idx], prod_settings=prod, parent=self)
             if dlg.exec_() == QtWidgets.QDialog.Accepted:
                 ms[idx] = dlg.get_data()
                 self._refresh()
