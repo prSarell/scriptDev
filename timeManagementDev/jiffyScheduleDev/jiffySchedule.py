@@ -564,6 +564,9 @@ class SchedulePage(QtWidgets.QWidget):
         self._data.setdefault(name, {})
 
     def project_removed(self, name):
+        if self._current_project == name:
+            self._current_project = ""
+            self._active_group = ""
         self._data.pop(name, None)
 
     def get_groups_for_project(self, project):
