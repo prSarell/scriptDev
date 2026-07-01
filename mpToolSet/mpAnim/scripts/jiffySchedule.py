@@ -1828,10 +1828,12 @@ class NavPanel(QtWidgets.QWidget):
                 list_widget.blockSignals(False)
                 if label == "Project":
                     self.project_removed.emit(name)
-                    self.project_changed.emit("")
+                    next_item = list_widget.currentItem()
+                    self.project_changed.emit(next_item.text() if next_item else "")
                 else:
                     self.group_removed.emit(name)
-                    self.group_changed.emit("")
+                    next_item = list_widget.currentItem()
+                    self.group_changed.emit(next_item.text() if next_item else "")
 
 
 # ---------------------------------------------------------------------------
