@@ -91,7 +91,7 @@ SPECIES = {
         'common_name': 'Lemon-Scented Gum',
         'height': (2500, 4000),
         'dbh_radius': (30, 65),
-        'clear_bole': 0.67,
+        'clear_bole': 0.50,
         'crown_depth': 0.35,
         'straightness': 0.92,
         'trunk_lean': 0.02,
@@ -100,7 +100,8 @@ SPECIES = {
         'butt_swell': 1.25,
         'scaffold_angle_from_vertical': (30, 50),
         'scaffold_count': (5, 9),
-        'branch_droop': 0.15,
+        'attraction_up': 0.35,
+        'branch_droop': 0.03,
         'cluster_bias': 0.75,
         'branch_prox_clear': 0.20,
         'crown_width_ratio': (0.35, 0.50),
@@ -109,7 +110,7 @@ SPECIES = {
         'fork_angle_range': (18, 38),
         'fork_length_ratio': (0.58, 0.72),
         'min_fork_radius': 1.3,   # cm*scale; terminates recursion
-        'fork_droop_base': 0.20,
+        'fork_droop_base': 0.04,
         'multi_stem': False,
         'buttress': False,
         'rough_bark_height': 0.0,
@@ -485,7 +486,7 @@ class EucalyptusGenerator:
             parent_r = parent_radii[parent_idx]
 
             branch_r = parent_r * self.rng.uniform(0.40, 0.65)
-            if branch_r < 0.5 * self.scale:
+            if branch_r < 0.5 * self.scale * self.age['dbh_frac']:
                 continue
 
             parent_dir = _v(0, 1, 0)
@@ -501,6 +502,12 @@ class EucalyptusGenerator:
             perp = _perp_vec(parent_dir)
             branch_dir = _rotate_vec(parent_dir, perp, angle)
             branch_dir = _rotate_vec(branch_dir, parent_dir, phi)
+
+            attraction_up = self.sp.get('attraction_up', 0.0)
+            if attraction_up:
+                branch_dir = _vnorm(_vadd(
+                    _vscale(branch_dir, 1.0 - attraction_up),
+                    _vscale((0, 1, 0), attraction_up)))
 
             crown_width = self._range('crown_width_ratio') * parent_height
             branch_length = crown_width * self.rng.uniform(0.15, 0.90)
@@ -557,7 +564,8 @@ class EucalyptusGenerator:
 
         min_r = (self.sp['min_fork_radius']
                  * self.scale
-                 * self._density['min_fork_radius_mult'])
+                 * self._density['min_fork_radius_mult']
+                 * self.age['dbh_frac'])
         if parent_fork_r <= min_r:
             return
 
@@ -589,6 +597,12 @@ class EucalyptusGenerator:
             perp = _perp_vec(parent_dir)
             child_dir = _rotate_vec(parent_dir, perp, angle)
             child_dir = _rotate_vec(child_dir, parent_dir, phi)
+
+            attraction_up = self.sp.get('attraction_up', 0.0)
+            if attraction_up:
+                child_dir = _vnorm(_vadd(
+                    _vscale(child_dir, 1.0 - attraction_up),
+                    _vscale((0, 1, 0), attraction_up)))
 
             ratio = self.rng.uniform(*fork_length_ratio)
             child_length = parent_length * ratio
@@ -722,14 +736,6 @@ class EucalyptusGenerator:
         tree_grp = cmds.group(empty=True,
                               name='{}_tree_GRP'.format(self._tree_prefix))
 
-        order_groups = {}
-        for order_num, order_tag in ORDER_NAMES.items():
-            grp = cmds.group(empty=True,
-                             name='{}_{}_GRP'.format(self._tree_prefix,
-                                                     order_tag),
-                             parent=tree_grp)
-            order_groups[order_num] = grp
-
         colors = {
             0: (0.45, 0.30, 0.15),
             1: (0.55, 0.40, 0.20),
@@ -739,21 +745,30 @@ class EucalyptusGenerator:
         }
 
         created = []
+        node_by_name = {}
+        # self.data.curves is already parent-before-child order, since every
+        # branch is added to the list immediately as it forks from a curve
+        # that was added earlier.
         for cd in self.data.curves:
             if len(cd['points']) < 2:
                 continue
             crv = cmds.curve(p=cd['points'], d=min(3, len(cd['points']) - 1),
                              name=cd['name'])
-            # Orders > 4 clamp to the spray group.
-            clamped_order = min(cd['order'], 4)
-            grp = order_groups[clamped_order]
-            cmds.parent(crv, grp)
+            # Parent to the actual curve this one grew from, so posing a
+            # branch carries everything that forked from it along with it.
+            parent_node = node_by_name.get(cd['parent'], tree_grp)
+            cmds.parent(crv, parent_node)
             # Resolve to full path — short name becomes ambiguous if the scene
             # already has a same-named curve from a previous build.
-            grp_long = (cmds.ls(grp, long=True) or [grp])[0]
+            parent_long = (cmds.ls(parent_node, long=True) or [parent_node])[0]
             matches = cmds.ls(crv, long=True) or [crv]
             crv = next((m for m in matches
-                        if m.rsplit('|', 1)[0] == grp_long), matches[0])
+                        if m.rsplit('|', 1)[0] == parent_long), matches[0])
+            node_by_name[cd['name']] = crv
+
+            p0 = cd['points'][0]
+            cmds.setAttr(crv + '.rotatePivot', p0[0], p0[1], p0[2], type='double3')
+            cmds.setAttr(crv + '.scalePivot',  p0[0], p0[1], p0[2], type='double3')
 
             cmds.addAttr(crv, longName='radiusData', dataType='doubleArray')
             cmds.setAttr('{}.radiusData'.format(crv), cd['radii'],
@@ -770,7 +785,7 @@ class EucalyptusGenerator:
             cmds.addAttr(crv, longName='branchParam', attributeType='double')
             cmds.setAttr('{}.branchParam'.format(crv), cd['branch_param'])
 
-            r, g, b = colors[clamped_order]
+            r, g, b = colors[min(cd['order'], 4)]
             cmds.setAttr('{}.overrideEnabled'.format(crv), 1)
             cmds.setAttr('{}.overrideRGBColors'.format(crv), 1)
             cmds.setAttr('{}.overrideColorRGB'.format(crv), r, g, b)
@@ -783,6 +798,85 @@ class EucalyptusGenerator:
             self.sp.get('common_name', self.species_key),
             self.age_name, self.density_name))
         return tree_grp
+
+
+# ---------------------------------------------------------------------------
+# Geometry generation (preview)
+# ---------------------------------------------------------------------------
+
+def _tube_from_curve(points, radii, sections=8):
+    """Build a polygon tube approximating a tapered tube through points/radii.
+
+    A NURBS circle profile is placed at every point, oriented to the local
+    tangent and scaled to that point's radius, then lofted and converted to
+    polygons. One mesh per curve — callers don't need to merge anything.
+    """
+    n = len(points)
+    profiles = []
+    for i in range(n):
+        if i == 0:
+            tangent = _vsub(points[1], points[0])
+        elif i == n - 1:
+            tangent = _vsub(points[-1], points[-2])
+        else:
+            tangent = _vsub(points[i + 1], points[i - 1])
+        tangent = _vnorm(tangent)
+        r = max(radii[i], 0.01)
+        circ = cmds.circle(center=points[i], normal=tangent, radius=r,
+                           sections=sections, ch=False)[0]
+        profiles.append(circ)
+
+    surf = cmds.loft(profiles, ch=False, degree=1, uniform=True,
+                     polygon=0)[0]
+    cmds.delete(profiles)
+
+    mesh = cmds.nurbsToPoly(surf, ch=False, mnd=1, format=2, polygonType=1,
+                            uNumber=1, vNumber=1)[0]
+    cmds.delete(surf)
+    return mesh
+
+
+def generate_geometry(tree_grp):
+    """Build a separate preview polygon tube mesh for every curve under
+    tree_grp, using each curve's stored radiusData. No merging — each curve
+    gets its own mesh, parented under a sibling '<prefix>_geo_GRP'.
+
+    Returns the name of the geo group node.
+    """
+    if not cmds.objExists(tree_grp):
+        raise ValueError('No tree group found: {}'.format(tree_grp))
+
+    prefix = tree_grp.rsplit('|', 1)[-1]
+    if prefix.endswith('_tree_GRP'):
+        prefix = prefix[:-len('_tree_GRP')]
+    geo_grp = cmds.group(empty=True, name='{}_geo_GRP'.format(prefix))
+
+    curves = cmds.listRelatives(tree_grp, allDescendents=True,
+                                type='transform', fullPath=True) or []
+    created = []
+    for crv in curves:
+        if not cmds.attributeQuery('radiusData', node=crv, exists=True):
+            continue
+        radii = cmds.getAttr('{}.radiusData'.format(crv))
+        shapes = cmds.listRelatives(crv, shapes=True, fullPath=True)
+        if not shapes or not radii:
+            continue
+        spans = cmds.getAttr(shapes[0] + '.spans')
+        degree = cmds.getAttr(shapes[0] + '.degree')
+        num_cvs = spans + degree
+        points = [cmds.pointPosition('{}.cv[{}]'.format(crv, i), world=True)
+                  for i in range(num_cvs)]
+        if len(points) < 2 or len(points) != len(radii):
+            continue
+
+        mesh = _tube_from_curve(points, radii)
+        short_name = crv.rsplit('|', 1)[-1]
+        mesh = cmds.rename(mesh, '{}_geo'.format(short_name))
+        cmds.parent(mesh, geo_grp)
+        created.append(mesh)
+
+    print('[eucalyptusGen] geometry preview — {} meshes'.format(len(created)))
+    return geo_grp
 
 
 # ---------------------------------------------------------------------------

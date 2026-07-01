@@ -278,4 +278,23 @@ All four species follow Attims's model:
 - Houdini SideFX Labs: procedural tree toolset, L-Systems node
 - Arbaro (open source): Weber-Penn implementation, extensible via XML
 - TERN AusPlots: terrestrial laser scans of 48 eucalypt forest plots (open access)
+
+---
+
+## Species 5 (candidate): Eucalyptus caesia (Silver Princess Gum)
+
+Not yet modeled as its own species in `eucalyptusGen.py` — flagged for addition. Discovered by accident: running the existing **citriodora** parameters at a much smaller scale produced a tree that reads convincingly as a Silver Princess Gum.
+
+**Working preset (citriodora params, until caesia gets its own SPECIES entry):**
+- species = `citriodora`, age = `mature`, density = `typical`
+- seed = `9803`
+- scale = `0.095`
+
+**Why this works:** *E. caesia* is a small mallee-form gum (~3-9 m, weeping pendulous branches, silvery bark) — nowhere near citriodora's real 25-40 m straight-trunked form. Scaling citriodora down to ~0.095 happens to land in caesia's real height range (citriodora's 25-40 m base range x 0.095 ≈ 2.4-3.8 m), so the "look" is really just citriodora's proportions correctly re-sized, not a true caesia model.
+
+**If/when this becomes a real `SPECIES['caesia']` entry, it needs its own research pass, not just a scaled citriodora:**
+- Real height/DBH range for a mallee-form gum (~3-9 m typical, multi-stemmed from a lignotuber like pauciflora, not single-trunked like citriodora)
+- Actual weeping branch character (caesia is known for pendulous, drooping branches — closer to camaldulensis's droop than citriodora's now-upright V-branching, since citriodora was recently tuned to be *less* droopy)
+- Silvery/glaucous bark and foliage color, distinct from citriodora's white/cream/pink/copper
+- Large solitary pendulous pink/red flowers and bell-shaped fruit (distinctive of caesia, not represented by any current species)
 - TreeQSM: reconstructs 95% of branches >30cm with 99% correct branching order

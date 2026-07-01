@@ -42,6 +42,7 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         self.setWindowTitle(self.TITLE)
         self.setMinimumWidth(340)
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        self._last_grp = None
         self._build_ui()
         self._connect_signals()
         self._on_species_changed(0)
@@ -119,6 +120,13 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         btn_row.addWidget(self._reset_btn)
         root.addLayout(btn_row)
 
+        # --- Generate Geo (preview mesh) ---
+        self._generate_geo_btn = QtWidgets.QPushButton('Generate Geo (preview)')
+        self._generate_geo_btn.setEnabled(False)
+        self._generate_geo_btn.setToolTip(
+            'Builds a separate poly tube mesh per curve — not merged.')
+        root.addWidget(self._generate_geo_btn)
+
         # --- Log ---
         log_box = QtWidgets.QGroupBox('Log')
         log_lay = QtWidgets.QVBoxLayout(log_box)
@@ -136,6 +144,7 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         self._seed_random_btn.clicked.connect(self._on_random_seed)
         self._generate_btn.clicked.connect(self._on_generate)
         self._reset_btn.clicked.connect(self._on_reset)
+        self._generate_geo_btn.clicked.connect(self._on_generate_geo)
 
     def _log_msg(self, msg):
         self._log.appendPlainText(msg)
@@ -195,7 +204,25 @@ class EucalyptusGenUI(QtWidgets.QDialog):
                 scale=scale, exposure=exposure, density=density)
             cmds.select(grp)
             cmds.viewFit()
+            self._last_grp = grp
+            self._generate_geo_btn.setEnabled(True)
             self._log_msg('Created: {}'.format(grp))
+        except Exception:
+            tb = traceback.format_exc()
+            self._log_msg(tb)
+            self._show_error(tb)
+
+    def _on_generate_geo(self):
+        if not self._last_grp or not cmds.objExists(self._last_grp):
+            self._log_msg('No tree to build geometry from — generate one first.')
+            return
+        try:
+            importlib.reload(eucalyptusGen)
+            self._log_msg('Building preview geometry for {}...'.format(
+                self._last_grp))
+            geo_grp = eucalyptusGen.generate_geometry(self._last_grp)
+            cmds.select(geo_grp)
+            self._log_msg('Created: {}'.format(geo_grp))
         except Exception:
             tb = traceback.format_exc()
             self._log_msg(tb)
