@@ -2163,6 +2163,8 @@ class JiffySchedule(QtWidgets.QWidget):
             self.load_data()
 
     def closeEvent(self, event):
+        global _jiffyschedule_window
+        _jiffyschedule_window = None
         if self._workspace_job is not None:
             try:
                 cmds.scriptJob(kill=self._workspace_job, force=True)
@@ -2182,13 +2184,17 @@ class JiffySchedule(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+_jiffyschedule_window = None
+
 def run_jiffyschedule():
     global _jiffyschedule_window
-    try:
-        if _jiffyschedule_window and not _jiffyschedule_window.isHidden():
-            _jiffyschedule_window.close()
-    except (NameError, RuntimeError):
-        pass
+    if _jiffyschedule_window is not None:
+        try:
+            _jiffyschedule_window.raise_()
+            _jiffyschedule_window.activateWindow()
+            return _jiffyschedule_window
+        except RuntimeError:
+            _jiffyschedule_window = None
     _jiffyschedule_window = JiffySchedule()
     _jiffyschedule_window.show()
     _jiffyschedule_window.raise_()

@@ -133,15 +133,7 @@ BUTTONS = [
         "label": "JiffySched",
         "tooltip": "Open JiffySchedule — production schedule and asset tracker for Maya artists",
         "icon": "iconJiffySchedule.png",
-        "command": (
-            "import importlib, sys\n"
-            "for mod in list(sys.modules.keys()):\n"
-            "    if 'jiffySchedule' in mod:\n"
-            "        del sys.modules[mod]\n"
-            "import jiffySchedule\n"
-            "importlib.reload(jiffySchedule)\n"
-            "jiffySchedule.run_jiffyschedule()"
-        ),
+        "command": "import jiffySchedule; jiffySchedule.run_jiffyschedule()",
     },
     {
         "label": "shortCuts",
