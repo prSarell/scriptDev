@@ -16,6 +16,7 @@ of which version to roll back to.
 """
 
 import os
+import re
 import shutil
 import sys
 import maya.cmds as cmds
@@ -23,7 +24,9 @@ import maya.mel as mel
 
 
 _MANIFEST_NAME = "studio4Anim_manifest.txt"
-_BACKUPS_DIR = "studio4Anim_backups"
+_BACKUPS_DIR   = "studio4Anim_backups"
+_US_START      = "# -- studio4Anim BEGIN --"
+_US_END        = "# -- studio4Anim END --"
 
 
 # -- paths -----------------------------------------------------------------
@@ -163,7 +166,7 @@ def _build_shelf(shelf_config_path, backup_dir):
 
 # -- manifest ---------------------------------------------------------------
 
-def _write_manifest(files, dirs, shelves):
+def _write_manifest(files, dirs, shelves, usersetups=None):
     path = _manifest_path()
     seen = set()
     with open(path, "w") as f:
@@ -171,10 +174,36 @@ def _write_manifest(files, dirs, shelves):
             f.write("shelf:{}\n".format(shelf_name))
         for d in dirs:
             f.write("dir:{}\n".format(d))
+        for us in (usersetups or []):
+            f.write("usersetup:{}\n".format(us))
         for fp in files:
             if fp not in seen:
                 f.write("file:{}\n".format(fp))
                 seen.add(fp)
+
+
+def _patch_usersetup(scripts_dir, backup_dir):
+    path = os.path.join(scripts_dir, "userSetup.py").replace("\\", "/")
+    _backup_file(path, backup_dir, "scripts")
+    content = ""
+    if os.path.isfile(path):
+        with open(path, "r") as f:
+            content = f.read()
+    content = re.sub(
+        r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
+        "", content, flags=re.DOTALL,
+    )
+    block = (
+        "\n{start}\n"
+        "try:\n"
+        "    import shortCuts; shortCuts.init_hotkeys()\n"
+        "except Exception:\n"
+        "    pass\n"
+        "{end}\n"
+    ).format(start=_US_START, end=_US_END)
+    with open(path, "w") as f:
+        f.write(content.rstrip("\n") + block)
+    return path
 
 
 # -- install ----------------------------------------------------------------
@@ -208,6 +237,13 @@ def _install(root):
     )
     all_files.extend(copied)
 
+    staff_src = os.path.join(shelf_path, "scripts", "staff_shortcuts")
+    if os.path.isdir(staff_src):
+        staff_dst = os.path.join(scripts_dst, "staff_shortcuts")
+        os.makedirs(staff_dst, exist_ok=True)
+        copied = _copy_flat(staff_src, staff_dst, backup_dir, "staff_shortcuts", ext=".json")
+        all_files.extend(copied)
+
     copied = _copy_flat(
         os.path.join(shelf_path, "icons"), icons_dst,
         backup_dir, "icons", ext=".png",
@@ -225,7 +261,8 @@ def _install(root):
         name, btn_count = _build_shelf(config_file, backup_dir)
         shelf_names.append(name)
 
-    _write_manifest(all_files, all_dirs, shelf_names)
+    usersetup_path = _patch_usersetup(scripts_dst, backup_dir)
+    _write_manifest(all_files, all_dirs, shelf_names, usersetups=[usersetup_path])
 
     backup_label = "v{:03d}".format(version)
     if version == 0:
@@ -236,6 +273,7 @@ def _install(root):
         "  Scripts: {} files -> {}\n"
         "  Icons:   {} files -> {}\n"
         "  Shelf:   {} ({} buttons)\n"
+        "  Startup hook: userSetup.py updated\n"
         "  Backup saved: {}\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
     ).format(

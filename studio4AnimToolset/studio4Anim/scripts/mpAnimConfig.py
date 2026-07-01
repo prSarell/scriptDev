@@ -46,6 +46,12 @@ def get_save_path():
     return show_settings()
 
 
+def get_save_path_silent():
+    """Return the configured save path, or None if not yet set. Never shows a dialog.
+    Safe to call at Maya startup (e.g. from userSetup.py)."""
+    return _load().get('save_path', '').strip() or None
+
+
 def get_shot_cam():
     """Return the configured shot camera name, defaulting to 'camera1'."""
     return _load().get('shot_cam', 'camera1').strip() or 'camera1'
