@@ -1,0 +1,27 @@
+name: Release mpToolSet
+
+on:
+  push:
+    branches: [main]
+    paths: [mpToolSet/**]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip mpToolSet
+        run: zip -r mpToolSet.zip mpToolSet/
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: mpToolSet Latest
+          body: Drag `install.py` into Maya to install or update.
+          files: mpToolSet.zip
+          make_latest: true
