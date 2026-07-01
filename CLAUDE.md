@@ -69,6 +69,16 @@ Key Maya modules available at runtime:
 - `maya.api.OpenMaya` — C++ API bindings
 - `PySide6` — UI framework (Maya 2025+)
 
+## Student Distribution
+
+The `mpToolSet/` folder is automatically zipped and published as a GitHub Release whenever changes to it are pushed to `main`.
+
+- **Workflow:** `.github/workflows/release-mptoolset.yml`
+- **Release tag:** `latest` (always points to the current version)
+- **Student download URL:** `github.com/prSarell/scriptDev/releases/latest`
+
+No manual zipping or uploading needed — pushing a change to `mpToolSet/` on `main` triggers the release automatically. Local `*.zip` files are gitignored.
+
 ## Running / Testing Scripts
 
 Scripts cannot be unit-tested outside Maya without mocking. To test:
