@@ -1763,7 +1763,8 @@ class NavPanel(QtWidgets.QWidget):
             self.project_list.setCurrentRow(0)
             self.project_list.blockSignals(False)
             self.project_removed.emit(name)
-            self.project_changed.emit("")
+            next_item = self.project_list.currentItem()
+            self.project_changed.emit(next_item.text() if next_item else "")
 
     def _remove_group(self):
         item = self.group_list.currentItem()
@@ -1781,7 +1782,8 @@ class NavPanel(QtWidgets.QWidget):
             self.group_list.setCurrentRow(0)
             self.group_list.blockSignals(False)
             self.group_removed.emit(name)
-            self.group_changed.emit("")
+            next_group = self.group_list.currentItem()
+            self.group_changed.emit(next_group.text() if next_group else "")
 
     def _remove_milestone(self):
         ms_count = self._ms_vbox.count() - 1
