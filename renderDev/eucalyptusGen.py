@@ -237,6 +237,14 @@ DENSITY_TIERS = {
 
 GOLDEN_ANGLE = 137.5
 
+# Extra multiplier on top of the natural Murray's Law ratio for the last
+# few forking generations before a lineage terminates (keyed by "terminal
+# distance": 0 = this generation is the last, 1 = second-to-last, etc.).
+# Plain Murray's Law reduction reads as too thick right at branch tips —
+# artist feedback: sharpen the last 3 spray sections, most aggressively on
+# the very last one.
+_TAPER_BOOST = {0: 0.45, 1: 0.65, 2: 0.82}
+
 
 def _unique_prefix(species_key):
     """Return a unique Maya node name prefix for a new tree of this species."""
@@ -269,11 +277,17 @@ def _trunk_radius(t, dbh_r, neiloid_end, cone_start, butt_swell):
         return max(r_at_cone * (1.0 - frac), 1.0)
 
 
-def _branch_radius(distance, total_length, start_radius):
-    """Radius along a branch tapering to a tip."""
+def _branch_radius(distance, total_length, start_radius, end_radius, power=0.7):
+    """Radius along one segment, eased from start_radius at the base to
+    end_radius at the tip (thick for most of the length, tapering sharply
+    right at the end). end_radius should be the next segment's start radius
+    (continuous lineage) — or a small tip value only for genuinely terminal
+    segments — so a branch's taper reads as one continuous line rather than
+    resetting to a point at every curve boundary."""
     t = distance / total_length if total_length > 0 else 1.0
     t = max(0.0, min(t, 1.0))
-    return max(start_radius * (1.0 - t) ** 0.7, 0.5)
+    shape = 1.0 - (1.0 - t) ** power
+    return max(start_radius + (end_radius - start_radius) * shape, 0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +467,40 @@ class EucalyptusGenerator:
             indices.append(min(idx, end - 1))
         return sorted(indices)
 
+    def _min_fork_radius(self):
+        return (self.sp['min_fork_radius']
+                * self.scale
+                * self._density['min_fork_radius_mult']
+                * self.age['dbh_frac'])
+
+    def _terminal_distance(self, r, order, min_r, base_ratio, cap=3):
+        """0 if the node at (r, order) is itself terminal (no children
+        will be built from it), 1 if its child would be terminal, etc,
+        capped at `cap` (meaning "far from the tip"). Always predicted
+        using the natural, unboosted ratio."""
+        dist = 0
+        cur_r = r
+        cur_order = order
+        while dist < cap:
+            is_terminal = (cur_order + 1 > self.age['max_order']
+                          or cur_r <= min_r)
+            if is_terminal:
+                return dist
+            cur_r *= base_ratio
+            cur_order += 1
+            dist += 1
+        return dist
+
+    def _boosted_child_radius(self, parent_fork_r, order, min_r, base_ratio):
+        """Murray's Law child radius from parent_fork_r, with extra
+        tapering for the last few generations before a lineage terminates
+        — plain Murray's Law reads as too thick right at branch tips."""
+        natural_child_r = parent_fork_r * base_ratio
+        term_dist = self._terminal_distance(natural_child_r, order, min_r,
+                                            base_ratio)
+        boost = _TAPER_BOOST.get(term_dist, 1.0)
+        return natural_child_r * boost
+
     # --- scaffold branches (order=1) ---
 
     def _build_branches(self, parent_name, parent_points, parent_radii,
@@ -519,6 +567,22 @@ class EucalyptusGenerator:
             droop = base_droop * self.rng.uniform(0.5, 1.5)
             wobble_s = 0.06 * step
 
+            # The branch's tip is where tip-bifurcation picks up. _build_fork
+            # narrows fork_r by Murray's Law (plus near-tip taper boost)
+            # once more to get the first forked children's actual start
+            # radius, so the scaffold's own taper must end at that same
+            # value (not fork_r itself) to read as one continuous line —
+            # unless the fork never actually gets built (too thin already).
+            fork_r = min(branch_r * 0.7, 14.0 * self.scale)
+            fork_count = self.sp.get('fork_count', 2)
+            base_ratio = fork_count ** (-1.0 / 2.5)
+            tip_radius = 0.15 * self.scale
+            if fork_r <= self._min_fork_radius():
+                branch_end_r = tip_radius
+            else:
+                branch_end_r = self._boosted_child_radius(
+                    fork_r, 2, self._min_fork_radius(), base_ratio)
+
             b_points = []
             b_radii = []
             pos = origin
@@ -526,7 +590,8 @@ class EucalyptusGenerator:
 
             for j in range(num_cvs):
                 t = j / (num_cvs - 1)
-                r = _branch_radius(j * step, branch_length, branch_r)
+                r = _branch_radius(j * step, branch_length, branch_r,
+                                   branch_end_r)
                 b_points.append(pos)
                 b_radii.append(r)
 
@@ -544,9 +609,9 @@ class EucalyptusGenerator:
                 parent_name=parent_name, branch_param=branch_param)
 
             # Launch capillary-style bifurcation from the scaffold tip.
-            # Cap the starting radius to prevent regnans' massive trunk from
-            # causing exponential over-branching.
-            fork_r = min(branch_r * 0.7, 14.0 * self.scale)
+            # (fork_r/branch_end_r above already cap the starting radius to
+            # prevent regnans' massive trunk from causing exponential
+            # over-branching.)
             self._build_fork(branch_name, b_points, fork_r, branch_length,
                              order=2)
 
@@ -562,16 +627,30 @@ class EucalyptusGenerator:
         if order > self.age['max_order']:
             return
 
-        min_r = (self.sp['min_fork_radius']
-                 * self.scale
-                 * self._density['min_fork_radius_mult']
-                 * self.age['dbh_frac'])
+        min_r = self._min_fork_radius()
         if parent_fork_r <= min_r:
             return
 
         fork_count = self.sp.get('fork_count', 2)
-        # Murray's Law: sum of child cross-sections equals parent's.
-        child_r = parent_fork_r * (fork_count ** (-1.0 / 2.5))
+        # Murray's Law: sum of child cross-sections equals parent's, with
+        # extra tapering applied near the tip (see _TAPER_BOOST).
+        base_ratio = fork_count ** (-1.0 / 2.5)
+        child_r = self._boosted_child_radius(parent_fork_r, order, min_r,
+                                             base_ratio)
+
+        # Look one generation ahead so each child's own taper ends at the
+        # radius its own children will start from (continuous lineage),
+        # rather than tapering to a point unless it's truly the last fork.
+        # Terminality must mirror the check the recursive call itself will
+        # make (child_r <= min_r), not a further-reduced grandchild value.
+        child_is_terminal = (order + 1 > self.age['max_order']
+                             or child_r <= min_r)
+        tip_radius = 0.15 * self.scale
+        if child_is_terminal:
+            child_end_r = tip_radius
+        else:
+            child_end_r = self._boosted_child_radius(child_r, order + 1,
+                                                      min_r, base_ratio)
 
         tip = parent_points[-1]
         parent_dir = _vnorm(_vsub(parent_points[-1], parent_points[-2]))
@@ -619,7 +698,8 @@ class EucalyptusGenerator:
 
             for j in range(num_cvs):
                 t = j / (num_cvs - 1)
-                r = _branch_radius(j * step, child_length, child_r)
+                r = _branch_radius(j * step, child_length, child_r,
+                                   child_end_r)
                 c_points.append(pos)
                 c_radii.append(r)
 
@@ -833,6 +913,12 @@ def _tube_from_curve(points, radii, sections=8):
     mesh = cmds.nurbsToPoly(surf, ch=False, mnd=1, format=2, polygonType=1,
                             uNumber=1, vNumber=1)[0]
     cmds.delete(surf)
+
+    # cmds.circle(normal=...) profiles loft into surfaces whose normals
+    # point into the tube, not out of it — reverse so the outside of the
+    # branch renders its front face.
+    cmds.polyNormal(mesh, normalMode=0, userNormalMode=0, ch=False)
+
     return mesh
 
 

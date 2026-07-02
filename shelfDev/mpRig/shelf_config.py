@@ -32,6 +32,9 @@ RIGTOOL_SCRIPTS = [
 # Scripts from renderDev/ — deployed flat to ~/maya/scripts/.
 RENDERDEV_SCRIPTS = [
     "eucalyptusGen.py",
+    "eucalyptusGen_ui.py",
+    "eucalyptusLeaves.py",
+    "eucalyptusLeaves_ui.py",
 ]
 
 # Each entry defines one shelf button.
@@ -155,12 +158,22 @@ BUTTONS = [
         "label": "Gum Tree",
         "tooltip": "Open Eucalyptus Generator — procedural Australian gum tree curves from biological growth data",
         "icon": "iconGumTree.png",
-        "script": "eucalyptusGen.py",
         "command": (
             "import importlib\n"
             "import eucalyptusGen_ui\n"
             "importlib.reload(eucalyptusGen_ui)\n"
             "eucalyptusGen_ui.show()"
+        ),
+    },
+    {
+        "label": "Gum Leaves",
+        "tooltip": "Open Eucalyptus Leaf Generator — manually decorate a generated tree's curves with species-matched leaves",
+        "icon": "iconGumLeaves.png",
+        "command": (
+            "import importlib\n"
+            "import eucalyptusLeaves_ui\n"
+            "importlib.reload(eucalyptusLeaves_ui)\n"
+            "eucalyptusLeaves_ui.show()"
         ),
     },
     {
