@@ -46,6 +46,7 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         self._build_ui()
         self._connect_signals()
         self._on_species_changed(0)
+        self._reset_height()
 
     def _build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
@@ -87,12 +88,12 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         seed_row.addWidget(self._seed_random_btn)
         param_lay.addRow('Seed', seed_row)
 
-        self._scale_spin = QtWidgets.QDoubleSpinBox()
-        self._scale_spin.setRange(0.01, 10.0)
-        self._scale_spin.setValue(1.0)
-        self._scale_spin.setSingleStep(0.1)
-        self._scale_spin.setDecimals(2)
-        param_lay.addRow('Scale', self._scale_spin)
+        self._height_spin = QtWidgets.QDoubleSpinBox()
+        self._height_spin.setRange(0.1, 500.0)
+        self._height_spin.setSingleStep(0.5)
+        self._height_spin.setDecimals(2)
+        self._height_spin.setSuffix(' m')
+        param_lay.addRow('Height', self._height_spin)
 
         # Exposure slider (pauciflora only)
         self._exposure_label = QtWidgets.QLabel('Exposure')
@@ -122,9 +123,11 @@ class EucalyptusGenUI(QtWidgets.QDialog):
 
         # --- Generate Geo (preview mesh) ---
         self._generate_geo_btn = QtWidgets.QPushButton('Generate Geo (preview)')
-        self._generate_geo_btn.setEnabled(False)
         self._generate_geo_btn.setToolTip(
-            'Builds a separate poly tube mesh per curve — not merged.')
+            'Builds a separate poly tube mesh per curve — not merged.\n'
+            'Select any curves/groups from one or more trees to build geo '
+            'for all of them at once; with nothing selected, builds geo for '
+            'the last tree generated.')
         root.addWidget(self._generate_geo_btn)
 
         # --- Log ---
@@ -178,34 +181,42 @@ class EucalyptusGenUI(QtWidgets.QDialog):
     def _on_random_seed(self):
         self._seed_spin.setValue(random.randint(1, 9999))
 
+    def _reset_height(self):
+        species  = self._species_combo.currentData()
+        age      = self._age_combo.currentText()
+        exposure = self._exposure_slider.value() / 100.0
+        ref_cm   = eucalyptusGen.reference_height_cm(species, age, exposure)
+        self._height_spin.setValue(ref_cm / 100.0)
+
     def _on_reset(self):
         self._species_combo.setCurrentIndex(0)
         self._age_combo.setCurrentIndex(2)       # mature
         self._density_combo.setCurrentIndex(1)   # typical
         self._seed_spin.setValue(42)
-        self._scale_spin.setValue(1.0)
         self._exposure_slider.setValue(50)
+        self._reset_height()
 
     def _on_generate(self):
         species  = self._species_combo.currentData()
         age      = self._age_combo.currentText()
         density  = self._density_combo.currentText()
         seed     = self._seed_spin.value()
-        scale    = self._scale_spin.value()
+        height_m = self._height_spin.value()
         exposure = self._exposure_slider.value() / 100.0
 
         try:
             importlib.reload(eucalyptusGen)
+            ref_cm = eucalyptusGen.reference_height_cm(species, age, exposure)
+            scale  = (height_m * 100.0) / ref_cm if ref_cm else 1.0
             sp_name = eucalyptusGen.SPECIES[species].get('common_name', species)
-            self._log_msg('Generating {} {} {} (seed={}, scale={})...'.format(
-                sp_name, age, density, seed, scale))
+            self._log_msg('Generating {} {} {} (seed={}, height={}m)...'.format(
+                sp_name, age, density, seed, height_m))
             grp = eucalyptusGen.generate(
                 species=species, age=age, seed=seed,
                 scale=scale, exposure=exposure, density=density)
             cmds.select(grp)
             cmds.viewFit()
             self._last_grp = grp
-            self._generate_geo_btn.setEnabled(True)
             self._log_msg('Created: {}'.format(grp))
         except Exception:
             tb = traceback.format_exc()
@@ -213,16 +224,26 @@ class EucalyptusGenUI(QtWidgets.QDialog):
             self._show_error(tb)
 
     def _on_generate_geo(self):
-        if not self._last_grp or not cmds.objExists(self._last_grp):
-            self._log_msg('No tree to build geometry from — generate one first.')
+        sel = cmds.ls(selection=True, long=True)
+        if not sel and self._last_grp and cmds.objExists(self._last_grp):
+            sel = [self._last_grp]
+        if not sel:
+            self._log_msg(
+                'Nothing to build geometry from — select tree curves/groups, '
+                'or generate one first.')
             return
         try:
             importlib.reload(eucalyptusGen)
-            self._log_msg('Building preview geometry for {}...'.format(
-                self._last_grp))
-            geo_grp = eucalyptusGen.generate_geometry(self._last_grp)
-            cmds.select(geo_grp)
-            self._log_msg('Created: {}'.format(geo_grp))
+            results, skipped = eucalyptusGen.generate_geometry_for_selection(sel)
+            if not results:
+                self._log_msg('Selection has no eucalyptus tree curves/groups.')
+                return
+            for tree_grp, geo_grp in results:
+                self._log_msg('Built geo for {}: {}'.format(tree_grp, geo_grp))
+            if skipped:
+                self._log_msg('Skipped {} node(s) not part of a generated tree.'
+                              .format(len(skipped)))
+            cmds.select([g for _, g in results])
         except Exception:
             tb = traceback.format_exc()
             self._log_msg(tb)
@@ -234,6 +255,7 @@ _instance = None
 
 def show():
     global _instance
+    importlib.reload(eucalyptusGen)
     if _instance is not None:
         try:
             _instance.close()

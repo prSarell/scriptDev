@@ -965,6 +965,59 @@ def generate_geometry(tree_grp):
     return geo_grp
 
 
+def _tree_group_for(node):
+    """Walk up from node to the enclosing '<prefix>_tree_GRP' transform and
+    return its full path, or None if node isn't part of a generated tree."""
+    full = cmds.ls(node, long=True)
+    if not full:
+        return None
+    path = ''
+    for part in full[0].split('|'):
+        if not part:
+            continue
+        path += '|' + part
+        if part.endswith('_tree_GRP'):
+            return path
+    return None
+
+
+def generate_geometry_for_selection(nodes):
+    """Resolve each node (curve, branch, or tree group) to its owning
+    '<prefix>_tree_GRP', dedupe, and build preview geo for every tree found —
+    lets the user select any mix of curves/groups across several trees (e.g.
+    a cluster built up over a session) and geo them all in one go.
+
+    Returns (results, skipped): results is a list of (tree_grp, geo_grp)
+    pairs; skipped is the subset of nodes that aren't part of any tree.
+    """
+    tree_grps = []
+    skipped = []
+    for node in nodes:
+        grp = _tree_group_for(node)
+        if grp and grp not in tree_grps:
+            tree_grps.append(grp)
+        elif not grp:
+            skipped.append(node)
+
+    results = [(grp, generate_geometry(grp)) for grp in tree_grps]
+    return results, skipped
+
+
+def reference_height_cm(species, age, exposure=0.5):
+    """Midpoint of a species/age/exposure's natural (scale=1.0) height range,
+    in centimetres. Used to convert a target height in metres to the internal
+    scale multiplier — see EucalyptusGenUI's Height field."""
+    sp = SPECIES[species]
+    age_frac = AGE_STAGES[age]['height_frac']
+    exposure = max(0.0, min(1.0, exposure))
+    if species == 'pauciflora':
+        lo = _lerp(sp['height_lowland'][0], sp['height_alpine'][0], exposure)
+        hi = _lerp(sp['height_lowland'][1], sp['height_alpine'][1], exposure)
+    else:
+        lo, hi = sp['height']
+    return (lo + hi) / 2.0 * age_frac
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
