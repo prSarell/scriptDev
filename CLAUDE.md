@@ -55,6 +55,10 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 
 - **studio4AnimToolset** — a cut-down toolset for second-year students exists in `studio4AnimToolset/` but has no install package yet. Do not build this until mpToolSet is fully debugged and running cleanly on both Mac and Windows.
 
+### Tools that stay in scriptDev (not for students)
+
+- **Eucalyptus tree generator** (`renderDev/eucalyptusGen.py`, `eucalyptusGen_ui.py`, `eucalyptusLeaves.py`, `eucalyptusLeaves_ui.py`, `gumTreeBark.py`) — a personal/production tool for the user's own environment art work, not part of the student toolset. Do not stage it into `shelfDev/` or `mpToolSet/` as part of the normal three-stage pipeline. It deploys straight from `renderDev/` to the live Maya scripts folder for the user's own testing — see the deploy note in the project memory for that tool.
+
 ## Icons
 
 - All new shelf/tool icons must be **256×256 pixels**, PNG format, with **rounded corners**.
