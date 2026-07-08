@@ -51,9 +51,12 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 - **SHAPES** is dev-only — do not include in mpToolSet or distribute to students.
 - **ngSkinTools2** is bundled in `mpToolSet/mpRig/ngskintools2/` and installed automatically.
 
-### Deferred work
+### Two student toolsets
 
-- **studio4AnimToolset** — a cut-down toolset for second-year students exists in `studio4AnimToolset/` but has no install package yet. Do not build this until mpToolSet is fully debugged and running cleanly on both Mac and Windows.
+Both toolsets now ship the same way — install package, backup/rollback, and automated GitHub Release. Keep both in mind when updating shared tools (e.g. `shortCuts.py`, `ps_spine.py`) since each has its own hand-synced copy under its respective folder.
+
+- **mpToolSet** (`mpToolSet/`) — full toolset: both mpAnim and mpRig shelves, MetaHuman pipeline tools, cloth sim, corrective blendshapes, ngSkinTools2, etc.
+- **studio4AnimToolset** (`studio4AnimToolset/`) — cut-down, single `studio4Anim` shelf for the second-year class: multiTool, ps_spine, Playblast, CamPreset, Studio Library, the Jiffy tools, and shortCuts only. No rigging/MetaHuman/sim tools.
 
 ### Tools that stay in scriptDev (not for students)
 
@@ -79,13 +82,16 @@ Key Maya modules available at runtime:
 
 ## Student Distribution
 
-The `mpToolSet/` folder is automatically zipped and published as a GitHub Release whenever changes to it are pushed to `main`.
+Both `mpToolSet/` and `studio4AnimToolset/` are automatically zipped and published as GitHub Releases whenever changes to them are pushed to `main`. No manual zipping or uploading needed — local `*.zip` files are gitignored.
 
-- **Workflow:** `.github/workflows/release-mptoolset.yml`
-- **Release tag:** `latest` (always points to the current version)
-- **Student download URL:** `github.com/prSarell/scriptDev/releases/latest`
-
-No manual zipping or uploading needed — pushing a change to `mpToolSet/` on `main` triggers the release automatically. Local `*.zip` files are gitignored.
+- **mpToolSet**
+  - Workflow: `.github/workflows/release-mptoolset.yml`
+  - Release tag: `latest` (this is also the repo's overall "latest release")
+  - Student download URL: `github.com/prSarell/scriptDev/releases/latest`
+- **studio4AnimToolset**
+  - Workflow: `.github/workflows/release-studio4anim.yml`
+  - Release tag: `studio4anim-latest` (does not affect the repo's overall "latest release", which stays pinned to mpToolSet)
+  - Student download URL: `github.com/prSarell/scriptDev/releases/tag/studio4anim-latest`
 
 ## Running / Testing Scripts
 

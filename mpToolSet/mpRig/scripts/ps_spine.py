@@ -781,7 +781,10 @@ def addFK(prefix):
     if cmds.objExists(fk_grp_name):
         raise RuntimeError('FK rig already exists: ' + fk_grp_name)
 
-    skl_joints = sorted(cmds.ls(prefix + '_*_SKL', type='joint') or [])
+    # Tip extends SKL beyond JNT — use JNT count to stay spine-only regardless of build order.
+    jnt_joints = sorted(cmds.ls(prefix + '_*_JNT', type='joint') or [])
+    all_skl = sorted(cmds.ls(prefix + '_*_SKL', type='joint') or [])
+    skl_joints = all_skl[:len(jnt_joints)] if jnt_joints else all_skl
     if not skl_joints:
         raise RuntimeError('No SKL joints found for prefix: ' + prefix)
     count = len(skl_joints)

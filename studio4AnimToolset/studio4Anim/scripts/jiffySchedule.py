@@ -21,7 +21,7 @@
 
 from PySide6 import QtWidgets, QtCore, QtGui
 import os, json, time
-from datetime import date as _date, datetime as _datetime
+from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
 import maya.cmds as cmds
 from maya import OpenMayaUI as omui
 from shiboken6 import wrapInstance
@@ -36,6 +36,8 @@ ITEM_HOVER = "#363636"
 BORDER     = "#444444"
 TEXT       = "#ffffff"
 SUBTEXT    = "#aaaaaa"
+
+_DATA_DIR_PREF = "jiffyScheduleDataDir"
 
 SHOT_STAGES  = ["Previs", "Blocking", "Primary", "Final", "Rendered", "Omit"]
 ASSET_STAGES = ["WIP", "Testing", "Production Ready", "Omit"]
@@ -360,7 +362,7 @@ class ItemDialog(QtWidgets.QDialog):
         self.name_edit        = QtWidgets.QLineEdit(self._data.get("name", ""))
         self.frame_start_edit = QtWidgets.QLineEdit(str(self._data.get("frame_start", "")))
         self.frame_end_edit   = QtWidgets.QLineEdit(str(self._data.get("frame_end", "")))
-        default_due = self._data.get("due_date", _today_dmy() if self._is_new else "")
+        default_due = self._data.get("due_date", _today_dmy())
         self.due_edit    = QtWidgets.QLineEdit(default_due)
         self.due_edit.setPlaceholderText("DD-MM-YYYY")
         self.artist_edit = QtWidgets.QLineEdit(self._data.get("artist", ""))
@@ -562,6 +564,9 @@ class SchedulePage(QtWidgets.QWidget):
         self._data.setdefault(name, {})
 
     def project_removed(self, name):
+        if self._current_project == name:
+            self._current_project = ""
+            self._active_group = ""
         self._data.pop(name, None)
 
     def get_groups_for_project(self, project):
@@ -662,7 +667,7 @@ class PieChartWidget(QtWidgets.QWidget):
 # Milestone dialog — DD-MM-YYYY, today default, optional extension note
 # ---------------------------------------------------------------------------
 class MilestoneDialog(QtWidgets.QDialog):
-    def __init__(self, data=None, parent=None):
+    def __init__(self, data=None, prod_settings=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Milestone" if data is None else "Edit Milestone")
         self.setMinimumWidth(340)
@@ -675,6 +680,7 @@ class MilestoneDialog(QtWidgets.QDialog):
         )
         self._data = data.copy() if data else {}
         self._is_new = data is None
+        self._prod_settings = prod_settings or {}
         self._build()
 
     def _build(self):
@@ -682,9 +688,9 @@ class MilestoneDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
         self.name_edit = QtWidgets.QLineEdit(self._data.get("name", ""))
-        default_date = self._data.get("due_date", _today_dmy() if self._is_new else "")
+        default_date = self._data.get("due_date", "")
         self.date_edit = QtWidgets.QLineEdit(default_date)
-        self.date_edit.setPlaceholderText("DD-MM-YYYY")
+        self.date_edit.setPlaceholderText("DD-MM-YYYY or W8")
         layout.addRow("Milestone:", self.name_edit)
         layout.addRow("Due Date:",  self.date_edit)
         btns = QtWidgets.QDialogButtonBox(
@@ -695,10 +701,25 @@ class MilestoneDialog(QtWidgets.QDialog):
         layout.addRow(btns)
 
     def get_data(self):
+        raw = self.date_edit.text().strip()
+        if raw and _parse_dmy(raw) is None:
+            raw = self._week_input_to_date(raw)
         return {
             "name":     self.name_edit.text().strip(),
-            "due_date": self.date_edit.text().strip(),
+            "due_date": raw,
         }
+
+    def _week_input_to_date(self, s):
+        """Convert 'W8' or '8' to DD-MM-YYYY using production settings. Returns s unchanged if it can't."""
+        w1 = _parse_dmy(self._prod_settings.get("week1_start", ""))
+        if w1 is None:
+            return s
+        token = s.strip().upper().lstrip("W")
+        try:
+            wk = int(token)
+        except ValueError:
+            return s
+        return (w1 + _timedelta(days=7 * (wk - 1))).strftime("%d-%m-%Y")
 
 
 # ---------------------------------------------------------------------------
@@ -728,10 +749,10 @@ class _ProductionSettingsDialog(QtWidgets.QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setLabelAlignment(QtCore.Qt.AlignRight)
 
-        self.week1_edit = QtWidgets.QLineEdit(self._settings.get("week1_start", ""))
+        self.week1_edit = QtWidgets.QLineEdit(self._settings.get("week1_start", "") or _today_dmy())
         self.week1_edit.setPlaceholderText("DD-MM-YYYY  or  YYYY-MM-DD")
 
-        self.total_weeks_edit = QtWidgets.QLineEdit(str(self._settings.get("total_weeks", 8)))
+        self.total_weeks_edit = QtWidgets.QLineEdit(str(self._settings.get("total_weeks", 12)))
         self.total_weeks_edit.setValidator(QtGui.QIntValidator(1, 52))
 
         self.hol_start_edit = QtWidgets.QLineEdit(self._settings.get("holiday_start", ""))
@@ -760,7 +781,7 @@ class _ProductionSettingsDialog(QtWidgets.QDialog):
     def get_data(self):
         return {
             "week1_start":   self.week1_edit.text().strip(),
-            "total_weeks":   int(self.total_weeks_edit.text() or "8"),
+            "total_weeks":   int(self.total_weeks_edit.text() or "12"),
             "holiday_start": self.hol_start_edit.text().strip(),
             "holiday_end":   self.hol_end_edit.text().strip(),
         }
@@ -773,10 +794,12 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings = {}
-        self.setMinimumHeight(72)
+        self._milestones = []
+        self.setMinimumHeight(100)
 
-    def set_settings(self, settings):
+    def set_settings(self, settings, milestones=None):
         self._settings = settings
+        self._milestones = milestones or []
         self.update()
 
     def paintEvent(self, event):
@@ -785,7 +808,7 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
 
         s    = self._settings
         w1   = _parse_dmy(s.get("week1_start", ""))
-        tw   = s.get("total_weeks", 8)
+        tw   = s.get("total_weeks", 12)
         hs   = _parse_dmy(s.get("holiday_start", ""))
         he   = _parse_dmy(s.get("holiday_end", ""))
         curr = _prod_week(_date.today(), w1, hs, he)
@@ -819,15 +842,16 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
         if has_break and break_slot == 0:
             draw_list.insert(0, ("break",))
 
-        n_slots   = len(draw_list)
-        margin_x  = 14
-        margin_y  = 10
-        label_h   = 16
-        usable_w  = self.width()  - 2 * margin_x
-        usable_h  = self.height() - 2 * margin_y - label_h
-        box_h     = min(usable_h, 30)
-        box_y     = margin_y + (usable_h - box_h) / 2
-        slot_w    = usable_w / n_slots if n_slots else usable_w
+        n_slots    = len(draw_list)
+        ms_strip_h = 18
+        margin_x   = 14
+        margin_y   = 6
+        label_h    = 24
+        usable_w   = self.width() - 2 * margin_x
+        avail_h    = self.height() - ms_strip_h - 2 * margin_y - label_h
+        box_h      = min(avail_h, 28)
+        box_y      = ms_strip_h + margin_y + (avail_h - box_h) / 2
+        slot_w     = usable_w / n_slots if n_slots else usable_w
 
         for idx, item in enumerate(draw_list):
             sx = margin_x + idx * slot_w
@@ -878,9 +902,54 @@ class _WeekTimelineWidget(QtWidgets.QWidget):
                 p.setFont(f2)
                 p.setPen(QtGui.QColor("white") if is_curr else QtGui.QColor(SUBTEXT))
                 p.drawText(
-                    QtCore.QRectF(sx, box_y + box_h + 2, slot_w, label_h),
+                    QtCore.QRectF(sx, box_y + box_h + 2, slot_w, 11),
                     QtCore.Qt.AlignCenter, f"W{wk}"
                 )
+                wk_start = w1 + _timedelta(days=7 * (wk - 1))
+                f3 = QtGui.QFont()
+                f3.setPixelSize(7)
+                p.setFont(f3)
+                p.setPen(QtGui.QColor(SUBTEXT))
+                p.drawText(
+                    QtCore.QRectF(sx, box_y + box_h + 13, slot_w, 11),
+                    QtCore.Qt.AlignCenter,
+                    f"{wk_start.day} {wk_start.strftime('%b')}",
+                )
+
+        # Draw milestone markers in the strip above the week blocks
+        MS_COLOR = "#e0c030"
+        for ms in self._milestones:
+            due_d = _parse_dmy(ms.get("due_date", ""))
+            if due_d is None:
+                continue
+            wk = _prod_week(due_d, w1, hs, he)
+            if wk is None:
+                continue
+            for slot_idx, item in enumerate(draw_list):
+                if item[0] == "week" and item[1] == wk:
+                    sx      = margin_x + slot_idx * slot_w
+                    mid_x   = sx + slot_w / 2
+                    tip_y   = ms_strip_h - 2
+                    tri = QtGui.QPolygonF([
+                        QtCore.QPointF(mid_x,     tip_y),
+                        QtCore.QPointF(mid_x - 4, tip_y - 7),
+                        QtCore.QPointF(mid_x + 4, tip_y - 7),
+                    ])
+                    p.setBrush(QtGui.QColor(MS_COLOR))
+                    p.setPen(QtCore.Qt.NoPen)
+                    p.drawPolygon(tri)
+                    name = ms.get("name", "")
+                    if len(name) > 9:
+                        name = name[:8] + "…"
+                    f_ms = QtGui.QFont()
+                    f_ms.setPixelSize(7)
+                    p.setFont(f_ms)
+                    p.setPen(QtGui.QColor(MS_COLOR))
+                    p.drawText(
+                        QtCore.QRectF(sx, 1, slot_w, tip_y - 9),
+                        QtCore.Qt.AlignCenter, name,
+                    )
+                    break
 
         p.end()
 
@@ -937,7 +1006,7 @@ class _WeekCountWidget(QtWidgets.QWidget):
 
     def update_settings(self, settings):
         w1   = _parse_dmy(settings.get("week1_start", ""))
-        tw   = settings.get("total_weeks", 8)
+        tw   = settings.get("total_weeks", 12)
         hs   = _parse_dmy(settings.get("holiday_start", ""))
         he   = _parse_dmy(settings.get("holiday_end", ""))
         curr = _prod_week(_date.today(), w1, hs, he)
@@ -1176,7 +1245,7 @@ class ProgressPage(QtWidgets.QWidget):
 
     def project_added(self, name):
         self._milestones.setdefault(name, [])
-        self._production.setdefault(name, {"week1_start": "", "total_weeks": 8,
+        self._production.setdefault(name, {"week1_start": "", "total_weeks": 12,
                                            "holiday_start": "", "holiday_end": ""})
 
     def project_removed(self, name):
@@ -1184,7 +1253,8 @@ class ProgressPage(QtWidgets.QWidget):
         self._production.pop(name, None)
 
     def add_milestone(self):
-        dlg = MilestoneDialog(parent=self)
+        prod = self._production.get(self._current_project, {})
+        dlg = MilestoneDialog(prod_settings=prod, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             data = dlg.get_data()
             if data["name"]:
@@ -1400,8 +1470,8 @@ class ProgressPage(QtWidgets.QWidget):
 
         # ── Week timeline ──
         timeline = _WeekTimelineWidget()
-        timeline.set_settings(prod_settings)
-        timeline.setFixedHeight(72)
+        timeline.set_settings(prod_settings, milestones=self._milestones.get(proj, []))
+        timeline.setFixedHeight(100)
         timeline.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
         vl.addWidget(timeline)
 
@@ -1465,7 +1535,8 @@ class ProgressPage(QtWidgets.QWidget):
     def _edit_milestone(self, proj, idx):
         ms = self._milestones.get(proj, [])
         if 0 <= idx < len(ms):
-            dlg = MilestoneDialog(data=ms[idx], parent=self)
+            prod = self._production.get(proj, {})
+            dlg = MilestoneDialog(data=ms[idx], prod_settings=prod, parent=self)
             if dlg.exec_() == QtWidgets.QDialog.Accepted:
                 ms[idx] = dlg.get_data()
                 self._refresh()
@@ -1695,7 +1766,8 @@ class NavPanel(QtWidgets.QWidget):
             self.project_list.setCurrentRow(0)
             self.project_list.blockSignals(False)
             self.project_removed.emit(name)
-            self.project_changed.emit("")
+            next_item = self.project_list.currentItem()
+            self.project_changed.emit(next_item.text() if next_item else "")
 
     def _remove_group(self):
         item = self.group_list.currentItem()
@@ -1713,7 +1785,8 @@ class NavPanel(QtWidgets.QWidget):
             self.group_list.setCurrentRow(0)
             self.group_list.blockSignals(False)
             self.group_removed.emit(name)
-            self.group_changed.emit("")
+            next_group = self.group_list.currentItem()
+            self.group_changed.emit(next_group.text() if next_group else "")
 
     def _remove_milestone(self):
         ms_count = self._ms_vbox.count() - 1
@@ -1758,10 +1831,12 @@ class NavPanel(QtWidgets.QWidget):
                 list_widget.blockSignals(False)
                 if label == "Project":
                     self.project_removed.emit(name)
-                    self.project_changed.emit("")
+                    next_item = list_widget.currentItem()
+                    self.project_changed.emit(next_item.text() if next_item else "")
                 else:
                     self.group_removed.emit(name)
-                    self.group_changed.emit("")
+                    next_item = list_widget.currentItem()
+                    self.group_changed.emit(next_item.text() if next_item else "")
 
 
 # ---------------------------------------------------------------------------
@@ -1776,9 +1851,13 @@ class JiffySchedule(QtWidgets.QWidget):
         self.setStyleSheet(f"QWidget{{background:{DARK_BG};color:white;}}")
         self._active_project = ""
         self._workspace_job = None
+        self._data_dir = cmds.optionVar(q=_DATA_DIR_PREF) if cmds.optionVar(exists=_DATA_DIR_PREF) else ""
         self._build()
         self._make_dockable()
-        self.load_data()
+        if self._data_dir:
+            self.load_data()
+        else:
+            QtCore.QTimer.singleShot(300, self._prompt_data_dir)
         self._workspace_job = cmds.scriptJob(
             event=['workspaceChanged', self._update_project_banner])
 
@@ -1791,7 +1870,7 @@ class JiffySchedule(QtWidgets.QWidget):
         title_bar.setFixedHeight(42)
         title_bar.setStyleSheet(f"background:#1a1a1a; border-bottom:1px solid {BORDER};")
         tl = QtWidgets.QHBoxLayout(title_bar)
-        tl.setContentsMargins(16, 0, 0, 0)
+        tl.setContentsMargins(16, 0, 8, 0)
         tl.setSpacing(0)
         name_lbl = QtWidgets.QLabel("JiffySchedule")
         name_lbl.setStyleSheet("font-size:17px; font-weight:bold; color:white;")
@@ -1811,6 +1890,15 @@ class JiffySchedule(QtWidgets.QWidget):
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
         tl.addWidget(self.tab_bar)
         tl.addStretch()
+        folder_btn = QtWidgets.QPushButton("📁")
+        folder_btn.setFixedSize(30, 30)
+        folder_btn.setToolTip("Change data folder")
+        folder_btn.setStyleSheet(
+            "QPushButton{background:transparent;color:#666;border:none;font-size:14px;}"
+            "QPushButton:hover{color:white;}"
+        )
+        folder_btn.clicked.connect(self._choose_data_dir)
+        tl.addWidget(folder_btn)
         layout.addWidget(title_bar)
 
         workspace = cmds.workspace(query=True, rootDirectory=True).rstrip("/\\")
@@ -1882,10 +1970,7 @@ class JiffySchedule(QtWidgets.QWidget):
             page    = self._active_page()
             label   = self._group_label_for_tab(index)
             groups  = page.get_groups_for_project(self._active_project)
-            if self._active_project:
-                self.nav.set_groups(groups, group_label=label, enabled=True)
-            else:
-                self.nav.show_bottom_section(False)
+            self.nav.set_groups(groups, group_label=label, enabled=bool(self._active_project))
 
     def _enter_progress_tab(self):
         proj = self._active_project
@@ -1918,10 +2003,7 @@ class JiffySchedule(QtWidgets.QWidget):
         else:
             label  = self._group_label_for_tab(self.tab_bar.currentIndex())
             groups = self._active_page().get_groups_for_project(project)
-            if project:
-                self.nav.set_groups(groups, group_label=label, enabled=True)
-            else:
-                self.nav.show_bottom_section(False)
+            self.nav.set_groups(groups, group_label=label, enabled=bool(project))
 
     def _on_project_added(self, name):
         self.shots_page.project_added(name)
@@ -1979,6 +2061,8 @@ class JiffySchedule(QtWidgets.QWidget):
 
     def save_data(self):
         path = self._save_path()
+        if not path:
+            return
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             g = self.geometry()
@@ -1998,7 +2082,7 @@ class JiffySchedule(QtWidgets.QWidget):
 
     def load_data(self):
         path = self._save_path()
-        if not os.path.exists(path):
+        if not path or not os.path.exists(path):
             return
         try:
             with open(path, "r") as f:
@@ -2054,13 +2138,34 @@ class JiffySchedule(QtWidgets.QWidget):
                 f"background:#1a1a1a; color:#4caf50; font-size:15px; font-weight:bold;"
                 f"padding-left:16px; border-bottom:1px solid {BORDER};"
             )
-        self.load_data()
 
     def _save_path(self):
-        root = cmds.workspace(query=True, rootDirectory=True)
-        return os.path.join(root, "jiffyShotData", "jiffyschedule.json")
+        if not self._data_dir:
+            return None
+        os.makedirs(self._data_dir, exist_ok=True)
+        return os.path.join(self._data_dir, "jiffyschedule.json")
+
+    def _prompt_data_dir(self):
+        QtWidgets.QMessageBox.information(
+            self, "JiffySchedule — Choose data folder",
+            "Please choose a folder where JiffySchedule will store your project data.\n"
+            "This only needs to be done once.",
+        )
+        self._choose_data_dir()
+
+    def _choose_data_dir(self):
+        start = self._data_dir or os.path.expanduser("~")
+        d = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "JiffySchedule — Choose data folder", start,
+        )
+        if d:
+            self._data_dir = d
+            cmds.optionVar(sv=(_DATA_DIR_PREF, d))
+            self.load_data()
 
     def closeEvent(self, event):
+        global _jiffyschedule_window
+        _jiffyschedule_window = None
         if self._workspace_job is not None:
             try:
                 cmds.scriptJob(kill=self._workspace_job, force=True)
@@ -2080,13 +2185,17 @@ class JiffySchedule(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+_jiffyschedule_window = None
+
 def run_jiffyschedule():
     global _jiffyschedule_window
-    try:
-        if _jiffyschedule_window and not _jiffyschedule_window.isHidden():
-            _jiffyschedule_window.close()
-    except (NameError, RuntimeError):
-        pass
+    if _jiffyschedule_window is not None:
+        try:
+            _jiffyschedule_window.raise_()
+            _jiffyschedule_window.activateWindow()
+            return _jiffyschedule_window
+        except RuntimeError:
+            _jiffyschedule_window = None
     _jiffyschedule_window = JiffySchedule()
     _jiffyschedule_window.show()
     _jiffyschedule_window.raise_()

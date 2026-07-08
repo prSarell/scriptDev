@@ -272,7 +272,26 @@ def startCorrection(mesh, target_name):
     for attr in ('tx', 'ty', 'tz', 'rx', 'ry', 'rz'):
         cmds.setAttr(dup_a + '.' + attr, lock=False)
 
+    cmds.addAttr(dup_a, longName='correctiveSourceMesh', dataType='string')
+    cmds.setAttr(dup_a + '.correctiveSourceMesh', mesh, type='string')
+
     return dup_a, dup_b, bs_states
+
+
+# ── sculpt transform safety ──────────────────────────────────────────────────
+
+def _zero_sculpt_transforms(sculpt_mesh):
+    saved = {}
+    for attr in ('tx', 'ty', 'tz', 'rx', 'ry', 'rz'):
+        full = sculpt_mesh + '.' + attr
+        saved[attr] = cmds.getAttr(full)
+        cmds.setAttr(full, 0)
+    return saved
+
+
+def _restore_sculpt_transforms(sculpt_mesh, saved):
+    for attr, val in saved.items():
+        cmds.setAttr(sculpt_mesh + '.' + attr, val)
 
 
 # ── delta extraction ──────────────────────────────────────────────────────────
@@ -414,7 +433,11 @@ def updateCorrectiveTarget(mesh, target_name, sculpted_mesh):
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh)
+    saved_xforms = _zero_sculpt_transforms(sculpted_mesh)
+    try:
+        _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh)
+    finally:
+        _restore_sculpt_transforms(sculpted_mesh, saved_xforms)
 
 
 def _writeTargetDeltas(mesh, bs_node, target_index, sculpted_mesh):
@@ -491,9 +514,46 @@ def removeCorrectiveTarget(mesh, target_name):
     if bs_node is None:
         raise CorrectiveBSError(mesh + ' has no corrective blendShape node')
     target_index = _resolveTargetIndex(bs_node, target_name)
-    cmds.blendShape(bs_node, edit=True,
-                    remove=True,
-                    target=(mesh, target_index, mesh, 1.0))
+
+    weight_attr = '%s.weight[%d]' % (bs_node, target_index)
+
+    driver_nodes_to_delete = set()
+    connections = cmds.listConnections(
+        weight_attr, source=True, destination=False, plugs=True) or []
+    for plug in connections:
+        node = plug.split('.')[0]
+        cmds.disconnectAttr(plug, weight_attr)
+        nt = cmds.nodeType(node)
+        if nt in ('animCurveUU', 'animCurveUA', 'animCurveUL',
+                  'animCurveUT', 'setRange', 'floatMath'):
+            driver_nodes_to_delete.add(node)
+            upstream = cmds.listConnections(
+                node, source=True, destination=False) or []
+            for up in upstream:
+                if cmds.nodeType(up) in ('setRange', 'floatMath'):
+                    driver_nodes_to_delete.add(up)
+
+    for node in driver_nodes_to_delete:
+        if cmds.objExists(node):
+            cmds.delete(node)
+
+    cmds.setAttr(weight_attr, 0)
+
+    ipt_attr = ('%s.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputPointsTarget') % (bs_node, target_index)
+    ict_attr = ('%s.inputTarget[0].inputTargetGroup[%d]'
+                '.inputTargetItem[6000].inputComponentsTarget') % (bs_node, target_index)
+    mel.eval('setAttr -type "pointArray" "%s" 0' % ipt_attr)
+    mel.eval('setAttr -type "componentList" "%s" 0' % ict_attr)
+
+    try:
+        cmds.aliasAttr(weight_attr, remove=True)
+    except Exception:
+        pass
+
+    aliases = cmds.aliasAttr(bs_node, query=True) or []
+    if not aliases:
+        cmds.delete(bs_node)
 
 
 def _resolveTargetIndex(bs_node, target_name):
@@ -590,8 +650,12 @@ def bakeCorrection(mesh, sculpted_mesh, target_name,
             raise CorrectiveBSError('Object not found: ' + obj)
         getMeshShape(obj)
 
-    target_positions      = extractDelta(mesh, sculpted_mesh)
-    bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
+    saved_xforms = _zero_sculpt_transforms(sculpted_mesh)
+    try:
+        target_positions      = extractDelta(mesh, sculpted_mesh)
+        bs_node, target_index = addCorrectiveTarget(mesh, target_positions, target_name)
+    finally:
+        _restore_sculpt_transforms(sculpted_mesh, saved_xforms)
 
     if custom_driver_attr and custom_driver_value is not None:
         _wireCustomDriver(bs_node, target_index, custom_driver_attr, custom_driver_value)

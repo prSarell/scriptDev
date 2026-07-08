@@ -5,7 +5,7 @@ BUTTONS = [
     {
         "label": "multiTool",
         "tooltip": "Open multiTool — animation utilities: snap, constraints, bake, gravity, ballistics, and more",
-        "icon": "commandButton.png",
+        "icon": "iconMultiTool.png",
         "command": (
             "import importlib, sys\n"
             "for _m in [k for k in sys.modules if k.startswith('mt') or k == 'multiTool']:\n"

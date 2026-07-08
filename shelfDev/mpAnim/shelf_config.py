@@ -70,6 +70,18 @@ MULTITOOL_SCRIPTS = [
 #   command : Python string executed when the button is clicked
 BUTTONS = [
     {
+        "label": "multiTool",
+        "tooltip": "Open multiTool — animation utilities: snap, constraints, bake, gravity, ballistics, and more",
+        "icon": "iconMultiTool.png",
+        "command": (
+            "import importlib, sys\n"
+            "for _m in [k for k in sys.modules if k.startswith('mt') or k == 'multiTool']:\n"
+            "    del sys.modules[_m]\n"
+            "import multiTool\n"
+            "multiTool.show()"
+        ),
+    },
+    {
         "label": "Playblast",
         "tooltip": "Open the Playblast Manager — creates versioned JPEG sequences with burn-ins",
         "icon": "playblast.png",

@@ -1,0 +1,27 @@
+name: Release studio4AnimToolset
+
+on:
+  push:
+    branches: [main]
+    paths: [studio4AnimToolset/**]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip studio4AnimToolset
+        run: zip -r studio4AnimToolset.zip studio4AnimToolset/
+
+      - name: Update latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: studio4anim-latest
+          name: studio4AnimToolset Latest
+          body: Drag `install.py` into Maya to install or update.
+          files: studio4AnimToolset.zip
+          make_latest: false

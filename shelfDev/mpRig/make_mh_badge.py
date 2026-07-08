@@ -20,11 +20,14 @@ MH_ICONS = [
     'iconMhBodyClean.png',
 ]
 
-# Badge geometry — centred at (463, 463) inside the 60px rounded corner
-_BX, _BY, _BR = 463, 463, 36
+# Badge geometry as fractions of canvas size — originally tuned as
+# (463, 463, 36) on a 512px canvas; expressed as ratios so the badge
+# scales correctly on any icon size (e.g. the 256px mpAnim icons).
+_BX_R, _BY_R, _BR_R = 463 / 512, 463 / 512, 36 / 512
+_FONT_R = 44 / 512
 
 
-def _get_font(size=44):
+def _get_font(size):
     for path in (
         'C:/Windows/Fonts/arialbd.ttf',
         'C:/Windows/Fonts/arial.ttf',
@@ -35,16 +38,22 @@ def _get_font(size=44):
     return ImageFont.load_default()
 
 
-def add_mh_badge(img):
-    """Return a copy of img with the 'm' badge stamped in the bottom-right."""
+def add_mh_badge(img, invert=False):
+    """Return a copy of img with the 'm' badge stamped in the bottom-right.
+
+    invert=True gives a white dot / black "m" — use this on icons with a
+    black background, per the studio icon standard.
+    """
     out = img.convert('RGBA')
+    size = out.width
+    bx, by, br = _BX_R * size, _BY_R * size, _BR_R * size
+    dot_color = (255, 255, 255, 255) if invert else (0, 0, 0, 255)
+    text_color = (0, 0, 0, 255) if invert else (255, 255, 255, 255)
+
     draw = ImageDraw.Draw(out)
-    draw.ellipse(
-        [_BX - _BR, _BY - _BR, _BX + _BR, _BY + _BR],
-        fill=(0, 0, 0, 255),
-    )
-    draw.text((_BX, _BY), 'm', font=_get_font(44),
-              fill=(255, 255, 255, 255), anchor='mm')
+    draw.ellipse([bx - br, by - br, bx + br, by + br], fill=dot_color)
+    draw.text((bx, by), 'm', font=_get_font(round(_FONT_R * size)),
+              fill=text_color, anchor='mm')
     return out
 
 
