@@ -352,17 +352,25 @@ class SmoothToolCore:
     }
 
     def create_curves(self):
-        """Build the original / smooth / blend curve sets."""
+        """Build the original / smooth / blend curve sets.
+
+        When a parent space is set, the curves are built directly from the
+        parent-local point data and parented under that object, so their
+        shape shows only the local motion (the parent's own motion rides
+        along through the DAG rather than being baked into the CVs).
+        """
         self.delete_curves()
         for vi in range(3):
             pts = self.vert_positions[vi]
-            if self.parent_space_obj:
-                pts = [self._local_to_world(p, fi) for fi, p in enumerate(pts)]
             base = '{}_{}'.format(self.bake_target, vi)
 
             orig = cmds.curve(p=pts, d=3, name='{}_orig'.format(base))
             smth = cmds.curve(p=pts, d=3, name='{}_smooth'.format(base))
             blnd = cmds.curve(p=pts, d=3, name='{}_blend'.format(base))
+
+            if self.parent_space_obj:
+                cmds.parent(orig, smth, blnd, self.parent_space_obj,
+                            relative=True)
 
             self.original_curves.append(orig)
             self.smooth_curves.append(smth)
@@ -382,20 +390,9 @@ class SmoothToolCore:
         self.smooth_curves = []
         self.blend_curves = []
 
-    def _local_to_world(self, local_pos, frame_index):
-        """Convert a parent-space position back to world for display."""
-        if not self.parent_matrices:
-            return local_pos
-        pm = _mmatrix_from_list(self.parent_matrices[frame_index])
-        pt = om.MPoint(local_pos[0], local_pos[1], local_pos[2])
-        world = pt * pm
-        return (world.x, world.y, world.z)
-
-    def _write_curve_positions(self, curve, positions, parent_space=False):
+    def _write_curve_positions(self, curve, positions):
         """Update every CV on *curve* with new positions."""
         for j, pos in enumerate(positions):
-            if parent_space:
-                pos = self._local_to_world(pos, j)
             cmds.setAttr('{}.cp[{}]'.format(curve, j), *pos)
 
     # ------------------------------------------------------------------
@@ -415,8 +412,7 @@ class SmoothToolCore:
             sz = smooth_channel(zs, strength)
             self._smoothed[vi] = list(zip(sx, sy, sz))
             self._write_curve_positions(
-                self.smooth_curves[vi], self._smoothed[vi],
-                parent_space=bool(self.parent_space_obj))
+                self.smooth_curves[vi], self._smoothed[vi])
         self.update_blend(self.blend)
 
     def update_blend(self, blend):
@@ -437,8 +433,7 @@ class SmoothToolCore:
                 blended.append((bx, by, bz))
             self._blended[vi] = blended
             self._write_curve_positions(
-                self.blend_curves[vi], blended,
-                parent_space=bool(self.parent_space_obj))
+                self.blend_curves[vi], blended)
 
     def update_falloff(self, falloff):
         """Re-apply blend with new falloff ratio."""
@@ -508,7 +503,12 @@ class SmoothToolCore:
                 while cmds.animLayer(layer_name, q=True, exists=True):
                     layer_name = '{}_smooth_{}'.format(self.bake_target, idx)
                     idx += 1
-                cmds.animLayer(layer_name, override=not additive)
+                # animLayer sanitizes characters like '|' out of the node
+                # name it actually creates (bake_target may be a full DAG
+                # path when its short name is ambiguous) -- use the name
+                # Maya actually assigned, not the one we guessed, or the
+                # later -edit -attribute calls can't resolve the layer.
+                layer_name = cmds.animLayer(layer_name, override=not additive)
                 for attr in bake_attrs:
                     cmds.animLayer(
                         layer_name, e=True,
