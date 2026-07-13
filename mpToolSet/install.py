@@ -322,7 +322,21 @@ def _install(root):
             ngskin_dst = os.path.join(plugins_dst, "ngskintools2")
             _backup_directory(ngskin_dst, backup_dir, "app_plugins")
             if os.path.exists(ngskin_dst):
-                shutil.rmtree(ngskin_dst)
+                try:
+                    if cmds.pluginInfo("ngSkinTools2", q=True, loaded=True):
+                        cmds.unloadPlugin("ngSkinTools2", force=True)
+                except RuntimeError:
+                    pass
+                try:
+                    shutil.rmtree(ngskin_dst)
+                except PermissionError:
+                    raise RuntimeError(
+                        "Could not update ngSkinTools2 — its plugin file is "
+                        "still locked by this Maya session (likely loaded via "
+                        "Autodesk's ApplicationPlugins autoloader). Restart "
+                        "Maya and run the installer again before opening any "
+                        "scene that uses ngSkinTools2."
+                    )
             shutil.copytree(ngskin_src, ngskin_dst)
             if sys.platform == "darwin":
                 subprocess.run(
