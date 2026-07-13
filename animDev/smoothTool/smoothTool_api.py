@@ -41,6 +41,21 @@ def _lfilter(b, a, x):
     return y
 
 
+def _settling_length(a, epsilon=1e-4):
+    """Samples needed for the filter's dominant pole to decay to *epsilon*.
+
+    A fixed pad of 3*order (the classic default) only holds for moderate
+    cutoffs. At the low cutoffs used for high smoothing strength the pole
+    radius approaches 1 and the filter needs far more run-up, otherwise
+    the reflected padding hasn't settled by the time it reaches the real
+    data and the ends ring/overshoot.
+    """
+    pole_radius = min(0.999, math.sqrt(max(a[-1], 1e-6)))
+    if pole_radius <= 1e-6:
+        return 3 * len(a)
+    return int(math.ceil(math.log(epsilon) / math.log(pole_radius)))
+
+
 def _filtfilt(b, a, x):
     """Zero-phase digital filtering (forward–backward).
 
@@ -49,7 +64,7 @@ def _filtfilt(b, a, x):
     n = len(x)
     if n < 6:
         return list(x)
-    pad = min(3 * max(len(a), len(b)), n - 1)
+    pad = min(max(3 * max(len(a), len(b)), _settling_length(a)), n - 1)
     front = [2.0 * x[0] - x[i] for i in range(pad, 0, -1)]
     back = [2.0 * x[-1] - x[-(i + 2)] for i in range(pad)]
     padded = front + list(x) + back
@@ -398,8 +413,6 @@ class SmoothToolCore:
             sx = smooth_channel(xs, strength)
             sy = smooth_channel(ys, strength)
             sz = smooth_channel(zs, strength)
-            sx[0],  sy[0],  sz[0]  = xs[0],  ys[0],  zs[0]
-            sx[-1], sy[-1], sz[-1] = xs[-1], ys[-1], zs[-1]
             self._smoothed[vi] = list(zip(sx, sy, sz))
             self._write_curve_positions(
                 self.smooth_curves[vi], self._smoothed[vi],
@@ -503,30 +516,18 @@ class SmoothToolCore:
 
             for i, frame in enumerate(self.frames):
                 smooth_world = smoothed_matrices[i]
-                orig_world = _mmatrix_from_list(self.ctrl_matrices[i])
 
                 if bake_parent_matrices:
                     inv_parent = bake_parent_matrices[i].inverse()
                     smooth_local = smooth_world * inv_parent
-                    orig_local = orig_world * inv_parent
                 else:
                     smooth_local = smooth_world
-                    orig_local = orig_world
 
                 smooth_t, smooth_r = _decompose_mmatrix(smooth_local, rot_order)
-
-                if additive and to_layer:
-                    orig_t, orig_r = _decompose_mmatrix(orig_local, rot_order)
-                    vals = [
-                        smooth_t[0] - orig_t[0],
-                        smooth_t[1] - orig_t[1],
-                        smooth_t[2] - orig_t[2],
-                        smooth_r[0] - orig_r[0],
-                        smooth_r[1] - orig_r[1],
-                        smooth_r[2] - orig_r[2],
-                    ]
-                else:
-                    vals = list(smooth_t) + list(smooth_r)
+                # setKeyframe's animLayer flag wants the absolute combined
+                # result, not a pre-computed delta — Maya derives the
+                # layer-local (additive) contribution itself.
+                vals = list(smooth_t) + list(smooth_r)
 
                 for attr, val in zip(bake_attrs, vals):
                     if layer_name:

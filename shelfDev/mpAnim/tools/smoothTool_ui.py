@@ -139,7 +139,7 @@ class SmoothToolUI(QtWidgets.QDialog):
             'Strength', 0.0, 5.0, 1.0)
         slider_lay.addLayout(r)
         r, self._blend_slider, self._blend_val = _make_slider_row(
-            'Blend', 0.0, 1.0, 0.0)
+            'Blend', 0.0, 1.0, 1.0)
         slider_lay.addLayout(r)
         r, self._falloff_slider, self._falloff_val = _make_slider_row(
             'Falloff', 0.0, 0.5, 0.15)
@@ -251,6 +251,7 @@ class SmoothToolUI(QtWidgets.QDialog):
         strength = self._slider_value(self._strength_slider, 'strength')
         self._core.falloff = self._slider_value(
             self._falloff_slider, 'falloff')
+        self._core.blend = self._slider_value(self._blend_slider, 'blend')
         self._core.update_smooth(strength)
 
         self._curves_live = True
