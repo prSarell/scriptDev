@@ -55,6 +55,7 @@ STAGE_COLORS = {
 }
 
 THUMB_W, THUMB_H = 128, 72
+_ITEM_MIME = "application/x-jiffy-item"
 
 _LIST_STYLE = (
     f"QListWidget{{background:{PANEL_BG};border:none;color:white;outline:none;}}"
@@ -156,8 +157,6 @@ class StageBadge(QtWidgets.QLabel):
         self.setFixedSize(90, 24)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setCursor(QtCore.Qt.PointingHandCursor)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._context_menu)
         self.set_stage(stage)
 
     def set_stage(self, stage):
@@ -170,14 +169,16 @@ class StageBadge(QtWidgets.QLabel):
             f"font-weight:bold; font-size:11px; padding:2px 6px;"
         )
 
-    def _context_menu(self, pos):
-        menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
-        actions = {menu.addAction(s): s for s in self._stages}
-        chosen = menu.exec_(self.mapToGlobal(pos))
-        if chosen in actions:
-            self.set_stage(actions[chosen])
-            self.stage_changed.emit(actions[chosen])
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            menu = QtWidgets.QMenu(self)
+            menu.setStyleSheet(_MENU_STYLE)
+            actions = {menu.addAction(s): s for s in self._stages}
+            chosen = menu.exec_(self.mapToGlobal(event.pos()))
+            if chosen in actions:
+                self.set_stage(actions[chosen])
+                self.stage_changed.emit(actions[chosen])
+        super().mousePressEvent(event)
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +247,7 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.item_data  = item_data
         self.item_label = item_label
         self._stages    = stages or SHOT_STAGES
+        self._drag_start = None
         self.setFixedHeight(90)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.setStyleSheet(
@@ -258,8 +260,16 @@ class ItemRowWidget(QtWidgets.QFrame):
 
     def _build(self):
         row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(10, 8, 14, 8)
+        row.setContentsMargins(4, 8, 14, 8)
         row.setSpacing(14)
+
+        self._handle = QtWidgets.QLabel("⠿")
+        self._handle.setFixedWidth(16)
+        self._handle.setAlignment(QtCore.Qt.AlignCenter)
+        self._handle.setStyleSheet(f"color:{SUBTEXT}; font-size:16px;")
+        self._handle.setCursor(QtCore.Qt.SizeVerCursor)
+        self._handle.installEventFilter(self)
+        row.addWidget(self._handle)
 
         self.thumb = ThumbnailLabel()
         self.thumb.set_image(self.item_data.get("thumbnail", ""))
@@ -286,6 +296,30 @@ class ItemRowWidget(QtWidgets.QFrame):
         row.addWidget(self.badge, alignment=QtCore.Qt.AlignVCenter)
 
         self._refresh_labels()
+
+    def eventFilter(self, obj, event):
+        if obj is self._handle:
+            t = event.type()
+            if t == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.LeftButton:
+                self._drag_start = QtCore.QPoint(event.pos())
+                return True
+            if t == QtCore.QEvent.MouseMove and self._drag_start is not None:
+                if (event.pos() - self._drag_start).manhattanLength() >= QtWidgets.QApplication.startDragDistance():
+                    self._start_drag(self._handle.mapTo(self, event.pos()))
+                    self._drag_start = None
+                return True
+            if t == QtCore.QEvent.MouseButtonRelease:
+                self._drag_start = None
+        return super().eventFilter(obj, event)
+
+    def _start_drag(self, hotspot):
+        drag = QtGui.QDrag(self)
+        mime = QtCore.QMimeData()
+        mime.setData(_ITEM_MIME, QtCore.QByteArray(self.item_data.get("name", "").encode()))
+        drag.setMimeData(mime)
+        drag.setPixmap(self.grab())
+        drag.setHotSpot(hotspot)
+        drag.exec_(QtCore.Qt.MoveAction)
 
     def _refresh_labels(self):
         d = self.item_data
@@ -397,6 +431,73 @@ class ItemDialog(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Drop container — used by ItemListPanel for drag-to-reorder
+# ---------------------------------------------------------------------------
+class _InsertLine(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        self.setFixedHeight(2)
+        self.hide()
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor("#4caf50"))
+        p.end()
+
+
+class _DropContainer(QtWidgets.QWidget):
+    drop_performed = QtCore.Signal(str, int)  # (item_name, target_index)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._line = _InsertLine(self)
+
+    def _gap_at(self, y):
+        """Return (line_y, insert_index) for the gap nearest to y."""
+        layout = self.layout()
+        if layout is None:
+            return 0, 0
+        count = layout.count() - 1  # last item is stretch
+        for i in range(count):
+            w = layout.itemAt(i).widget()
+            if w and y < w.y() + w.height() // 2:
+                return w.y(), i
+        last = layout.itemAt(count - 1).widget() if count > 0 else None
+        end_y = (last.y() + last.height()) if last else y
+        return end_y, count
+
+    def _show_line(self, y):
+        self._line.setGeometry(0, max(0, y - 1), self.width(), 2)
+        self._line.show()
+        self._line.raise_()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(_ITEM_MIME):
+            line_y, _ = self._gap_at(event.pos().y())
+            self._show_line(line_y)
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(_ITEM_MIME):
+            line_y, _ = self._gap_at(event.pos().y())
+            self._show_line(line_y)
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._line.hide()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat(_ITEM_MIME):
+            name = bytes(event.mimeData().data(_ITEM_MIME)).decode()
+            _, target_idx = self._gap_at(event.pos().y())
+            self._line.hide()
+            self.drop_performed.emit(name, target_idx)
+            event.acceptProposedAction()
+
+
+# ---------------------------------------------------------------------------
 # Item list panel
 # ---------------------------------------------------------------------------
 class ItemListPanel(QtWidgets.QWidget):
@@ -453,8 +554,9 @@ class ItemListPanel(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"QScrollArea{{border:none; background:{DARK_BG};}}")
-        self.container = QtWidgets.QWidget()
+        self.container = _DropContainer()
         self.container.setStyleSheet(f"background:{DARK_BG};")
+        self.container.drop_performed.connect(self._on_drop)
         self.vbox = QtWidgets.QVBoxLayout(self.container)
         self.vbox.setContentsMargins(0, 0, 0, 0)
         self.vbox.setSpacing(1)
@@ -524,6 +626,17 @@ class ItemListPanel(QtWidgets.QWidget):
         idx = next((i for i, s in enumerate(self.items) if s.get("name") == item_data.get("name")), None)
         if idx is not None:
             self.items[idx] = item_data
+        self.data_changed.emit()
+
+    def _on_drop(self, name, target_idx):
+        src_idx = next((i for i, s in enumerate(self.items) if s.get("name") == name), None)
+        if src_idx is None or src_idx == target_idx:
+            return
+        item = self.items.pop(src_idx)
+        if target_idx > src_idx:
+            target_idx -= 1
+        self.items.insert(target_idx, item)
+        self._rebuild()
         self.data_changed.emit()
 
 
@@ -1548,6 +1661,179 @@ class ProgressPage(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Artists tab — global artist roster (name + role)
+# ---------------------------------------------------------------------------
+class _ArtistDialog(QtWidgets.QDialog):
+    def __init__(self, data=None, parent=None):
+        super().__init__(parent)
+        self._is_new = data is None
+        self.setWindowTitle("Add Artist" if self._is_new else "Edit Artist")
+        self.setMinimumWidth(300)
+        self.setStyleSheet(
+            f"QDialog{{background:{DARK_BG};color:white;}}"
+            f"QLabel{{color:white;}}"
+            f"QLineEdit{{background:{ITEM_BG};color:white;border:1px solid {BORDER};padding:4px;}}"
+            f"QPushButton{{background:#444;color:white;border:1px solid {BORDER};padding:4px 12px;}}"
+            f"QPushButton:hover{{background:#555;}}"
+        )
+        self._data = data.copy() if data else {}
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QFormLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        self.name_edit = QtWidgets.QLineEdit(self._data.get("name", ""))
+        self.role_edit = QtWidgets.QLineEdit(self._data.get("role", ""))
+        self.role_edit.setPlaceholderText("e.g. Animator, Rigger, VFX…")
+        layout.addRow("Name:", self.name_edit)
+        layout.addRow("Role:", self.role_edit)
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def get_data(self):
+        return {
+            "name": self.name_edit.text().strip(),
+            "role": self.role_edit.text().strip(),
+        }
+
+
+class _ArtistRow(QtWidgets.QFrame):
+    edit_requested   = QtCore.Signal(int)
+    delete_requested = QtCore.Signal(int)
+
+    def __init__(self, index, data, parent=None):
+        super().__init__(parent)
+        self._index = index
+        self.setFixedHeight(56)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.setStyleSheet(
+            f"_ArtistRow, QFrame{{background:{ITEM_BG}; border-bottom:1px solid {BORDER};}}"
+            f"_ArtistRow:hover, QFrame:hover{{background:{ITEM_HOVER};}}"
+        )
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(10)
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(2)
+        name_lbl = QtWidgets.QLabel(data.get("name", ""))
+        name_lbl.setStyleSheet("font-weight:bold; font-size:13px; color:white;")
+        role_lbl = QtWidgets.QLabel(data.get("role", ""))
+        role_lbl.setStyleSheet(f"font-size:11px; color:{SUBTEXT};")
+        left.addWidget(name_lbl)
+        left.addWidget(role_lbl)
+        row.addLayout(left, stretch=1)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._ctx)
+
+    def _ctx(self, pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        edit_act = menu.addAction("Edit Artist")
+        del_act  = menu.addAction("Delete Artist")
+        act = menu.exec_(self.mapToGlobal(pos))
+        if act == edit_act:
+            self.edit_requested.emit(self._index)
+        elif act == del_act:
+            self.delete_requested.emit(self._index)
+
+
+class ArtistsPage(QtWidgets.QWidget):
+    data_changed = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._artists = []
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QtWidgets.QWidget()
+        header.setFixedHeight(38)
+        header.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
+        hl = QtWidgets.QHBoxLayout(header)
+        hl.setContentsMargins(12, 0, 12, 0)
+        lbl = QtWidgets.QLabel("Artists")
+        lbl.setStyleSheet("font-weight:bold; font-size:13px; color:white;")
+        hl.addWidget(lbl)
+        hl.addStretch()
+        add_btn = QtWidgets.QPushButton("+ Add Artist")
+        add_btn.setStyleSheet(
+            "QPushButton{background:#2e5a2e;color:white;border:none;padding:4px 14px;border-radius:3px;}"
+            "QPushButton:hover{background:#3a7a3a;}"
+        )
+        add_btn.clicked.connect(self._add_artist)
+        hl.addWidget(add_btn)
+        layout.addWidget(header)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"QScrollArea{{border:none; background:{DARK_BG};}}")
+        self._container = QtWidgets.QWidget()
+        self._container.setStyleSheet(f"background:{DARK_BG};")
+        self._vbox = QtWidgets.QVBoxLayout(self._container)
+        self._vbox.setContentsMargins(0, 0, 0, 0)
+        self._vbox.setSpacing(1)
+        self._vbox.addStretch()
+        scroll.setWidget(self._container)
+        layout.addWidget(scroll)
+
+    def _rebuild(self):
+        while self._vbox.count() > 1:
+            item = self._vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for i, artist in enumerate(self._artists):
+            row = _ArtistRow(i, artist)
+            row.edit_requested.connect(self._edit_artist)
+            row.delete_requested.connect(self._delete_artist)
+            self._vbox.insertWidget(self._vbox.count() - 1, row)
+
+    def _add_artist(self):
+        dlg = _ArtistDialog(parent=self)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            data = dlg.get_data()
+            if data["name"]:
+                self._artists.append(data)
+                self._rebuild()
+                self.data_changed.emit()
+
+    def _edit_artist(self, idx):
+        if 0 <= idx < len(self._artists):
+            dlg = _ArtistDialog(data=self._artists[idx], parent=self)
+            if dlg.exec_() == QtWidgets.QDialog.Accepted:
+                self._artists[idx] = dlg.get_data()
+                self._rebuild()
+                self.data_changed.emit()
+
+    def _delete_artist(self, idx):
+        if 0 <= idx < len(self._artists):
+            name = self._artists[idx].get("name", "")
+            reply = QtWidgets.QMessageBox.question(
+                self, "Delete Artist", f"Remove '{name}'?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                del self._artists[idx]
+                self._rebuild()
+                self.data_changed.emit()
+
+    def get_data(self):
+        return list(self._artists)
+
+    def load_data(self, data):
+        self._artists = list(data) if isinstance(data, list) else []
+        self._rebuild()
+
+
+# ---------------------------------------------------------------------------
 # NavPanel — Projects (top) + Groups or Milestones (bottom)
 # ---------------------------------------------------------------------------
 class NavPanel(QtWidgets.QWidget):
@@ -1880,6 +2166,7 @@ class JiffySchedule(QtWidgets.QWidget):
         self.tab_bar.addTab("Shots")
         self.tab_bar.addTab("Assets")
         self.tab_bar.addTab("Progress")
+        self.tab_bar.addTab("Artists")
         self.tab_bar.setStyleSheet(
             "QTabBar{background:transparent;}"
             f"QTabBar::tab{{background:transparent;color:{SUBTEXT};padding:0 20px;"
@@ -1935,16 +2222,19 @@ class JiffySchedule(QtWidgets.QWidget):
         self.shots_page    = SchedulePage(item_label="Shot",  stages=SHOT_STAGES)
         self.assets_page   = SchedulePage(item_label="Asset", stages=ASSET_STAGES)
         self.progress_page = ProgressPage()
+        self.artists_page  = ArtistsPage()
 
         self.shots_page.data_changed.connect(self._on_shots_changed)
         self.assets_page.data_changed.connect(self._on_assets_changed)
         self.progress_page.data_changed.connect(self._on_milestone_data_changed)
         self.progress_page.save_requested.connect(self.save_data)
+        self.artists_page.data_changed.connect(self.save_data)
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.shots_page)
         self.stack.addWidget(self.assets_page)
         self.stack.addWidget(self.progress_page)
+        self.stack.addWidget(self.artists_page)
 
         body.addWidget(self.nav)
         body.addWidget(self.stack)
@@ -1966,6 +2256,8 @@ class JiffySchedule(QtWidgets.QWidget):
         self.stack.setCurrentIndex(index)
         if index == 2:
             self._enter_progress_tab()
+        elif index == 3:
+            self.nav.show_bottom_section(False)
         else:
             page    = self._active_page()
             label   = self._group_label_for_tab(index)
@@ -1992,7 +2284,8 @@ class JiffySchedule(QtWidgets.QWidget):
         self._active_project = project
         self.shots_page.set_project(project)
         self.assets_page.set_project(project)
-        if self.tab_bar.currentIndex() == 2:
+        idx = self.tab_bar.currentIndex()
+        if idx == 2:
             self.progress_page.set_project(
                 project, self.shots_page.get_data(), self.assets_page.get_data()
             )
@@ -2000,8 +2293,10 @@ class JiffySchedule(QtWidgets.QWidget):
                 self.nav.show_milestones(self.progress_page.get_milestones_for_project(project))
             else:
                 self.nav.show_bottom_section(False)
+        elif idx == 3:
+            pass  # artists tab — global, unaffected by project selection
         else:
-            label  = self._group_label_for_tab(self.tab_bar.currentIndex())
+            label  = self._group_label_for_tab(idx)
             groups = self._active_page().get_groups_for_project(project)
             self.nav.set_groups(groups, group_label=label, enabled=bool(project))
 
@@ -2072,6 +2367,7 @@ class JiffySchedule(QtWidgets.QWidget):
                 "assets":     self.assets_page.get_data(),
                 "milestones": self.progress_page.get_milestones(),
                 "production": self.progress_page.get_production(),
+                "artists":    self.artists_page.get_data(),
                 "window":     {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height()},
             }
             with open(path + ".tmp", "w") as f:
@@ -2112,6 +2408,7 @@ class JiffySchedule(QtWidgets.QWidget):
             self.assets_page.load_data(saved.get("assets", {}))
             self.progress_page.load_milestones(saved.get("milestones", {}))
             self.progress_page.load_production(saved.get("production", {}))
+            self.artists_page.load_data(saved.get("artists", []))
             win = saved.get("window", {})
             if win:
                 self.setGeometry(
