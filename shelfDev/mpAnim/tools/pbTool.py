@@ -34,9 +34,8 @@ import os
 import re
 import glob
 import shutil
-
 import subprocess
-import sys
+import time
 
 import maya.cmds as cmds
 
@@ -55,6 +54,7 @@ except Exception:
 
 class PBTool(object):
     WINDOW_NAME = "pbToolWindow"
+    RV_TAG = "pbTool"
 
     def __init__(self):
         self.widgets = {}
@@ -127,7 +127,7 @@ class PBTool(object):
         )
         inner = cmds.columnLayout(adj=True)
         self.widgets["keep_files"] = cmds.checkBox(label="Keep Playblast Files", value=True)
-        self.widgets["use_rv"] = cmds.checkBox(label="Open in RV  (uncheck for fCheck)", value=True)
+        self.widgets["open_in_rv"] = cmds.checkBox(label="Open in RV", value=True)
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -511,6 +511,87 @@ class PBTool(object):
             image.save(filepath, "JPG", quality=95)
 
     # --------------------------------------------------------
+    # RV
+    # --------------------------------------------------------
+    def find_rv_executable(self, exe_name):
+        """
+        Locates an RV binary by name (e.g. "rvpush" or "rv").
+        Checks PATH first, then common Autodesk/Shotgun RV install
+        locations on Windows and Mac, returning the highest version found.
+        """
+        found = shutil.which(exe_name)
+        if found:
+            return found
+
+        if cmds.about(nt=True):
+            search_globs = [
+                r"C:\Program Files\Autodesk\RV-*\bin\{0}.exe".format(exe_name),
+                r"C:\Program Files\Shotgun\RV-*\bin\{0}.exe".format(exe_name),
+                r"C:\Program Files\ShotGrid\RV-*\bin\{0}.exe".format(exe_name),
+            ]
+        elif cmds.about(mac=True):
+            search_globs = [
+                "/Applications/RV*.app/Contents/MacOS/{0}".format(exe_name),
+                "/Applications/Autodesk/RV-*.app/Contents/MacOS/{0}".format(exe_name),
+                "/Applications/Shotgun/RV*.app/Contents/MacOS/{0}".format(exe_name),
+                os.path.expanduser("~/Applications/RV*.app/Contents/MacOS/{0}".format(exe_name)),
+            ]
+        else:
+            search_globs = [
+                "/usr/bin/{0}".format(exe_name),
+                "/usr/local/bin/{0}".format(exe_name),
+            ]
+
+        candidates = []
+        for pattern in search_globs:
+            candidates.extend(glob.glob(pattern))
+
+        if not candidates:
+            return ""
+
+        def version_key(path):
+            match = re.search(r"RV-([\d.]+)", path)
+            if not match:
+                return (0,)
+            return tuple(int(part) for part in match.group(1).split("."))
+
+        candidates.sort(key=version_key)
+        return candidates[-1]
+
+    def open_in_rv(self, prefix):
+        rvpush = self.find_rv_executable("rvpush")
+        if not rvpush:
+            cmds.warning("Could not find RV (rvpush) on this machine. Skipped opening in RV.")
+            return
+
+        sequence_pattern = prefix + ".#.jpg"
+        cmd = [rvpush, "-tag", self.RV_TAG, "set", sequence_pattern]
+
+        # When no tagged RV is running, rvpush's cold start spawns RV but does not
+        # forward the media (exit code 15) -- the sequence only loads once that new
+        # session's network listener comes up, so retry the push briefly until it does.
+        for _attempt in range(15):
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+            except Exception as exc:
+                cmds.warning("Failed to launch RV: {0}".format(exc))
+                return
+
+            if result.returncode == 0:
+                return
+
+            if result.returncode == 15:
+                time.sleep(1)
+                continue
+
+            cmds.warning("Failed to open sequence in RV (rvpush exit {0}): {1}".format(
+                result.returncode, (result.stderr or result.stdout or "").strip()
+            ))
+            return
+
+        cmds.warning("Timed out waiting for a newly-launched RV to accept the playblast sequence.")
+
+    # --------------------------------------------------------
     # Playblast
     # --------------------------------------------------------
     def create_playblast(self):
@@ -524,14 +605,12 @@ class PBTool(object):
             panel = self.get_active_model_panel()
             render_width, render_height = self.get_render_resolution()
 
-            use_rv = cmds.checkBox(self.widgets["use_rv"], q=True, value=True)
-
             cmds.playblast(
                 format="image",
                 filename=prefix,
                 sequenceTime=False,
                 clearCache=True,
-                viewer=not use_rv,
+                viewer=False,
                 showOrnaments=False,
                 offScreen=True,
                 percent=100,
@@ -550,8 +629,9 @@ class PBTool(object):
             if self.last_created_files:
                 self.apply_burnins_to_sequence(self.last_created_files)
 
-            if use_rv and self.last_created_files:
-                self._launch_rv(self.last_created_files)
+                open_in_rv = cmds.checkBox(self.widgets["open_in_rv"], q=True, value=True)
+                if open_in_rv:
+                    self.open_in_rv(prefix)
 
             self.refresh_ui_state()
 
@@ -619,24 +699,6 @@ class PBTool(object):
 
         except Exception as exc:
             cmds.warning("Failed to open output folder: {0}".format(exc))
-
-    def _launch_rv(self, files):
-        if sys.platform == "darwin":
-            rv_path = "/Applications/RV.app/Contents/MacOS/RV"
-        else:
-            rv_path = "C:/Program Files/Autodesk/RV-2025.1.0/bin/rv.exe"
-
-        if not os.path.isfile(rv_path):
-            cmds.warning("RV not found at: {0} — falling back to fCheck".format(rv_path))
-            cmds.launch(viewer=True, movie=files[0])
-            return
-
-        first = files[0]
-        seq = re.sub(r'\.\d{4}\.jpg$', '.####.jpg', first)
-        try:
-            subprocess.Popen([rv_path, seq])
-        except Exception as exc:
-            cmds.warning("Failed to launch RV: {0}".format(exc))
 
 
 def show_pbTool():
