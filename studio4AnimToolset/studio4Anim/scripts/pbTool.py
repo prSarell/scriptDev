@@ -513,17 +513,78 @@ class PBTool(object):
     # --------------------------------------------------------
     # RV
     # --------------------------------------------------------
+    def _rv_install_roots_from_registry(self):
+        """
+        Reads InstallLocation from the Windows Uninstall registry for any
+        RV / Shotgun / ShotGrid / Flow Production Tracking entry. Install
+        paths and version-folder names vary by machine/imaging, but the
+        installer always registers the real path here.
+        """
+        try:
+            import winreg
+        except ImportError:
+            return []
+
+        hives_and_keys = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ]
+
+        roots = []
+        for hive, key_path in hives_and_keys:
+            try:
+                key = winreg.OpenKey(hive, key_path)
+            except OSError:
+                continue
+
+            for i in range(winreg.QueryInfoKey(key)[0]):
+                try:
+                    subkey = winreg.OpenKey(key, winreg.EnumKey(key, i))
+                    display_name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                    if re.search(r"\bRV\b|Shotgun|ShotGrid|Flow Production Tracking", display_name, re.IGNORECASE):
+                        install_location = winreg.QueryValueEx(subkey, "InstallLocation")[0]
+                        if install_location:
+                            roots.append(install_location)
+                except OSError:
+                    continue
+
+        return roots
+
     def find_rv_executable(self, exe_name):
         """
-        Locates an RV binary by name (e.g. "rvpush" or "rv").
-        Checks PATH first, then common Autodesk/Shotgun RV install
-        locations on Windows and Mac, returning the highest version found.
+        Locates an RV binary by name (e.g. "rvpush" or "rv"). Checks, in order:
+        the PBTOOL_RV_HOME env var override, PATH, the Windows registry
+        install location, then common Autodesk/Shotgun RV install locations
+        on Windows and Mac. Returns the highest version found.
         """
+        env_home = os.environ.get("PBTOOL_RV_HOME")
+        if env_home:
+            for candidate in (
+                os.path.join(env_home, exe_name + ".exe"),
+                os.path.join(env_home, "bin", exe_name + ".exe"),
+                os.path.join(env_home, exe_name),
+                os.path.join(env_home, "bin", exe_name),
+            ):
+                if os.path.isfile(candidate):
+                    return candidate
+            cmds.warning("PBTOOL_RV_HOME is set to '{0}' but no {1} was found there.".format(env_home, exe_name))
+
         found = shutil.which(exe_name)
         if found:
             return found
 
+        candidates = []
+
         if cmds.about(nt=True):
+            for install_root in self._rv_install_roots_from_registry():
+                for candidate in (
+                    os.path.join(install_root, exe_name + ".exe"),
+                    os.path.join(install_root, "bin", exe_name + ".exe"),
+                ):
+                    if os.path.isfile(candidate):
+                        candidates.append(candidate)
+
             search_globs = [
                 r"C:\Program Files\Autodesk\RV-*\bin\{0}.exe".format(exe_name),
                 r"C:\Program Files\Shotgun\RV-*\bin\{0}.exe".format(exe_name),
@@ -542,7 +603,6 @@ class PBTool(object):
                 "/usr/local/bin/{0}".format(exe_name),
             ]
 
-        candidates = []
         for pattern in search_globs:
             candidates.extend(glob.glob(pattern))
 
