@@ -630,9 +630,20 @@ class PBTool(object):
         # When no tagged RV is running, rvpush's cold start spawns RV but does not
         # forward the media (exit code 15) -- the sequence only loads once that new
         # session's network listener comes up, so retry the push briefly until it does.
-        for _attempt in range(15):
+        # Only the first attempt is allowed to spawn: exit 15 means "started a new RV",
+        # so retrying the same command with spawning still enabled would cold-start a
+        # second (and third...) RV every second a slow-starting session takes to bring
+        # its listener up. RVPUSH_RV_EXECUTABLE_PATH=none on every retry after the first
+        # tells rvpush not to spawn anything -- it just fails to connect (exit 11) until
+        # the one RV we already started is ready.
+        no_spawn_env = os.environ.copy()
+        no_spawn_env["RVPUSH_RV_EXECUTABLE_PATH"] = "none"
+
+        for attempt in range(15):
+            spawning_allowed = (attempt == 0)
+            env = os.environ if spawning_allowed else no_spawn_env
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             except Exception as exc:
                 cmds.warning("Failed to launch RV: {0}".format(exc))
                 return
@@ -640,7 +651,7 @@ class PBTool(object):
             if result.returncode == 0:
                 return
 
-            if result.returncode == 15:
+            if result.returncode == 15 or (result.returncode == 11 and not spawning_allowed):
                 time.sleep(1)
                 continue
 
