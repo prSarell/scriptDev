@@ -234,6 +234,14 @@ class ThumbnailLabel(QtWidgets.QLabel):
             self.browse_requested.emit()
 
 
+class _InlineNotesEdit(QtWidgets.QPlainTextEdit):
+    committed = QtCore.Signal(str)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.committed.emit(self.toPlainText().strip())
+
+
 # ---------------------------------------------------------------------------
 # Item row
 # ---------------------------------------------------------------------------
@@ -289,7 +297,29 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.artist_lbl.setStyleSheet(f"font-size:11px; color:{SUBTEXT};")
         for lbl in (self.name_lbl, self.frames_lbl, self.due_lbl, self.artist_lbl):
             col.addWidget(lbl)
-        row.addLayout(col, stretch=1)
+        row.addLayout(col)
+
+        self.notes_edit = _InlineNotesEdit()
+        self.notes_edit.setPlaceholderText("Click to add notes…")
+        self.notes_edit.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.notes_edit.setStyleSheet(
+            f"QPlainTextEdit{{background:{DARK_BG}; color:{SUBTEXT}; font-size:11px;"
+            f"border:1px solid {BORDER}; border-radius:3px; padding:3px;}}"
+            f"QPlainTextEdit:focus{{border:1px solid #4caf50;}}"
+        )
+        self.notes_edit.committed.connect(self._on_notes_committed)
+        row.addWidget(self.notes_edit, stretch=1)
+
+        if self.item_label == "Shot":
+            self.pomo_btn = QtWidgets.QPushButton("Jiffy Pomo")
+            self.pomo_btn.setFixedSize(78, 24)
+            self.pomo_btn.setToolTip("Send stage, due date and notes to Jiffy Pomo")
+            self.pomo_btn.setStyleSheet(
+                "QPushButton{background:#2e5a2e;color:white;border:none;border-radius:3px;font-size:11px;}"
+                "QPushButton:hover{background:#3a7a3a;}"
+            )
+            self.pomo_btn.clicked.connect(self._send_to_pomo)
+            row.addWidget(self.pomo_btn, alignment=QtCore.Qt.AlignVCenter)
 
         self.badge = StageBadge(stages=self._stages)
         self.badge.stage_changed.connect(self._on_stage_changed)
@@ -330,6 +360,7 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.due_lbl.setText(f"Due: {due}" if due else "Due: —")
         artist = d.get("artist", "")
         self.artist_lbl.setText(f"Artist: {artist}" if artist else "Artist: —")
+        self.notes_edit.setPlainText(d.get("notes", ""))
         self.badge.set_stage(d.get("stage", self._stages[0]))
         self.thumb.set_image(d.get("thumbnail", ""))
 
@@ -354,6 +385,25 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.item_data["stage"] = stage
         self.data_changed.emit(self.item_data)
 
+    def _on_notes_committed(self, text):
+        if text != self.item_data.get("notes", ""):
+            self.item_data["notes"] = text
+            self.data_changed.emit(self.item_data)
+
+    def _send_to_pomo(self):
+        try:
+            import Jiffypomo
+        except ImportError:
+            QtWidgets.QMessageBox.warning(
+                self, "JiffyPomo", "JiffyPomo isn't installed alongside JiffySchedule."
+            )
+            return
+        window = Jiffypomo.run_jiffypomo()
+        window.stage.setText(self.item_data.get("stage", ""))
+        window.due.setText(self.item_data.get("due_date", ""))
+        window.task_text.setPlainText(self.item_data.get("notes", ""))
+        window.save_state_auto()
+
     def _context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
@@ -370,9 +420,10 @@ class ItemRowWidget(QtWidgets.QFrame):
 # Item dialog
 # ---------------------------------------------------------------------------
 class ItemDialog(QtWidgets.QDialog):
-    def __init__(self, item_data=None, item_label="Shot", stages=None, parent=None):
+    def __init__(self, item_data=None, item_label="Shot", stages=None, artist_names=None, parent=None):
         super().__init__(parent)
-        self._stages    = stages or SHOT_STAGES
+        self._stages       = stages or SHOT_STAGES
+        self._artist_names = artist_names or []
         self.item_label = item_label
         self._is_new    = item_data is None
         self.setWindowTitle(f"Add {item_label}" if self._is_new else f"Edit {item_label}")
@@ -383,6 +434,7 @@ class ItemDialog(QtWidgets.QDialog):
             f"QLineEdit{{background:{ITEM_BG};color:white;border:1px solid {BORDER};padding:4px;}}"
             f"QComboBox{{background:{ITEM_BG};color:white;border:1px solid {BORDER};padding:4px;}}"
             f"QComboBox QAbstractItemView{{background:{ITEM_BG};color:white;selection-background-color:#444;}}"
+            f"QPlainTextEdit{{background:{ITEM_BG};color:white;border:1px solid {BORDER};padding:4px;}}"
             f"QPushButton{{background:#444;color:white;border:1px solid {BORDER};padding:4px 12px;}}"
             f"QPushButton:hover{{background:#555;}}"
         )
@@ -399,11 +451,19 @@ class ItemDialog(QtWidgets.QDialog):
         default_due = self._data.get("due_date", _today_dmy())
         self.due_edit    = QtWidgets.QLineEdit(default_due)
         self.due_edit.setPlaceholderText("DD-MM-YYYY")
-        self.artist_edit = QtWidgets.QLineEdit(self._data.get("artist", ""))
+        self.artist_edit = QtWidgets.QComboBox()
+        self.artist_edit.setEditable(True)
+        self.artist_edit.addItems(self._artist_names)
+        current_artist = self._data.get("artist", "")
+        if current_artist and current_artist not in self._artist_names:
+            self.artist_edit.addItem(current_artist)
+        self.artist_edit.setCurrentText(current_artist)
         self.stage_combo = QtWidgets.QComboBox()
         for s in self._stages:
             self.stage_combo.addItem(s)
         self.stage_combo.setCurrentText(self._data.get("stage", self._stages[0]))
+        self.notes_edit = QtWidgets.QPlainTextEdit(self._data.get("notes", ""))
+        self.notes_edit.setFixedHeight(70)
         layout.addRow(f"{self.item_label} Name:", self.name_edit)
         if self.item_label != "Asset":
             layout.addRow("Frame Start:", self.frame_start_edit)
@@ -411,6 +471,7 @@ class ItemDialog(QtWidgets.QDialog):
         layout.addRow("Due Date:",  self.due_edit)
         layout.addRow("Artist:",    self.artist_edit)
         layout.addRow("Stage:",     self.stage_combo)
+        layout.addRow("Notes:",     self.notes_edit)
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
@@ -424,8 +485,9 @@ class ItemDialog(QtWidgets.QDialog):
             "frame_start": self.frame_start_edit.text().strip(),
             "frame_end":   self.frame_end_edit.text().strip(),
             "due_date":    self.due_edit.text().strip(),
-            "artist":      self.artist_edit.text().strip(),
+            "artist":      self.artist_edit.currentText().strip(),
             "stage":       self.stage_combo.currentText(),
+            "notes":       self.notes_edit.toPlainText().strip(),
             "thumbnail":   self._data.get("thumbnail", ""),
         }
 
@@ -505,10 +567,14 @@ class ItemListPanel(QtWidgets.QWidget):
 
     def __init__(self, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
-        self.item_label = item_label
-        self._stages    = stages or SHOT_STAGES
-        self.items      = []
+        self.item_label     = item_label
+        self._stages        = stages or SHOT_STAGES
+        self._artist_names  = []
+        self.items          = []
         self._build()
+
+    def set_artist_names(self, names):
+        self._artist_names = list(names)
 
     def _build(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -594,7 +660,8 @@ class ItemListPanel(QtWidgets.QWidget):
             defaults["name"] = os.path.splitext(os.path.basename(scene_path))[0] if scene_path else ""
 
         dlg = ItemDialog(item_data=defaults if defaults else None,
-                         item_label=self.item_label, stages=self._stages, parent=self)
+                         item_label=self.item_label, stages=self._stages,
+                         artist_names=self._artist_names, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             data = dlg.get_data()
             if data["name"]:
@@ -606,7 +673,8 @@ class ItemListPanel(QtWidgets.QWidget):
         idx = next((i for i, s in enumerate(self.items) if s.get("name") == item_data.get("name")), None)
         if idx is None:
             return
-        dlg = ItemDialog(item_data=item_data, item_label=self.item_label, stages=self._stages, parent=self)
+        dlg = ItemDialog(item_data=item_data, item_label=self.item_label, stages=self._stages,
+                         artist_names=self._artist_names, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             self.items[idx] = dlg.get_data()
             self._rebuild()
@@ -659,6 +727,9 @@ class SchedulePage(QtWidgets.QWidget):
         self.item_panel = ItemListPanel(item_label=item_label, stages=self._stages)
         self.item_panel.data_changed.connect(self._on_items_changed)
         layout.addWidget(self.item_panel)
+
+    def set_artist_names(self, names):
+        self.item_panel.set_artist_names(names)
 
     def set_project(self, project):
         self._flush()
@@ -2228,7 +2299,7 @@ class JiffySchedule(QtWidgets.QWidget):
         self.assets_page.data_changed.connect(self._on_assets_changed)
         self.progress_page.data_changed.connect(self._on_milestone_data_changed)
         self.progress_page.save_requested.connect(self.save_data)
-        self.artists_page.data_changed.connect(self.save_data)
+        self.artists_page.data_changed.connect(self._on_artists_changed)
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.shots_page)
@@ -2338,6 +2409,12 @@ class JiffySchedule(QtWidgets.QWidget):
         self.progress_page.refresh_data(self.shots_page.get_data(), self.assets_page.get_data())
         self.save_data()
 
+    def _on_artists_changed(self):
+        names = [a.get("name", "") for a in self.artists_page.get_data() if a.get("name")]
+        self.shots_page.set_artist_names(names)
+        self.assets_page.set_artist_names(names)
+        self.save_data()
+
     def _on_milestone_add(self):
         self.progress_page.add_milestone()
 
@@ -2409,6 +2486,9 @@ class JiffySchedule(QtWidgets.QWidget):
             self.progress_page.load_milestones(saved.get("milestones", {}))
             self.progress_page.load_production(saved.get("production", {}))
             self.artists_page.load_data(saved.get("artists", []))
+            names = [a.get("name", "") for a in self.artists_page.get_data() if a.get("name")]
+            self.shots_page.set_artist_names(names)
+            self.assets_page.set_artist_names(names)
             win = saved.get("window", {})
             if win:
                 self.setGeometry(
