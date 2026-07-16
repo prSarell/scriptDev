@@ -80,6 +80,11 @@ class SmoothToolUI(QtWidgets.QDialog):
         'blend':    (0.0, 1.0),
         'falloff':  (0.0, 0.5),
     }
+    _SLIDER_DEFAULTS = {
+        'strength': 1.0,
+        'blend':    1.0,
+        'falloff':  0.15,
+    }
 
     def __init__(self, parent=_maya_main_window()):
         super().__init__(parent)
@@ -136,13 +141,16 @@ class SmoothToolUI(QtWidgets.QDialog):
         slider_lay.setSpacing(4)
 
         r, self._strength_slider, self._strength_val = _make_slider_row(
-            'Strength', 0.0, 5.0, 1.0)
+            'Strength', *self._SLIDER_RANGES['strength'],
+            self._SLIDER_DEFAULTS['strength'])
         slider_lay.addLayout(r)
         r, self._blend_slider, self._blend_val = _make_slider_row(
-            'Blend', 0.0, 1.0, 1.0)
+            'Blend', *self._SLIDER_RANGES['blend'],
+            self._SLIDER_DEFAULTS['blend'])
         slider_lay.addLayout(r)
         r, self._falloff_slider, self._falloff_val = _make_slider_row(
-            'Falloff', 0.0, 0.5, 0.15)
+            'Falloff', *self._SLIDER_RANGES['falloff'],
+            self._SLIDER_DEFAULTS['falloff'])
         slider_lay.addLayout(r)
 
         root.addWidget(slider_box)
@@ -199,6 +207,13 @@ class SmoothToolUI(QtWidgets.QDialog):
     def _slider_value(self, slider, key):
         lo, hi = self._SLIDER_RANGES[key]
         return lo + (slider.value() / 1000.0) * (hi - lo)
+
+    def _reset_slider(self, slider, val_label, key):
+        lo, hi = self._SLIDER_RANGES[key]
+        default = self._SLIDER_DEFAULTS[key]
+        frac = (default - lo) / (hi - lo)
+        slider.setValue(int(frac * 1000))
+        val_label.setText('{:.2f}'.format(default))
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -297,6 +312,19 @@ class SmoothToolUI(QtWidgets.QDialog):
     def _on_reset(self):
         self._core.reset()
         self._curves_live = False
+
+        self._mesh_field.clear()
+        self._target_field.clear()
+        self._parent_field.clear()
+        self._vert_mode.setCurrentIndex(0)
+
+        self._reset_slider(self._strength_slider, self._strength_val, 'strength')
+        self._reset_slider(self._blend_slider, self._blend_val, 'blend')
+        self._reset_slider(self._falloff_slider, self._falloff_val, 'falloff')
+
+        self._layer_check.setChecked(True)
+        self._additive_check.setChecked(True)
+
         cmds.inViewMessage(amg='Smooth tool reset.', pos='topCenter',
                            fade=True)
 
