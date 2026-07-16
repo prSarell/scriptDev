@@ -1,8 +1,24 @@
 import maya.cmds as cmds
 
+_UNITS_PER_METER = {
+    'mm': 1000.0,
+    'cm': 100.0,
+    'm':  1.0,
+    'km': 0.001,
+    'in': 39.3700787,
+    'ft': 3.2808399,
+    'yd': 1.0936133,
+}
+
+
+def scene_units_per_meter():
+    """Maya scene's configured linear unit, expressed as scene-units per real-world metre."""
+    unit = cmds.currentUnit(q=True, linear=True)
+    return _UNITS_PER_METER.get(unit, 100.0)
+
 
 def grav_calculator(obj, num_frames=49, velocity=9.807, frame_rate=24,
-                    trans_y=0.0, frame=1001, grav=-9.807, metric=10.0):
+                    trans_y=0.0, frame=1001, grav=-9.807, metric=100.0):
     for _ in range(num_frames):
         cmds.setKeyframe(obj, attribute='ty', value=trans_y, time=(frame, frame))
         final_v  = velocity + (grav * (1.0 / frame_rate))
@@ -11,7 +27,7 @@ def grav_calculator(obj, num_frames=49, velocity=9.807, frame_rate=24,
         frame   += 1
 
 
-def ball_launcher(frame_rate=24, grav=-9.807, metric=10.0):
+def ball_launcher(frame_rate=24, grav=-9.807, metric=None):
     sel = cmds.ls(sl=True)
     if not sel:
         cmds.inViewMessage(amg='<b>Gravity Ball:</b> Select one object.', pos='midCenter', fade=True)
@@ -19,6 +35,9 @@ def ball_launcher(frame_rate=24, grav=-9.807, metric=10.0):
     if len(sel) > 1:
         cmds.inViewMessage(amg='<b>Gravity Ball:</b> Select only one object.', pos='midCenter', fade=True)
         return
+
+    if metric is None:
+        metric = scene_units_per_meter()
 
     obj      = sel[0]
     cur_time = cmds.currentTime(q=True)
@@ -79,7 +98,7 @@ def show_settings():
     specs = [
         ('Frame Rate',      'frame_rate',  '24'),
         ('Gravity',         'grav',        '-9.807'),
-        ('Metric Scale',    'metric',      '10'),
+        ('Metric Scale',    'metric',      str(scene_units_per_meter())),
         ('Num Frames',      'num_frames',  '49'),
         ('Initial Velocity','velocity',    '9.807'),
         ('Start Y',         'trans_y',     '0'),
