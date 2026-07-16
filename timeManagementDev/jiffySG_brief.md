@@ -45,7 +45,7 @@ Both are built-in ShotGrid permission groups — no custom permission engineerin
 
 **Notes — genuine two-way sync** — uses ShotGrid's native `Note` entity as an append-only feed, not a single overwritable field. A note typed in Jiffy SG posts a new `Note`; a note added directly in ShotGrid (e.g. a mentor reviewing there) appears in Jiffy SG's feed on next pull. Nothing is ever overwritten in place, so there's no conflict-resolution problem to solve — merging two append-only lists just works.
 
-**Packaging** — vendor `shotgun_api3` into `mpToolSet`, the same way ngSkinTools2 is already bundled (`mpToolSet/mpRig/ngskintools2/`). No per-student pip install, no network dependency on lab machines.
+**Packaging** — vendor `shotgun_api3` into `mpToolSet`, the same way ngSkinTools2 is already bundled (`mpToolSet/ngSkinTools2/`). No per-student pip install, no network dependency on lab machines.
 
 ## Rollout plan
 

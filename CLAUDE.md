@@ -49,7 +49,7 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 ### Third-party tools
 
 - **SHAPES** is dev-only — do not include in mpToolSet or distribute to students.
-- **ngSkinTools2** is bundled in `mpToolSet/mpRig/ngskintools2/` and installed automatically.
+- **ngSkinTools2** is bundled in `mpToolSet/ngSkinTools2/` — a top-level folder alongside `install.py`/`uninstall.py`, with its own self-contained `install.py`/`uninstall.py` pair. It ships inside the same mpToolSet download (one download for students) but installs separately: students drag `ngSkinTools2/install.py` in only if they need it, decoupled from the main installer's manifest/backup system. See `mpToolSet/dev_notes.md` for why (recurring install failures when it was auto-installed).
 
 ### Two student toolsets
 

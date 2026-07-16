@@ -1,11 +1,7 @@
 # mpToolSet Dev Notes
 
-## ngSkinTools2 — "untrusted folder" warning in Maya 2025
+## ngSkinTools2 — moved to a separate installer (resolved 2026-07-16)
 
-**Problem:** Maya shows an "untrusted folder" warning when loading ngSkinTools2.
+**Old problem:** ngSkinTools2 installed automatically as part of the main `install.py`, which caused two recurring issues: Maya's Maya 2025 "untrusted folder" warning (the old `_patch_usersetup` `ngskin_block` manually set `MAYA_PLUG_IN_PATH` and called `loadPlugin('ngSkinTools2')`, which Maya 2025's plugin trust system flags for non-hardcoded locations), and locked-file install failures — reinstalling/updating mpToolSet while ngSkinTools2 was loaded would block on `shutil.rmtree` of the `ApplicationPlugins` folder.
 
-**Root cause:** The installer puts ngSkinTools2 in `ApplicationPlugins/` (correct — Maya discovers it automatically via `PackageContents.xml`), but `_patch_usersetup` in `install.py` also writes a `userSetup.py` block that manually sets `MAYA_PLUG_IN_PATH` and calls `loadPlugin('ngSkinTools2')`. Maya 2025's plugin trust system flags plugins loaded via `MAYA_PLUG_IN_PATH` from non-hardcoded locations.
-
-**Fix:** Remove the `MAYA_PLUG_IN_PATH` / `loadPlugin` block from `_patch_usersetup`. Keep only the `sys.path` entry for the ngSkinTools2 scripts folder (so `import ngSkinTools2` works). Maya will handle plugin loading automatically via the `ApplicationPlugins` / `PackageContents.xml` mechanism, which is trusted.
-
-**Files to change:** `mpToolSet/install.py` — `_patch_usersetup()` function, `ngskin_block` (lines ~223–242).
+**Fix:** ngSkinTools2 is no longer touched by the main `install.py`/`uninstall.py` at all. It now lives in its own top-level folder, `mpToolSet/ngSkinTools2/`, with its own self-contained `install.py`/`uninstall.py` that students drag in separately, only when they need it. It relies purely on Maya's native `ApplicationPlugins`/`PackageContents.xml` auto-discovery — no `userSetup.py` changes, no `MAYA_PLUG_IN_PATH` hack — which also sidesteps the untrusted-folder warning. Decoupling it from the main installer's manifest/backup system means updating mpRig/mpAnim tools can no longer be blocked by a locked ngSkinTools2 file, and vice versa.

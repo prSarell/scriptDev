@@ -5,6 +5,7 @@
 1. Drag `install.py` onto the Maya viewport
 2. Both shelves (mpRig, mpAnim) are built automatically
 3. To uninstall, drag `uninstall.py` onto the viewport
+4. If you need ngSkinTools (see below), separately drag `ngSkinTools2/install.py` onto the viewport — it's not installed by step 1
 
 ---
 
@@ -98,7 +99,7 @@ Strips namespaces, adds prefix/suffix, and supports reverting names on selected 
 
 ### ngSkinTools
 
-Layer-based skin weight painting and editing. Installed automatically with mpToolSet.
+Layer-based skin weight painting and editing. Installed separately — drag `ngSkinTools2/install.py` (in the mpToolSet download, alongside the main `install.py`) onto the viewport, then restart Maya. To remove it, drag `ngSkinTools2/uninstall.py`.
 
 ### Corrective Blendshape Tool (WIP Development)
 

@@ -17,9 +17,7 @@ of which version to roll back to.
 
 import os
 import re
-import subprocess
 import shutil
-import sys
 import maya.cmds as cmds
 import maya.mel as mel
 
@@ -31,15 +29,6 @@ _US_END   = "# -- mpToolSet END --"
 
 
 # -- paths -----------------------------------------------------------------
-
-def _app_plugins_dir():
-    import sys
-    if sys.platform == "darwin":
-        base = os.path.expanduser("~/Library/Application Support")
-    else:
-        base = os.environ.get("APPDATA", "")
-    return os.path.join(base, "Autodesk", "ApplicationPlugins").replace("\\", "/")
-
 
 def _maya_scripts_dir():
     return os.path.join(
@@ -197,7 +186,7 @@ def _write_manifest(files, dirs, shelves, usersetups=None):
                 seen.add(fp)
 
 
-def _patch_usersetup(scripts_dir, backup_dir, extra_syspaths=None, ngskin_install_path=None):
+def _patch_usersetup(scripts_dir, backup_dir, extra_syspaths=None):
     """Append (or replace) the mpToolSet startup hook in userSetup.py."""
     path = os.path.join(scripts_dir, "userSetup.py").replace("\\", "/")
     _backup_file(path, backup_dir, "scripts")
@@ -220,37 +209,15 @@ def _patch_usersetup(scripts_dir, backup_dir, extra_syspaths=None, ngskin_instal
             "    _sys.path.insert(0, {p!r})\n"
         ).format(p=p)
 
-    ngskin_block = ""
-    if ngskin_install_path:
-        ngskin_block = (
-            "try:\n"
-            "    import os as _os, maya.cmds as _cmds\n"
-            "    _ver = _cmds.about(version=True).split('.')[0].split()[0]\n"
-            "    _plugin_dir = _os.path.join({ngskin!r}, 'Contents', 'plug-ins', _ver)\n"
-            "    if _os.path.isdir(_plugin_dir):\n"
-            "        _cur = _os.environ.get('MAYA_PLUG_IN_PATH', '')\n"
-            "        if _plugin_dir not in _cur:\n"
-            "            _os.environ['MAYA_PLUG_IN_PATH'] = _plugin_dir + _os.pathsep + _cur\n"
-            "    def _ng_load():\n"
-            "        try:\n"
-            "            import maya.cmds as _c; _c.loadPlugin('ngSkinTools2', quiet=True)\n"
-            "        except Exception:\n"
-            "            pass\n"
-            "    _cmds.evalDeferred(_ng_load)\n"
-            "except Exception:\n"
-            "    pass\n"
-        ).format(ngskin=ngskin_install_path)
-
     block = (
         "\n{start}\n"
         "{syspaths}"
-        "{ngskin}"
         "try:\n"
         "    import shortCuts; shortCuts.init_hotkeys()\n"
         "except Exception:\n"
         "    pass\n"
         "{end}\n"
-    ).format(start=_US_START, end=_US_END, syspaths=syspath_lines, ngskin=ngskin_block)
+    ).format(start=_US_START, end=_US_END, syspaths=syspath_lines)
 
     with open(path, "w") as f:
         f.write(content.rstrip("\n") + block)
@@ -276,8 +243,6 @@ def _install(root):
     all_dirs = []
     shelves_built = []
     shelf_names = []
-    ngskin_scripts_paths = []
-    ngskin_install_path = None
 
     for shelf_dir_name in ("mpRig", "mpAnim"):
         shelf_path = os.path.join(root, shelf_dir_name)
@@ -315,81 +280,33 @@ def _install(root):
                     dst = _copy_tree(pkg_src, pkg_dst, backup_dir, "dirs")
                     all_dirs.append(dst)
 
-        ngskin_src = os.path.join(shelf_path, "ngskintools2")
-        if os.path.isdir(ngskin_src):
-            plugins_dst = _app_plugins_dir()
-            os.makedirs(plugins_dst, exist_ok=True)
-            ngskin_dst = os.path.join(plugins_dst, "ngskintools2")
-            _backup_directory(ngskin_dst, backup_dir, "app_plugins")
-            if os.path.exists(ngskin_dst):
-                try:
-                    if cmds.pluginInfo("ngSkinTools2", q=True, loaded=True):
-                        cmds.unloadPlugin("ngSkinTools2", force=True)
-                except RuntimeError:
-                    pass
-                try:
-                    shutil.rmtree(ngskin_dst)
-                except PermissionError:
-                    raise RuntimeError(
-                        "Could not update ngSkinTools2 — its plugin file is "
-                        "still locked by this Maya session (likely loaded via "
-                        "Autodesk's ApplicationPlugins autoloader). Restart "
-                        "Maya and run the installer again before opening any "
-                        "scene that uses ngSkinTools2."
-                    )
-            shutil.copytree(ngskin_src, ngskin_dst)
-            if sys.platform == "darwin":
-                subprocess.run(
-                    ["xattr", "-dr", "com.apple.quarantine", ngskin_dst],
-                    check=False,
-                )
-            ngskin_dst_fwd = ngskin_dst.replace("\\", "/")
-            all_dirs.append(ngskin_dst_fwd)
-            ngskin_install_path = ngskin_dst_fwd
-            ngskin_scripts_paths.append(
-                os.path.join(ngskin_dst, "Contents", "scripts").replace("\\", "/")
-            )
-
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
             name, btn_count = _build_shelf(config_file, backup_dir)
             shelves_built.append("{} ({} buttons)".format(name, btn_count))
             shelf_names.append(name)
 
-    usersetup_path = _patch_usersetup(
-        scripts_dst, backup_dir,
-        extra_syspaths=ngskin_scripts_paths,
-        ngskin_install_path=ngskin_install_path,
-    )
+    usersetup_path = _patch_usersetup(scripts_dst, backup_dir)
     _write_manifest(all_files, all_dirs, shelf_names, usersetups=[usersetup_path])
 
     backup_label = "v{:03d}".format(version)
     if version == 0:
         backup_label += " (original pre-install state)"
 
-    ngskin_installed = any("ngskintools2" in d for d in all_dirs)
-
-    restart_note = (
-        "\n  ** Restart Maya for ngSkinTools2 to become available. **\n"
-        if ngskin_installed else ""
-    )
-
     summary = (
         "mpToolSet installed successfully!\n\n"
         "  Scripts: {} files -> {}\n"
         "  Icons:   {} files -> {}\n"
         "  Shelves: {}\n"
-        "  ngSkinTools2: {}\n"
         "  Startup hook: userSetup.py updated\n"
-        "{}\n"
         "  Backup saved: {}\n\n"
+        "  ngSkinTools2 installs separately — drag ngSkinTools2/install.py\n"
+        "  (in this same folder) onto the viewport if you need it.\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
     ).format(
         sum(1 for f in all_files if f.endswith(".py")), scripts_dst,
         sum(1 for f in all_files if f.endswith(".png")), icons_dst,
         ", ".join(shelves_built) if shelves_built else "none",
-        "installed" if ngskin_installed else "not found",
-        restart_note,
         backup_label,
     )
     print(summary)
