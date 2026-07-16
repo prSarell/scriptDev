@@ -199,7 +199,7 @@ def _aim_rig_content(layout):
 
 
 def _gravity_content(layout):
-    from PySide6 import QtWidgets, QtCore, QtGui
+    from PySide6 import QtWidgets, QtCore
 
     row = QtWidgets.QHBoxLayout()
     row.setSpacing(2)
@@ -223,7 +223,7 @@ def _gravity_content(layout):
     bal_btn = QtWidgets.QPushButton('Ballistics')
     bal_btn.setMinimumHeight(BTN_H)
     bal_btn.setStyleSheet(_btn('#2A4A7A'))
-    bal_btn.setToolTip('Bake ballistic trajectory from selected object  |  Shift+click for presets')
+    bal_btn.setToolTip('Bake ballistic trajectory from selected object')
 
     # Floor controls — referenced by both the click handler and the row below
     floor_chk = QtWidgets.QCheckBox('Floor')
@@ -243,20 +243,46 @@ def _gravity_content(layout):
                 return None
         return None
 
+    # Weight checkboxes — mutually exclusive (an object has one weight at a time)
+    weight_checks = {}
+
+    def _on_weight_toggled(key, checked):
+        if checked:
+            for other_key, chk in weight_checks.items():
+                if other_key != key:
+                    chk.blockSignals(True)
+                    chk.setChecked(False)
+                    chk.blockSignals(False)
+
     def _bal_handler():
-        mods = QtWidgets.QApplication.keyboardModifiers()
-        if mods & QtCore.Qt.KeyboardModifier.ShiftModifier:
-            m = QtWidgets.QMenu()
-            for key, p in mtBallistics.PRESETS.items():
-                m.addAction(p['label'],
-                            lambda checked=False, k=key: mtBallistics.launch_preset(k, floor_y=_get_floor()))
-            m.exec(QtGui.QCursor.pos())
+        active_key = next((k for k, chk in weight_checks.items() if chk.isChecked()), None)
+        if active_key is not None:
+            mtBallistics.launch_preset(active_key, floor_y=_get_floor())
         else:
             mtBallistics.launch(floor_y=_get_floor())
 
     bal_btn.clicked.connect(_bal_handler)
     row.addWidget(bal_btn)
     layout.addLayout(row)
+
+    # ── Weight row ────────────────────────────────────────────────────────
+    weight_row = QtWidgets.QHBoxLayout()
+    weight_row.setSpacing(4)
+    _WEIGHT_SHORT_LABELS = {
+        'tiny_light':    'Tiny',
+        'small_light':   'Small',
+        'big_heavy':     'Big',
+        'massive_heavy': 'Massive',
+    }
+    for key, p in mtBallistics.PRESETS.items():
+        chk = QtWidgets.QCheckBox(_WEIGHT_SHORT_LABELS.get(key, p['label']))
+        chk.setStyleSheet('font-size:10px;')
+        chk.setToolTip(p['label'])
+        chk.stateChanged.connect(lambda s, k=key: _on_weight_toggled(k, bool(s)))
+        weight_checks[key] = chk
+        weight_row.addWidget(chk)
+    weight_row.addStretch()
+    layout.addLayout(weight_row)
 
     # ── Floor row ─────────────────────────────────────────────────────────
     floor_row = QtWidgets.QHBoxLayout()
@@ -269,7 +295,7 @@ def _gravity_content(layout):
     floor_row.addStretch()
     layout.addLayout(floor_row)
 
-    hint = QtWidgets.QLabel('select one object  |  G-ball: right-click  |  Ballistics: shift+click for presets')
+    hint = QtWidgets.QLabel('select one object  |  G-ball: right-click  |  Ballistics: check a weight, or none for default')
     hint.setStyleSheet(HINT_STYLE)
     layout.addWidget(hint)
 

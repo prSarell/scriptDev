@@ -1,8 +1,22 @@
 import maya.cmds as cmds
 import maya.mel as mel
 
-METRIC = 10.0
-GRAV   = -9.807
+GRAV = -9.807
+
+_UNITS_PER_METER = {
+    'mm': 1000.0,
+    'cm': 100.0,
+    'm':  1.0,
+    'km': 0.001,
+    'in': 39.3700787,
+    'ft': 3.2808399,
+    'yd': 1.0936133,
+}
+
+
+def _scene_units_per_meter():
+    unit = cmds.currentUnit(q=True, linear=True)
+    return _UNITS_PER_METER.get(unit, 100.0)
 
 PRESETS = {
     'tiny_light': {
@@ -78,7 +92,7 @@ def _build_result(obj, short):
 # Simulation
 # ---------------------------------------------------------------------------
 
-def _run_simulation(result, pos, rot, vel, rot_vel,
+def _run_simulation(result, pos, rot, vel, rot_vel, metric,
                     fps, drag_pfr, friction_pfr, floor_y, start_frame, end_frame):
     dt = 1.0 / fps
     x, y, z       = pos
@@ -99,23 +113,23 @@ def _run_simulation(result, pos, rot, vel, rot_vel,
         if on_floor:
             vx  *= friction_pfr;  vz  *= friction_pfr
             drx *= friction_pfr;  dry *= friction_pfr;  drz *= friction_pfr
-            x  += vx * dt * METRIC
-            z  += vz * dt * METRIC
+            x  += vx * dt * metric
+            z  += vz * dt * metric
             rx += drx;  ry += dry;  rz += drz
         else:
             final_vy = vy + GRAV * dt
-            next_y   = y + 0.5 * (vy + final_vy) * dt * METRIC
+            next_y   = y + 0.5 * (vy + final_vy) * dt * metric
 
             if floor_y is not None and next_y <= floor_y:
                 y        = floor_y
                 vy       = 0.0
                 on_floor = True
-                x  += vx * dt * METRIC
-                z  += vz * dt * METRIC
+                x  += vx * dt * metric
+                z  += vz * dt * metric
                 rx += drx;  ry += dry;  rz += drz
             else:
-                x  += vx  * dt * METRIC
-                z  += vz  * dt * METRIC
+                x  += vx  * dt * metric
+                z  += vz  * dt * metric
                 y   = next_y
                 vy  = final_vy
                 rx += drx;  ry += dry;  rz += drz
@@ -148,15 +162,16 @@ def launch(drag_ps=_DEFAULT_DRAG_PS, friction_ps=_DEFAULT_FRICTION_PS, floor_y=N
     end_frame = int(cmds.playbackOptions(q=True, max=True))
     short     = obj.split('|')[-1].split(':')[-1]
     fps       = _get_fps()
+    metric    = _scene_units_per_meter()
 
     pos_prev, rot_prev, pos_cur, rot_cur = _sample_world_state(
         obj, cur_time - 1, cur_time)
 
     dt = 1.0 / fps
     vel = (
-        ((pos_cur[0] - pos_prev[0]) / dt) / METRIC,
-        ((pos_cur[1] - pos_prev[1]) / dt) / METRIC,
-        ((pos_cur[2] - pos_prev[2]) / dt) / METRIC,
+        ((pos_cur[0] - pos_prev[0]) / dt) / metric,
+        ((pos_cur[1] - pos_prev[1]) / dt) / metric,
+        ((pos_cur[2] - pos_prev[2]) / dt) / metric,
     )
     rot_vel = (
         rot_cur[0] - rot_prev[0],
@@ -172,7 +187,7 @@ def launch(drag_ps=_DEFAULT_DRAG_PS, friction_ps=_DEFAULT_FRICTION_PS, floor_y=N
     _run_simulation(
         result,
         pos=pos_cur, rot=rot_cur,
-        vel=vel, rot_vel=rot_vel,
+        vel=vel, rot_vel=rot_vel, metric=metric,
         fps=fps, drag_pfr=drag_pfr, friction_pfr=friction_pfr,
         floor_y=floor_y,
         start_frame=int(cur_time), end_frame=end_frame,
