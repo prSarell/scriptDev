@@ -1,6 +1,6 @@
 # Jiffy SG — design brief
 
-Status: **design only, no code written**. Blocked on RMIT provisioning a single shared ShotGrid site. Not being built yet — this doc captures the plan agreed 2026-07-15 so the next session can pick it up without re-deriving it.
+Status: **design only, no code written**. RMIT's single shared ShotGrid site is confirmed; a test site is live now (`https://nfw.shotgrid.autodesk.com`), official site rolling out ~2026-07-23. Not being built yet — this doc captures the plan agreed 2026-07-15, plus auth findings from testing the site 2026-07-16, so the next session can pick it up without re-deriving it.
 
 ## What it is
 
@@ -20,8 +20,24 @@ Both are built-in ShotGrid permission groups — no custom permission engineerin
 
 **Site URL** — one centrally-configured setting, not hardcoded in code (in case the single-site plan changes later) and not stored per-project (unnecessary complexity once it's confirmed as one shared site).
 
-**Auth** — per-student human login (`shotgun_api3`, `login`/`password`), entered once in Jiffy SG, never committed to the repo.
-> ⚠️ **Open question, not yet confirmed**: does RMIT's ShotGrid site support direct username/password API login, or is it SSO-only? Needs checking with RMIT's ShotGrid admin before building the login screen — if SSO-only, the simple login form approach won't work and a token-based flow is needed instead.
+**Auth** — ~~per-student human login (`shotgun_api3`, `login`/`password`)~~ **superseded, see below.**
+
+> ### Auth findings, tested 2026-07-16 against the test site
+> **Direct username/password API login does not work.** Site's `user_authentication_method` is `oxygen` (Autodesk Identity/SSO), and it's enforced for real authenticated calls — `shotgun_api3.Shotgun(site_url, login=, password=)` followed by an authenticated call (e.g. `find`) throws `AuthenticationFault: Can't authenticate user`. (A first attempt looked like it succeeded because it only checked `sg.info()`, which doesn't require authentication at all — false positive, don't rely on `info()` as an auth test.)
+>
+> **Decided replacement: Script API key + `sudo_as_login`.** A single ShotGrid Script API key (site admin → API Script), bundled with Jiffy SG, authenticates all API calls. Per-student identity is applied via `shotgun_api3`'s `sudo_as_login` parameter. Verified from `shotgun_api3`'s own source docstring (`shotgun.py` ~line 561): `sudo_as_login` **applies that user's own permissions** to the action (so ShotGrid's Producer/Artist permission scoping still holds per-student, enforced by ShotGrid itself, not reimplemented in Jiffy SG) and **writes an event-log entry attributed to that student**, with an extra `sudo_actual_user` field noting the script performed it on their behalf. So the only thing actually lost versus true per-student login is *proof of identity at the point of use* — permissions and audit trail both stay correctly scoped to the real student.
+>
+> **Identity-detection plan (who to `sudo_as_login` as):**
+> - **On RMIT lab machines**: auto-detect the current OS/domain username (`getpass.getuser()` / `$env:USERNAME`) and use it to pick the ShotGrid login — relies on RMIT's domain login already being per-student, so spoofing would require being logged into someone else's Windows session. **Needs confirming**: does each student's ShotGrid `login` field match their RMIT domain username/student ID 1:1, or does it need a lookup table?
+> - **At home (no RMIT domain login)**: possible fallback — a student's Autodesk ID (used to activate their Education Maya license) might be the *same underlying identity* as their ShotGrid account, since both appear to sit on Autodesk's `oxygen` identity system. **Unconfirmed on two counts**: (1) whether it's literally the same account, not just the same auth backend, and (2) whether Maya/RV expose the currently-signed-in Autodesk ID programmatically to a script — needs research before relying on it. Until confirmed, home use likely needs a manual dropdown/override.
+> - **Informal supporting signal (2026-07-16, needs formal confirmation)**: today, both the instructor and students logged into the ShotGrid website using the same username/password as their RMIT login — suggests RMIT's identity is unified across systems, but could also just be coincidental password reuse. Confirm properly with RMIT's IT/ShotGrid admin rather than relying on this alone.
+>
+> ### ⚠️ Security — needs active monitoring, not just at build time
+> Bundling one Admin-tier Script API key into a tool distributed to a whole class is a materially different risk profile than per-student passwords: it's a single high-value credential, and if leaked it grants broad access to the entire RMIT site (not just one student's Project) unless carefully constrained. Needs an explicit plan before this ships, not just at final review:
+> - Where the key lives at runtime (never committed to the repo; likely fetched from a local config file created by the installer, not hardcoded in `jiffySG.py`).
+> - Whether the Script key can be scoped more tightly than full Admin (ShotGrid permission groups for Scripts, if available) while still supporting `sudo_as_login` for every student.
+> - A rotation/revocation plan if the key is ever suspected leaked (e.g. found in a student's local files, posted somewhere).
+> - Re-confirm real OS-username-based identity detection can't be trivially spoofed by a student on their own lab session (e.g. editing an environment variable) — worth a quick adversarial check once that code exists, not just assuming the OS username is trustworthy.
 
 **Project setup** — 100% manual, done by the instructor directly in ShotGrid: creating each student's Project, adding students/mentors/helpers, both up front and as needed later. Jiffy SG never creates Projects or manages membership via the API.
 
@@ -49,9 +65,14 @@ Both are built-in ShotGrid permission groups — no custom permission engineerin
 
 ## Rollout plan
 
-1. RMIT stands up the single shared site; staff get Producer, students get Artist permissions.
-2. Confirm SSO vs. direct-login with RMIT's ShotGrid admin.
-3. Build Jiffy SG in `timeManagementDev/jiffySGDev/`, forked from `jiffyScheduleDev/jiffySchedule.py` — most of the UI (row widgets, thumbnail capture, drag-reorder, notes box, artist dropdown, stage badges) carries over directly; only the data layer underneath is new.
+1. ~~RMIT stands up the single shared site~~ — done; test site live, official site ~2026-07-23.
+2. ~~Confirm SSO vs. direct-login~~ — done 2026-07-16: SSO-enforced, direct login doesn't work. Auth plan is now Script API key + `sudo_as_login` (see above).
+3. **Next (not yet started)**:
+   - Generate a Script API key on the test site and confirm `sudo_as_login` behaves as documented (permissions + audit attribution) against a real student account.
+   - Confirm with RMIT's ShotGrid/IT admin: student `login` field ↔ RMIT domain username mapping; whether an Admin-tier Script key is obtainable; whether Autodesk ID is shared between Maya licensing and ShotGrid.
+   - Get the real name/code of the test Project (`https://nfw.shotgrid.autodesk.com/page/5779` is a saved-view URL, not the Project's API name — grab that from the ShotGrid UI directly).
+   - Set up custom Task status codes on the test Project matching `SHOT_STAGES`/`ASSET_STAGES` (see Stage mapping above).
+   - Scaffold `timeManagementDev/jiffySGDev/jiffySG.py` forked from `jiffyScheduleDev/jiffySchedule.py`.
 4. Pilot with the one existing 3-person team first — lower stakes, easier to debug auth/API rough edges before wider rollout.
 5. Roll out to the rest of the class, each with their own ShotGrid Project (cloned from a template if useful, since ShotGrid's project-duplicate feature is admin-console-only and can't be triggered from a student's API session).
 6. Once proven, retire JiffySchedule in favour of Jiffy SG.
