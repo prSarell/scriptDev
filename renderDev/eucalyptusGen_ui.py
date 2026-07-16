@@ -107,7 +107,19 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         exposure_row.addWidget(self._exposure_val)
         param_lay.addRow(self._exposure_label, exposure_row)
 
+        self._trunk_only_check = QtWidgets.QCheckBox(
+            'Trunk only (no branches)')
+        param_lay.addRow('', self._trunk_only_check)
+
         root.addWidget(param_box)
+
+        # --- Presets ---
+        preset_row = QtWidgets.QHBoxLayout()
+        self._save_preset_btn = QtWidgets.QPushButton('Save Preset...')
+        self._load_preset_btn = QtWidgets.QPushButton('Load Preset...')
+        preset_row.addWidget(self._save_preset_btn)
+        preset_row.addWidget(self._load_preset_btn)
+        root.addLayout(preset_row)
 
         # --- Generate / Reset ---
         btn_row = QtWidgets.QHBoxLayout()
@@ -145,6 +157,8 @@ class EucalyptusGenUI(QtWidgets.QDialog):
             self._on_species_changed)
         self._exposure_slider.valueChanged.connect(self._on_exposure_changed)
         self._seed_random_btn.clicked.connect(self._on_random_seed)
+        self._save_preset_btn.clicked.connect(self._on_save_preset)
+        self._load_preset_btn.clicked.connect(self._on_load_preset)
         self._generate_btn.clicked.connect(self._on_generate)
         self._reset_btn.clicked.connect(self._on_reset)
         self._generate_geo_btn.clicked.connect(self._on_generate_geo)
@@ -181,6 +195,59 @@ class EucalyptusGenUI(QtWidgets.QDialog):
     def _on_random_seed(self):
         self._seed_spin.setValue(random.randint(1, 9999))
 
+    def _on_save_preset(self):
+        result = cmds.fileDialog2(
+            fileMode=0, fileFilter='Eucalyptus Preset (*.json)',
+            caption='Save Eucalyptus Preset')
+        if not result:
+            return
+        filepath = result[0]
+        if not filepath.lower().endswith('.json'):
+            filepath += '.json'
+        try:
+            importlib.reload(eucalyptusGen)
+            eucalyptusGen.save_preset(
+                filepath,
+                species=self._species_combo.currentData(),
+                age=self._age_combo.currentText(),
+                density=self._density_combo.currentText(),
+                seed=self._seed_spin.value(),
+                height_m=self._height_spin.value(),
+                exposure=self._exposure_slider.value() / 100.0)
+            self._log_msg('Saved preset: {}'.format(filepath))
+        except Exception:
+            tb = traceback.format_exc()
+            self._log_msg(tb)
+            self._show_error(tb)
+
+    def _on_load_preset(self):
+        result = cmds.fileDialog2(
+            fileMode=1, fileFilter='Eucalyptus Preset (*.json)',
+            caption='Load Eucalyptus Preset')
+        if not result:
+            return
+        filepath = result[0]
+        try:
+            importlib.reload(eucalyptusGen)
+            data = eucalyptusGen.load_preset(filepath)
+            species_idx = self._species_combo.findData(data['species'])
+            if species_idx >= 0:
+                self._species_combo.setCurrentIndex(species_idx)
+            age_idx = self._age_combo.findText(data['age'])
+            if age_idx >= 0:
+                self._age_combo.setCurrentIndex(age_idx)
+            density_idx = self._density_combo.findText(data['density'])
+            if density_idx >= 0:
+                self._density_combo.setCurrentIndex(density_idx)
+            self._seed_spin.setValue(data['seed'])
+            self._height_spin.setValue(data['height_m'])
+            self._exposure_slider.setValue(int(round(data['exposure'] * 100)))
+            self._log_msg('Loaded preset: {}'.format(filepath))
+        except Exception:
+            tb = traceback.format_exc()
+            self._log_msg(tb)
+            self._show_error(tb)
+
     def _reset_height(self):
         species  = self._species_combo.currentData()
         age      = self._age_combo.currentText()
@@ -194,6 +261,7 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         self._density_combo.setCurrentIndex(1)   # typical
         self._seed_spin.setValue(42)
         self._exposure_slider.setValue(50)
+        self._trunk_only_check.setChecked(False)
         self._reset_height()
 
     def _on_generate(self):
@@ -203,17 +271,20 @@ class EucalyptusGenUI(QtWidgets.QDialog):
         seed     = self._seed_spin.value()
         height_m = self._height_spin.value()
         exposure = self._exposure_slider.value() / 100.0
+        include_branches = not self._trunk_only_check.isChecked()
 
         try:
             importlib.reload(eucalyptusGen)
             ref_cm = eucalyptusGen.reference_height_cm(species, age, exposure)
             scale  = (height_m * 100.0) / ref_cm if ref_cm else 1.0
             sp_name = eucalyptusGen.SPECIES[species].get('common_name', species)
-            self._log_msg('Generating {} {} {} (seed={}, height={}m)...'.format(
-                sp_name, age, density, seed, height_m))
+            self._log_msg('Generating {} {} {} (seed={}, height={}m{})...'.format(
+                sp_name, age, density, seed, height_m,
+                ', trunk only' if not include_branches else ''))
             grp = eucalyptusGen.generate(
                 species=species, age=age, seed=seed,
-                scale=scale, exposure=exposure, density=density)
+                scale=scale, exposure=exposure, density=density,
+                include_branches=include_branches)
             cmds.select(grp)
             cmds.viewFit()
             self._last_grp = grp

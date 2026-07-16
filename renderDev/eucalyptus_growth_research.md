@@ -298,3 +298,58 @@ Not yet modeled as its own species in `eucalyptusGen.py` — flagged for additio
 - Silvery/glaucous bark and foliage color, distinct from citriodora's white/cream/pink/copper
 - Large solitary pendulous pink/red flowers and bell-shaped fruit (distinctive of caesia, not represented by any current species)
 - TreeQSM: reconstructs 95% of branches >30cm with 99% correct branching order
+
+---
+
+## Snow Gum Trunk-Form Deep Dive — Source Links (2026-07-05)
+
+Scope: trunk *form* only (taper, multi-stem structure, krummholz twist) — not bark texture/colour. Compiled for the [dossier artifact](https://claude.ai/code/artifact/284a1690-c567-476b-a011-883744205d85) built the same day.
+
+### Try via RMIT library access (blocked/paywalled on direct fetch)
+- [Wearne & Morgan, "Tree-Limit Ribbons in the Snowy Mountains, Australia: Characterization and Recent Seedling Establishment," *Arctic, Antarctic, and Alpine Research* 44(2)](https://www.tandfonline.com/doi/full/10.1657/1938-4246-44.2.180) — Taylor & Francis, 403'd directly. Ribbon-forest structure, wind-perpendicular stem alignment, stem ages to ~500 yrs.
+  - Alt host, also blocked direct: [BioOne copy](https://bioone.org/journals/arctic-antarctic-and-alpine-research/volume-44/issue-2/1938-4246-44.2.180/Tree-Limit-Ribbons-in-the-Snowy-Mountains-Australia--Characterization/10.1657/1938-4246-44.2.180.pdf)
+- [Maher, "Winter damage is more important than summer temperature for maintaining the krummholz growth form above alpine treeline," *Journal of Ecology* (2020)](https://besjournals.onlinelibrary.wiley.com/doi/pdf/10.1111/1365-2745.13315) — Wiley, 403'd directly. General treeline krummholz mechanism (not snow-gum-specific but directly applicable).
+- [Alpine treeline ecotone stasis in the face of recent climate change and disturbance by fire](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7147793/) — PMC, likely open access, not yet read in full.
+- Euclid/Lucid taxonomic keys (bot-blocked, 403 on all three subspecies pages — worth a manual browser visit):
+  - [ssp. niphophila](https://apps.lucidcentral.org/euclid/text/entities/eucalyptus_pauciflora_subsp._niphophila.htm)
+  - [ssp. debeuzevillei](https://apps.lucidcentral.org/euclid/text/entities/eucalyptus_pauciflora_subsp._debeuzevillei.htm)
+  - [ssp. pauciflora](https://apps.lucidcentral.org/euclid/text/entities/eucalyptus_pauciflora_subsp._pauciflora.htm)
+
+### Species / botanical reference
+- [Eucalyptus pauciflora — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora)
+- [ssp. pauciflora — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._pauciflora)
+- [ssp. niphophila — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._niphophila)
+- [ssp. debeuzevillei — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._debeuzevillei)
+- [ssp. acerina — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._acerina)
+- [ssp. hedraia — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._hedraia)
+- [ssp. parvifructa — Wikipedia](https://en.wikipedia.org/wiki/Eucalyptus_pauciflora_subsp._parvifructa)
+- [Eucalyptus pauciflora — Trees and Shrubs Online](https://www.treesandshrubsonline.org/articles/eucalyptus/eucalyptus-pauciflora/)
+- [Eucalyptus pauciflora — Speciality Trees](https://www.specialitytrees.com.au/trees/eucalyptus-pauciflora-nylts) — clearest lowland-vs-alpine form contrast
+- [Snow Gum — Trees on the Tablelands](https://www.treesonthetablelands.com/trees/pauciflora)
+- [ssp. debeuzevillei — Xera Plants](https://xeraplants.com/plants/eucalyptus-pauciflora-var-debuezevillei/) — fork-point detail
+- [Alpine Snow Gum ssp. niphophila — Hardy Eucalyptus](https://www.hardy-eucalyptus.com/product/eucalyptus-niphophila/)
+- [ssp. pauciflora 'Adaminiby' — Hardy Eucalyptus](https://www.hardy-eucalyptus.com/product/eucalyptus-pauciflora/)
+- [Eucalyptus Pauciflora - an overview — ScienceDirect Topics](https://www.sciencedirect.com/topics/agricultural-and-biological-sciences/eucalyptus-pauciflora)
+- [Snow Gums and Citizen Science — Friends of the Earth Melbourne](https://www.melbournefoe.org.au/snow_gums_and_citizen_science)
+- [Where are the old snow gums? — Mountain Journal](https://themountainjournal.com/2022/09/06/where-are-the-old-snow-gums/)
+- [Ghost Forests: Australia's Iconic Snow Gums — Patagonia Australia](https://www.patagonia.com.au/blogs/roaring-journals/ghost-forests-australia-s-iconic-snow-gums-are-the-bleaching-corals-of-the-high-country) — dieback context, not form, but relevant background
+- [Snow Gums Boardwalk — NSW National Parks](https://www.nationalparks.nsw.gov.au/things-to-do/walking-tracks/snow-gums-boardwalk/learn-more)
+
+### Art & photography (trunk form specifically)
+- [Phil Ryan — Myopic Landscapes, "Snow Gums and other alpine vegetation series"](https://www.myopiclandscapes.com.au/snow-gums.htm) — best find: literal 3D relief built into trunk sections of the paintings
+- [Myopic Landscapes — Alpine series](https://www.myopiclandscapes.com.au/alpine.htm)
+- [Myopic Landscapes — Sub Alpine series](https://www.myopiclandscapes.com.au/sub-alpine.htm)
+- [Scott Leggo — Snow Gums Wall Art collection](https://www.scottleggo.com/collections/snow-gums-wall-art) (Kosciuszko Boardwalk)
+- [Scott Leggo — "Gnarled"](https://www.scottleggo.com/products/gnarled-snow-gum-kosciuszko-national-park-wall-art)
+- [Scott Leggo — "Twisted Beauty"](https://www.scottleggo.com/products/twisted-beauty-snow-gums-australian-alps-kosciuszko-national-park-wall-art-print)
+- [Scott Leggo — "Heart of the Alps"](https://www.scottleggo.com/products/heart-of-the-alps-snow-gum-kosciuszko-national-park-new-south-wales-australia-wall-art)
+- [Adam Resch — "Coated Snow Gums"](https://adamresch.com.au/products/coated-snowgums) — snow-loading asymmetry
+- [Eugène von Guérard — "Mount Kosciusko" (1866), NGV teaching resource](https://www.ngv.vic.gov.au/school_resource/eugene-von-guerard/mount-kosciusko/) — historical, landscape-scale
+- [Hans Heysen — Wikipedia](https://en.wikipedia.org/wiki/Hans_Heysen) — ruled out for snow gum specifically; his documented gum-tree work is river red gum ([Red Gums of the Far North, AGNSW](https://www.artgallery.nsw.gov.au/collection/works/122/))
+
+### Scans / 3D
+- [Sketchfab Store — "Snowgum Eucalyptus – Detailed Tree" (Rama Karl)](https://sketchfab.com/3d-models/snowgum-eucalyptus-detailed-tree-caac9e8e136b4435ab9c8df00aeaa910) — hand-modeled, not photogrammetry; paid
+- [ArtStation Marketplace — 3D eucalyptus tree trunk (photogrammetry)](https://www.artstation.com/marketplace/p/aJn3y/3d-eucalyptus-tree-trunk-photogrammetry) — real scan, generic eucalyptus not snow-gum-specific
+- No confirmed CC0/open point-cloud or TLS data specific to snow gum found this pass. Worth checking directly (not yet searched with a snow-gum-specific query):
+  - [TERN Data Discovery Portal](https://portal.tern.org.au)
+  - [CSIRO Data Access Portal](https://data.csiro.au)
