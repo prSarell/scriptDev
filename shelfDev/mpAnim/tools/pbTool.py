@@ -35,9 +35,11 @@ import re
 import glob
 import shutil
 import subprocess
+import threading
 import time
 
 import maya.cmds as cmds
+import maya.utils
 
 # Qt binding in Maya
 QT_AVAILABLE = True
@@ -627,6 +629,23 @@ class PBTool(object):
         sequence_pattern = prefix + ".#.jpg"
         cmd = [rvpush, "-tag", self.RV_TAG, "set", sequence_pattern]
 
+        # rvpush blocks synchronously while it connects -- if the previous RV under
+        # this tag was just closed, that first connect attempt has to time out against
+        # the dead session before rvpush falls through to spawning a fresh one, which
+        # can take a few seconds. Running that on Maya's main thread freezes the whole
+        # UI for the duration (Windows shows it as a ghosted/not-responding window), so
+        # the retry loop runs on a background thread instead -- nothing in it touches
+        # the Maya API directly, only cmds.warning() marshals back to the main thread.
+        thread = threading.Thread(target=self._push_to_rv, args=(cmd,))
+        thread.daemon = True
+        thread.start()
+
+    def _push_to_rv(self, cmd):
+        # Maya has no console of its own, so each subprocess.run() below would
+        # otherwise flash open a new console window for rvpush -- CREATE_NO_WINDOW
+        # stops that (Windows-only flag; harmless no-op value on other platforms).
+        no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
         # When no tagged RV is running, rvpush's cold start spawns RV but does not
         # forward the media (exit code 15) -- the sequence only loads once that new
         # session's network listener comes up, so retry the push briefly until it does.
@@ -643,9 +662,12 @@ class PBTool(object):
             spawning_allowed = (attempt == 0)
             env = os.environ if spawning_allowed else no_spawn_env
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, env=env,
+                    creationflags=no_window_flags,
+                )
             except Exception as exc:
-                cmds.warning("Failed to launch RV: {0}".format(exc))
+                self._warn_from_thread("Failed to launch RV: {0}".format(exc))
                 return
 
             if result.returncode == 0:
@@ -655,12 +677,15 @@ class PBTool(object):
                 time.sleep(1)
                 continue
 
-            cmds.warning("Failed to open sequence in RV (rvpush exit {0}): {1}".format(
+            self._warn_from_thread("Failed to open sequence in RV (rvpush exit {0}): {1}".format(
                 result.returncode, (result.stderr or result.stdout or "").strip()
             ))
             return
 
-        cmds.warning("Timed out waiting for a newly-launched RV to accept the playblast sequence.")
+        self._warn_from_thread("Timed out waiting for a newly-launched RV to accept the playblast sequence.")
+
+    def _warn_from_thread(self, message):
+        maya.utils.executeInMainThreadWithResult(lambda: cmds.warning(message))
 
     # --------------------------------------------------------
     # Playblast
