@@ -39,6 +39,7 @@ import threading
 import time
 
 import maya.cmds as cmds
+import maya.mel as mel
 import maya.utils
 
 # Qt binding in Maya
@@ -62,6 +63,10 @@ class PBTool(object):
         self.widgets = {}
         self.last_created_version_folder = ""
         self.last_created_files = []
+        # Tracks the RV process we launched directly for audio review (bypasses
+        # rvpush -- see open_in_rv_with_audio) so the previous one can be closed
+        # before opening a new one, instead of piling up windows.
+        self.audio_rv_process = None
 
     # --------------------------------------------------------
     # UI
@@ -352,6 +357,31 @@ class PBTool(object):
         end = int(round(cmds.playbackOptions(q=True, maxTime=True)))
         return start, end
 
+    def get_scene_audio_info(self):
+        """
+        Returns (audio_file_path, offset_frames) for the audio node currently
+        shown on Maya's time slider -- Maya's own concept of "the reference
+        audio for this scene" -- or (None, 0) if no audio is set there.
+        """
+        try:
+            time_control = mel.eval("$tmpVar=$gPlayBackSlider")
+            audio_node = cmds.timeControl(time_control, query=True, sound=True)
+        except Exception:
+            return None, 0
+
+        if not audio_node:
+            return None, 0
+
+        filename = cmds.getAttr(audio_node + ".filename")
+        if not filename or not os.path.isfile(filename):
+            return None, 0
+
+        offset = cmds.getAttr(audio_node + ".offset")
+        return filename, offset
+
+    def get_fps_value(self):
+        return mel.eval("currentTimeUnitToFPS")
+
     # --------------------------------------------------------
     # Burn-in drawing
     # --------------------------------------------------------
@@ -640,6 +670,43 @@ class PBTool(object):
         thread.daemon = True
         thread.start()
 
+    def open_in_rv_with_audio(self, prefix, audio_path, audio_offset, start_frame):
+        """
+        rvpush's "set" command (used by open_in_rv) does not support RV's
+        multi-file source grouping -- confirmed empirically: it silently drops
+        the audio and loads the image sequence alone, whether pushed into an
+        already-running tagged RV or during a cold start. The only combination
+        that actually works is RV's own command-line argv parsing of a bracket
+        group (`rv [ seq.#.jpg audio.wav ]`), which only happens at true process
+        startup -- so audio playblasts bypass rvpush entirely and launch rv
+        directly. That means no in-place window update for this path: the
+        previous audio-review RV window (if we started one) is closed first so
+        they don't pile up across repeated playblasts.
+        """
+        rv_exe = self.find_rv_executable("rv")
+        if not rv_exe:
+            cmds.warning("Could not find RV on this machine. Skipped opening in RV.")
+            return
+
+        if self.audio_rv_process is not None and self.audio_rv_process.poll() is None:
+            self.audio_rv_process.terminate()
+
+        sequence_pattern = prefix + ".#.jpg"
+        cmd = [rv_exe, "[", sequence_pattern, audio_path]
+
+        if audio_offset != start_frame:
+            fps = self.get_fps_value()
+            offset_seconds = (audio_offset - start_frame) / fps
+            cmd += ["-ao", str(offset_seconds)]
+
+        cmd += ["]"]
+
+        no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            self.audio_rv_process = subprocess.Popen(cmd, creationflags=no_window_flags)
+        except Exception as exc:
+            cmds.warning("Failed to launch RV with audio: {0}".format(exc))
+
     def _push_to_rv(self, cmd):
         # Maya has no console of its own, so each subprocess.run() below would
         # otherwise flash open a new console window for rvpush -- CREATE_NO_WINDOW
@@ -727,7 +794,11 @@ class PBTool(object):
 
                 open_in_rv = cmds.checkBox(self.widgets["open_in_rv"], q=True, value=True)
                 if open_in_rv:
-                    self.open_in_rv(prefix)
+                    audio_path, audio_offset = self.get_scene_audio_info()
+                    if audio_path:
+                        self.open_in_rv_with_audio(prefix, audio_path, audio_offset, start_frame)
+                    else:
+                        self.open_in_rv(prefix)
 
             self.refresh_ui_state()
 
