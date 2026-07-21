@@ -42,5 +42,6 @@
     }
   },
   "spacebar": true,
-  "shotcam_toggle": true
+  "shotcam_toggle": true,
+  "readonly": false
 }

@@ -13,6 +13,7 @@ HERE              = os.path.dirname(os.path.abspath(__file__))
 ANIM_DIR          = os.path.join(HERE, "mpAnim")
 ANIM_TOOLS        = os.path.join(ANIM_DIR, "tools")
 ANIM_ICONS        = os.path.join(ANIM_DIR, "icons")
+STAFF_SHORTCUTS_DIR = os.path.join(ANIM_TOOLS, "staff_shortcuts")
 RIG_DIR           = os.path.join(HERE, "mpRig")
 RIG_TOOLS         = os.path.join(RIG_DIR, "tools")
 RIG_ICONS         = os.path.join(RIG_DIR, "icons")
@@ -73,6 +74,14 @@ def _install():
             anim_scripts.append(name)
     for name in anim_scripts:
         _copy(os.path.join(ANIM_TOOLS, name), scripts_dir)
+
+    # mpAnim staff_shortcuts/ (per-set JSON configs read by shortCuts.py)
+    if os.path.isdir(STAFF_SHORTCUTS_DIR):
+        dst_staff_dir = os.path.join(scripts_dir, "staff_shortcuts")
+        os.makedirs(dst_staff_dir, exist_ok=True)
+        for fname in os.listdir(STAFF_SHORTCUTS_DIR):
+            if fname.endswith(".json"):
+                _copy(os.path.join(STAFF_SHORTCUTS_DIR, fname), dst_staff_dir)
 
     for name in getattr(anim_cfg, "ANIMDEV_SCRIPTS", []):
         _copy(os.path.join(ANIMDEV_DIR, name), scripts_dir)
@@ -195,9 +204,13 @@ def _install():
 
     mel.eval("saveAllShelves $gShelfTopLevel")
 
-    cmds.evalDeferred("import multiTool; multiTool.show()")
-    cmds.evalDeferred("import mpAnimConfig; mpAnimConfig.get_save_path()")
-    cmds.evalDeferred("import shortCuts; shortCuts.init_hotkeys()")
+    # Modules may already be cached in sys.modules from earlier in this Maya
+    # session (e.g. the userSetup.py auto-load hook) — a plain `import` would
+    # silently reuse the stale in-memory code even though the file on disk
+    # was just updated, so force a reload before showing/running each one.
+    cmds.evalDeferred("import importlib, multiTool; importlib.reload(multiTool); multiTool.show()")
+    cmds.evalDeferred("import importlib, mpAnimConfig; importlib.reload(mpAnimConfig); mpAnimConfig.get_save_path()")
+    cmds.evalDeferred("import importlib, shortCuts; importlib.reload(shortCuts); shortCuts.init_hotkeys()")
 
     cmds.inViewMessage(
         amg="<b>mpAnim v{} + mpRig v{}</b> installed.".format(

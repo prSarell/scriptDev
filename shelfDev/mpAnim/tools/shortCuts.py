@@ -12,6 +12,10 @@ import mpAnimConfig
 
 WINDOW_NAME  = 'mpAnimShortCuts'
 DATA_FILE    = 'shortcuts_data.json'
+_STARTUP_GUARD_PROP = 'mpAnimShortCutsStartupDone'   # QApplication flag — collapses duplicate
+                                                      # userSetup.py startup hooks (e.g. a machine
+                                                      # with both mpToolSet and studio4AnimToolset
+                                                      # installed) into a single real init per session
 _BUILTIN_SET = 'Maya_Default'
 _HOLD_MS     = 400
 _STAFF_FOLDER     = 'staff_shortcuts'
@@ -601,7 +605,7 @@ def apply_set(name, data):
         else:
             _restore_spacebar()
         if set_data.get('shotcam_toggle', True):
-            _bind_backtick()
+            _bind_backtick(set_data.get('shotcam_command'))
         else:
             _restore_backtick()
     data['active'] = name
@@ -763,7 +767,7 @@ def _init(data):
         if set_data.get('spacebar', False):
             _bind_spacebar()
         if set_data.get('shotcam_toggle', True):
-            _bind_backtick()
+            _bind_backtick(set_data.get('shotcam_command'))
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +887,7 @@ def _restore_spacebar():
 # filter catches the key at the application level instead.
 
 _backtick_filter = None
+_backtick_cmd    = None   # active set's shotcam_command (or the default) — student-editable
 _BACKTICK_PROP   = 'mpAnimBacktickFilterRef'
 
 
@@ -914,16 +919,16 @@ class _BacktickCamFilter(QtCore.QObject):
             return False
 
         try:
-            import toggleShotCam
-            toggleShotCam.toggle()
+            exec(_backtick_cmd or _DEFAULT_SHOTCAM_CMD, {})
         except Exception as e:
             cmds.warning(f'shortCuts: toggleShotCam failed — {e}')
         return True
 
 
-def _bind_backtick():
-    global _backtick_filter
+def _bind_backtick(cmd=None):
+    global _backtick_filter, _backtick_cmd
     _restore_backtick()
+    _backtick_cmd = cmd or _DEFAULT_SHOTCAM_CMD
     app = QtWidgets.QApplication.instance()
     _backtick_filter = _BacktickCamFilter(app)
     app.installEventFilter(_backtick_filter)
@@ -947,7 +952,19 @@ def set_shotcam_toggle(set_name, enabled, data):
     s['shotcam_toggle'] = enabled
     _save_data(data)
     if data.get('active') == set_name:
-        _bind_backtick() if enabled else _restore_backtick()
+        _bind_backtick(s.get('shotcam_command')) if enabled else _restore_backtick()
+
+
+def set_shotcam_command(set_name, cmd, data):
+    """Save the student-edited toggle command (or reset to default if cmd is falsy)."""
+    s = data['sets'].setdefault(set_name, {'hotkeys': {}, 'spacebar': False})
+    if cmd:
+        s['shotcam_command'] = cmd
+    else:
+        s.pop('shotcam_command', None)
+    _save_data(data)
+    if data.get('active') == set_name and s.get('shotcam_toggle', False):
+        _bind_backtick(s.get('shotcam_command'))
 
 
 # ---------------------------------------------------------------------------
@@ -1131,6 +1148,35 @@ class KeyboardWidget(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Special-row info — Space / backtick aren't stored as per-key commands, so
+# the Runtime Command tab shows this fixed text instead of a hotkeys[] lookup.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SHOTCAM_CMD = "import toggleShotCam\ntoggleShotCam.toggle(shot_cam='camera1')"
+
+_SPECIAL_INFO = {
+    'space': {
+        'label':   'Space',
+        'desc':    'Tap to play  ·  Hold for hotbox',
+        'lang':    'python',
+        'command': (
+            "# Built into shortCuts.py — not stored as a per-key command.\n"
+            "import maya.mel as mel\n"
+            "mel.eval('togglePlayback')   # tap\n"
+            "mel.eval('hotBox')           # press and hold\n"
+            "mel.eval('hotBox -release')  # release after a hold"
+        ),
+    },
+    'shotcam': {
+        'label':   '`',
+        'desc':    'Toggle shot camera  —  edit the camera name below and hit Assign',
+        'lang':    'python',
+        'command': _DEFAULT_SHOTCAM_CMD,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # MainPanel — category sidebar + hotkey list
 # ---------------------------------------------------------------------------
 
@@ -1173,11 +1219,14 @@ class _HotkeyRow(QtWidgets.QWidget):
 
 
 class _SpecialRow(QtWidgets.QWidget):
-    toggled = QtCore.Signal(bool)
+    toggled     = QtCore.Signal(bool)
+    row_clicked = QtCore.Signal(str)   # kind — 'space' or 'shotcam'
 
-    def __init__(self, key_label, desc, enabled, readonly=False, parent=None):
+    def __init__(self, key_label, desc, enabled, kind, readonly=False, parent=None):
         super().__init__(parent)
+        self.kind = kind
         self.setObjectName('hotkeyRow')
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
         h = QtWidgets.QHBoxLayout(self)
         h.setContentsMargins(6, 0, 4, 0)
@@ -1201,10 +1250,15 @@ class _SpecialRow(QtWidgets.QWidget):
         lbl.setObjectName('descLabel')
         h.addWidget(lbl, 1)
 
+    def mousePressEvent(self, event):
+        self.row_clicked.emit(self.kind)
+        super().mousePressEvent(event)
+
 
 class MainPanel(QtWidgets.QWidget):
     set_selected    = QtCore.Signal(str)
     hotkey_clicked  = QtCore.Signal(str)   # slug
+    special_clicked = QtCore.Signal(str)   # 'space' or 'shotcam'
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -1387,15 +1441,17 @@ class MainPanel(QtWidgets.QWidget):
 
         idx = len(hotkeys)
         space_row = _SpecialRow('Space', 'Tap to play  ·  Hold for hotbox',
-                                bool(set_entry.get('spacebar', False)), readonly=is_staff)
+                                bool(set_entry.get('spacebar', False)), 'space', readonly=is_staff)
         if not is_staff:
             space_row.toggled.connect(lambda en, sn=set_name: set_spacebar(sn, en, self._data))
+        space_row.row_clicked.connect(self._on_special_selected)
         self._hotkey_layout.insertWidget(idx, space_row)
 
         cam_row = _SpecialRow('`', 'Toggle shot camera',
-                              bool(set_entry.get('shotcam_toggle', False)), readonly=is_staff)
+                              bool(set_entry.get('shotcam_toggle', False)), 'shotcam', readonly=is_staff)
         if not is_staff:
             cam_row.toggled.connect(lambda en, sn=set_name: set_shotcam_toggle(sn, en, self._data))
+        cam_row.row_clicked.connect(self._on_special_selected)
         self._hotkey_layout.insertWidget(idx + 1, cam_row)
 
     def refresh_hotkeys(self, set_name):
@@ -1422,6 +1478,10 @@ class MainPanel(QtWidgets.QWidget):
     def _on_row_selected(self, slug):
         self._selected_slug = slug
         self.hotkey_clicked.emit(slug)
+
+    def _on_special_selected(self, kind):
+        self._selected_slug = None
+        self.special_clicked.emit(kind)
 
     def _on_add_hotkey(self):
         set_name = self.current_set()
@@ -1510,6 +1570,7 @@ class KeyBinderPanel(QtCore.QObject):
         super().__init__(parent)
         self._data = data
         self._main = main_panel
+        self._selected_special = None   # 'space' / 'shotcam', or None when a regular key is selected
         self._kb_widget    = self._build_keyboard_widget(kb_type)
         self._assign_widget = self._build_assign_widget()
 
@@ -1647,6 +1708,7 @@ class KeyBinderPanel(QtCore.QObject):
         self._assign_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
         self._keyboard.clear_selection()
+        self._selected_special = None
         if is_builtin:
             hint = 'Default set — read only'
         elif is_staff:
@@ -1679,7 +1741,44 @@ class KeyBinderPanel(QtCore.QObject):
         self._keyboard.set_mods(alt, ctrl, shift)
         self._keyboard.select_key(key)
 
+    def select_special(self, kind):
+        info = _SPECIAL_INFO.get(kind)
+        if not info:
+            return
+        self._keyboard.clear_selection()
+        self._selected_special = kind
+
+        set_name   = self._main.current_set()
+        is_builtin = set_name == _BUILTIN_SET
+        is_staff   = _is_staff_set(set_name)
+        editable   = kind == 'shotcam' and not is_builtin and not is_staff
+
+        display = f'Selected: {info["label"]}'
+        self._key_lbl.setText(display)
+        self._assign_key_lbl.setText(display)
+        self._desc_edit.setReadOnly(True)
+        self._desc_edit.setText(info['desc'])
+        (self._py_rb if info.get('lang', 'python') == 'python' else self._mel_rb).setChecked(True)
+
+        if editable:
+            set_entry = self._data.get('sets', {}).get(set_name, {})
+            cmd = set_entry.get('shotcam_command') or _DEFAULT_SHOTCAM_CMD
+            self._cmd_edit.setReadOnly(False)
+            self._cmd_edit.setPlainText(cmd)
+            self._assign_btn.setEnabled(True)
+            self._clear_btn.setEnabled(bool(set_entry.get('shotcam_command')))
+            status = 'Edit the camera name below, then Assign.'
+        else:
+            self._cmd_edit.setReadOnly(True)
+            self._cmd_edit.setPlainText(info['command'])
+            self._assign_btn.setEnabled(False)
+            self._clear_btn.setEnabled(False)
+            status = 'Built in — read only.'
+        self._status_lbl.setText(status)
+        self._assign_status_lbl.setText(status)
+
     def _on_key_selected(self, key):
+        self._selected_special = None
         set_name   = self._main.current_set()
         is_builtin = set_name == _BUILTIN_SET
         is_staff   = _is_staff_set(set_name)
@@ -1689,14 +1788,30 @@ class KeyBinderPanel(QtCore.QObject):
         self._key_lbl.setText(f'Selected: {display}')
 
         hotkeys  = {} if is_builtin else \
-                   self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {})
+                   (_STAFF_SETS.get(set_name, {}).get('hotkeys', {}) if is_staff else
+                    self._data.get('sets', {}).get(set_name, {}).get('hotkeys', {}))
         defaults = _get_default_bindings()
 
         if is_builtin or is_staff:
             self._assign_btn.setEnabled(False)
             self._clear_btn.setEnabled(False)
-            self._status_lbl.setText('Read only.' if is_staff else 'Default set is read-only.')
+            self._desc_edit.setReadOnly(True)
+            self._cmd_edit.setReadOnly(True)
+            if slug in hotkeys:
+                hk = hotkeys[slug]
+                self._desc_edit.setText(hk.get('desc', ''))
+                self._cmd_edit.setPlainText(hk.get('command', ''))
+                (self._py_rb if hk.get('lang', 'python') == 'python' else self._mel_rb).setChecked(True)
+            else:
+                self._desc_edit.clear()
+                self._cmd_edit.clear()
+            status = 'Read only.' if is_staff else 'Default set is read-only.'
+            self._status_lbl.setText(status)
+            self._assign_status_lbl.setText(status)
             return
+
+        self._desc_edit.setReadOnly(False)
+        self._cmd_edit.setReadOnly(False)
 
         if slug in hotkeys:
             hk = hotkeys[slug]
@@ -1720,6 +1835,9 @@ class KeyBinderPanel(QtCore.QObject):
         self._update_keyboard()
 
     def _assign(self):
+        if self._selected_special:
+            self._assign_special()
+            return
         key = self._keyboard.selected_key()
         if not key:
             return
@@ -1748,7 +1866,26 @@ class KeyBinderPanel(QtCore.QObject):
         self._assign_status_lbl.setText('Assigned.')
         self.hotkey_assigned.emit(set_name)
 
+    def _assign_special(self):
+        if self._selected_special != 'shotcam':
+            return
+        set_name = self._main.current_set()
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name):
+            return
+        cmd = self._cmd_edit.toPlainText().strip()
+        if not cmd:
+            QtWidgets.QMessageBox.warning(
+                self._assign_widget, 'Key Binder', 'Command is required.')
+            return
+        set_shotcam_command(set_name, cmd, self._data)
+        self._clear_btn.setEnabled(True)
+        self._status_lbl.setText('Assigned.')
+        self._assign_status_lbl.setText('Assigned.')
+
     def _clear_binding(self):
+        if self._selected_special:
+            self._clear_special()
+            return
         key = self._keyboard.selected_key()
         if not key:
             return
@@ -1773,6 +1910,18 @@ class KeyBinderPanel(QtCore.QObject):
         self._assign_status_lbl.setText('')
         self._update_keyboard(set_name)
         self.hotkey_assigned.emit(set_name)
+
+    def _clear_special(self):
+        if self._selected_special != 'shotcam':
+            return
+        set_name = self._main.current_set()
+        if not set_name or set_name == _BUILTIN_SET or _is_staff_set(set_name):
+            return
+        set_shotcam_command(set_name, None, self._data)
+        self._cmd_edit.setPlainText(_DEFAULT_SHOTCAM_CMD)
+        self._clear_btn.setEnabled(False)
+        self._status_lbl.setText('Reset to default.')
+        self._assign_status_lbl.setText('Reset to default.')
 
     # ── physical keyboard input ─────────────────────────────
 
@@ -1940,6 +2089,7 @@ class ShortCutsUI(QtWidgets.QDialog):
 
         self._main_panel.set_selected.connect(self._key_binder.refresh)
         self._main_panel.hotkey_clicked.connect(self._key_binder.select_slug)
+        self._main_panel.special_clicked.connect(self._key_binder.select_special)
         self._key_binder.hotkey_assigned.connect(self._main_panel.refresh_hotkeys)
 
         # ── Right panel: 3-tab widget ──────────────────────
@@ -1998,6 +2148,11 @@ class ShortCutsUI(QtWidgets.QDialog):
 def init_hotkeys():
     if not mpAnimConfig.get_save_path_silent():
         return
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        if app.property(_STARTUP_GUARD_PROP):
+            return
+        app.setProperty(_STARTUP_GUARD_PROP, True)
     _init(_load_data())
 
 
