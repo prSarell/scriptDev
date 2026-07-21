@@ -18,6 +18,8 @@ TOOL_VERSION = '1.0'
 
 BTN_H = 20
 
+_dock_btn = None   # 'Dock' button — enabled only while the tool is floating/undocked
+
 # ---------------------------------------------------------------------------
 # Styling helpers
 # ---------------------------------------------------------------------------
@@ -431,6 +433,24 @@ def _build_tool_widget(parent=None):
     layout.addWidget(_make_collapsible('Ref Plane',    _ref_plane_content))
     layout.addWidget(_make_collapsible('Cycle Keys',   _cycle_keys_content))
     layout.addWidget(_make_collapsible('Bake',          _bake_content))
+
+    global _dock_btn
+    dock_btn = QtWidgets.QPushButton('Dock')
+    dock_btn.setMinimumHeight(BTN_H)
+    dock_btn.setStyleSheet(_btn('#3F3F3F'))
+    dock_btn.setToolTip('Redock multiTool to its original position — active only while undocked')
+    dock_btn.clicked.connect(_redock)
+    dock_btn.setEnabled(_is_floating())
+    layout.addWidget(dock_btn)
+    _dock_btn = dock_btn
+
+    # No float-state-changed callback exists on workspaceControl — poll instead.
+    # Timer is parented to widget so it's torn down automatically when the tool closes.
+    dock_timer = QtCore.QTimer(widget)
+    dock_timer.setInterval(1000)
+    dock_timer.timeout.connect(_update_dock_button)
+    dock_timer.start()
+
     layout.addStretch()
 
     from PySide6 import QtWidgets
@@ -472,6 +492,45 @@ def show():
         retain=True,
         uiScript='import multiTool; multiTool._populate_workspace_control()',
     )
+
+
+def _is_floating():
+    if not cmds.workspaceControl(WORKSPACE_CONTROL_NAME, query=True, exists=True):
+        return False
+    return bool(cmds.workspaceControl(WORKSPACE_CONTROL_NAME, query=True, floating=True))
+
+
+def _update_dock_button():
+    if _dock_btn is None:
+        return
+    try:
+        _dock_btn.setEnabled(_is_floating())
+    except RuntimeError:
+        pass   # underlying Qt widget was deleted (e.g. tool closed) — ignore
+
+
+def _redock():
+    try:
+        cmds.workspaceControl(
+            WORKSPACE_CONTROL_NAME, edit=True,
+            tabToControl=('ChannelBoxLayerEditor', -1))
+    except Exception as e:
+        cmds.confirmDialog(
+            title='multiTool', icon='critical', button=['OK'],
+            message='Could not redock multiTool:\n\n{}'.format(e))
+        return
+
+    if _is_floating():
+        cmds.confirmDialog(
+            title='multiTool', icon='warning', button=['OK'],
+            message=(
+                'Could not redock multiTool.\n\n'
+                'Your Maya UI layout is likely locked — unlock it via\n'
+                'Windows > Workspaces > Lock UI Elements, then try again.'
+            ))
+        return
+
+    _update_dock_button()
 
 
 def _populate_workspace_control():
