@@ -120,6 +120,14 @@ class PBTool(object):
         self.widgets["show_scene"] = cmds.checkBox(label="Show Scene Name", value=True)
         self.widgets["show_frame"] = cmds.checkBox(label="Show Frame Number", value=True)
         self.widgets["show_focal"] = cmds.checkBox(label="Show Focal Length", value=True)
+        cmds.separator(h=6, style="none")
+        self.widgets["burnin_custom_text"] = cmds.textFieldGrp(
+            label="Custom Text",
+            text="",
+            columnWidth2=(70, 250),
+            annotation="Freeform text burned into the bottom-right corner — "
+                       "e.g. artist name or shot stage. Blank = not shown."
+        )
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -160,6 +168,26 @@ class PBTool(object):
         cmds.separator(h=6, style="none")
 
         cmds.frameLayout(
+            label="ShotGrid",
+            collapsable=False,
+            marginHeight=8,
+            marginWidth=8,
+            parent=root
+        )
+        inner = cmds.columnLayout(adj=True)
+        cmds.text(label="Notes (sent with this playblast)", align="left")
+        self.widgets["sg_notes"] = cmds.scrollField(
+            height=50, wordWrap=True,
+            annotation="e.g. \"blocking pass, ignore the left arm\" — posted "
+                       "as a note on the ShotGrid Version once Jiffy SG is "
+                       "available."
+        )
+        cmds.setParent("..")
+        cmds.setParent("..")
+
+        cmds.separator(h=6, style="none")
+
+        cmds.frameLayout(
             label="Actions",
             collapsable=False,
             marginHeight=8,
@@ -170,6 +198,8 @@ class PBTool(object):
         cmds.button(label="Create Playblast", h=40, c=lambda *_: self.create_playblast())
         cmds.separator(h=8, style="none")
         cmds.button(label="Delete Last Playblast", h=30, c=lambda *_: self.delete_last_playblast())
+        cmds.separator(h=8, style="none")
+        cmds.button(label="Send to ShotGrid", h=30, c=lambda *_: self.send_to_shotgrid())
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -489,6 +519,7 @@ class PBTool(object):
 
         fps_text = self.get_frame_rate_label() if show_fps else ""
         scene_text = self.get_scene_name() if show_scene else ""
+        custom_text = cmds.textFieldGrp(self.widgets["burnin_custom_text"], q=True, text=True).strip()
 
         render_width, render_height = self.get_render_resolution()
         render_aspect = float(render_width) / float(render_height)
@@ -605,6 +636,19 @@ class PBTool(object):
                 bottom_left_rect,
                 focal_text,
                 int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            )
+
+            bottom_right_rect = QtCore.QRect(
+                active_x + int(active_width * 0.75),
+                bottom_inset,
+                int(active_width * 0.25) - margin_x,
+                text_height
+            )
+            self._draw_text_block(
+                painter,
+                bottom_right_rect,
+                custom_text,
+                int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             )
 
             painter.end()
@@ -921,6 +965,46 @@ class PBTool(object):
 
         except Exception as exc:
             cmds.warning("Failed to delete last playblast: {0}".format(exc))
+
+    # --------------------------------------------------------
+    # ShotGrid hand-off
+    # --------------------------------------------------------
+    # pbTool never holds its own ShotGrid login/session. Per the Jiffy SG
+    # design (timeManagementDev/jiffySG_brief.md), Jiffy SG owns the single
+    # authenticated ShotGrid session for a student and does the actual
+    # upload — pbTool just hands off the playblast, same pattern as
+    # JiffySchedule's "Send to Pomo" (see jiffySchedule.py _send_to_pomo).
+    # jiffySG.upload_playblast() doesn't exist yet (Jiffy SG is design-only
+    # as of writing), so this always shows the "not installed" message for
+    # now — it's wired up and ready for when that lands.
+    def send_to_shotgrid(self):
+        if not self.last_created_version_folder or not self.last_created_files:
+            cmds.warning("Create a playblast first.")
+            return
+
+        try:
+            import jiffySG
+        except ImportError:
+            cmds.confirmDialog(
+                title="ShotGrid",
+                message="Jiffy SG isn't installed — ShotGrid publishing "
+                        "isn't available yet.",
+                button=["OK"],
+            )
+            return
+
+        shot_name = self.get_scene_relative_folder_from_scenes() or self.get_scene_basename_no_ext()
+        notes = cmds.scrollField(self.widgets["sg_notes"], q=True, text=True).strip()
+
+        try:
+            jiffySG.upload_playblast(
+                shot_name,
+                self.last_created_version_folder,
+                files=self.last_created_files,
+                notes=notes,
+            )
+        except Exception as exc:
+            cmds.warning("ShotGrid publish failed: {0}".format(exc))
 
     def open_output_folder(self):
         try:
