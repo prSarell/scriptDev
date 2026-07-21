@@ -85,17 +85,6 @@ def _backup_file(src_path, backup_dir, category):
     shutil.copy2(src_path, dest)
 
 
-def _backup_directory(src_path, backup_dir, category):
-    if not os.path.isdir(src_path):
-        return
-    dest_dir = os.path.join(backup_dir, category)
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, os.path.basename(src_path.rstrip("/")))
-    if os.path.exists(dest):
-        shutil.rmtree(dest)
-    shutil.copytree(src_path, dest)
-
-
 # -- copy helpers -----------------------------------------------------------
 
 def _copy_flat(src_dir, dst_dir, backup_dir, category, ext=None):
@@ -112,14 +101,6 @@ def _copy_flat(src_dir, dst_dir, backup_dir, category, ext=None):
             shutil.copy2(src, dst)
             copied.append(dst)
     return copied
-
-
-def _copy_tree(src_dir, dst_dir, backup_dir, category):
-    _backup_directory(dst_dir, backup_dir, category)
-    if os.path.exists(dst_dir):
-        shutil.rmtree(dst_dir)
-    shutil.copytree(src_dir, dst_dir)
-    return dst_dir.replace("\\", "/")
 
 
 # -- shelf ------------------------------------------------------------------
@@ -250,12 +231,6 @@ def _install(root):
     )
     all_files.extend(copied)
 
-    studio_src = os.path.join(shelf_path, "studiolibrary")
-    if os.path.isdir(studio_src):
-        studio_dst = os.path.join(scripts_dst, "studiolibrary")
-        dst = _copy_tree(studio_src, studio_dst, backup_dir, "dirs")
-        all_dirs.append(dst)
-
     config_file = os.path.join(shelf_path, "shelf_config.py")
     if os.path.isfile(config_file):
         name, btn_count = _build_shelf(config_file, backup_dir)
@@ -275,6 +250,9 @@ def _install(root):
         "  Shelf:   {} ({} buttons)\n"
         "  Startup hook: userSetup.py updated\n"
         "  Backup saved: {}\n\n"
+        "  Studio Library installs separately — drag\n"
+        "  studioLibrary/install.py (in this same folder) onto the\n"
+        "  viewport if you need it.\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
     ).format(
         sum(1 for f in all_files if f.endswith(".py")), scripts_dst,

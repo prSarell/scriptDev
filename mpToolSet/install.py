@@ -88,18 +88,6 @@ def _backup_file(src_path, backup_dir, category):
     shutil.copy2(src_path, dest)
 
 
-def _backup_directory(src_path, backup_dir, category):
-    """If src_path exists, copy the whole tree into backup_dir/category/name."""
-    if not os.path.isdir(src_path):
-        return
-    dest_dir = os.path.join(backup_dir, category)
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, os.path.basename(src_path.rstrip("/")))
-    if os.path.exists(dest):
-        shutil.rmtree(dest)
-    shutil.copytree(src_path, dest)
-
-
 # -- copy helpers -----------------------------------------------------------
 
 def _copy_flat(src_dir, dst_dir, backup_dir, category, ext=None):
@@ -116,14 +104,6 @@ def _copy_flat(src_dir, dst_dir, backup_dir, category, ext=None):
             shutil.copy2(src, dst)
             copied.append(dst)
     return copied
-
-
-def _copy_tree(src_dir, dst_dir, backup_dir, category):
-    _backup_directory(dst_dir, backup_dir, category)
-    if os.path.exists(dst_dir):
-        shutil.rmtree(dst_dir)
-    shutil.copytree(src_dir, dst_dir)
-    return dst_dir.replace("\\", "/")
 
 
 # -- shelf ------------------------------------------------------------------
@@ -271,15 +251,6 @@ def _install(root):
         )
         all_files.extend(copied)
 
-        studio_src = os.path.join(shelf_path, "studiolibrary")
-        if os.path.isdir(studio_src):
-            for pkg_name in sorted(os.listdir(studio_src)):
-                pkg_src = os.path.join(studio_src, pkg_name)
-                if os.path.isdir(pkg_src):
-                    pkg_dst = os.path.join(scripts_dst, pkg_name)
-                    dst = _copy_tree(pkg_src, pkg_dst, backup_dir, "dirs")
-                    all_dirs.append(dst)
-
         config_file = os.path.join(shelf_path, "shelf_config.py")
         if os.path.isfile(config_file):
             name, btn_count = _build_shelf(config_file, backup_dir)
@@ -302,6 +273,9 @@ def _install(root):
         "  Backup saved: {}\n\n"
         "  ngSkinTools2 installs separately — drag ngSkinTools2/install.py\n"
         "  (in this same folder) onto the viewport if you need it.\n\n"
+        "  Studio Library installs separately too — drag\n"
+        "  studioLibrary/install.py (in this same folder) onto the\n"
+        "  viewport if you need it.\n\n"
         "To uninstall, drag uninstall.py onto the viewport."
     ).format(
         sum(1 for f in all_files if f.endswith(".py")), scripts_dst,

@@ -142,14 +142,20 @@ def _install():
             _copy(os.path.join(RIG_ICONS, name), icons_dir)
 
     # --- Studio Library ---
+    # Merge-copy (dirs_exist_ok) instead of rmtree-then-copy: deleting a live
+    # package directory can fail with PermissionError on Windows if any of its
+    # modules (or their __pycache__) are still loaded by the running Maya
+    # session, which used to abort the rest of _install() — including the
+    # shelf rebuild further down — partway through.
     if os.path.exists(STUDIOLIB_SRC):
         for pkg_name in os.listdir(STUDIOLIB_SRC):
             src = os.path.join(STUDIOLIB_SRC, pkg_name)
             if os.path.isdir(src):
                 dst = os.path.join(scripts_dir, pkg_name)
-                if os.path.exists(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
+                try:
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                except Exception as e:
+                    print("[mpInstaller] WARNING: could not update {} — {}".format(pkg_name, e))
         print("[mpInstaller] deployed Studio Library")
     else:
         print("[mpInstaller] WARNING: Studio Library not found — StudioLib button may not work")

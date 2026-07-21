@@ -50,6 +50,7 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 
 - **SHAPES** is dev-only — do not include in mpToolSet or distribute to students.
 - **ngSkinTools2** is bundled in `mpToolSet/ngSkinTools2/` — a top-level folder alongside `install.py`/`uninstall.py`, with its own self-contained `install.py`/`uninstall.py` pair. It ships inside the same mpToolSet download (one download for students) but installs separately: students drag `ngSkinTools2/install.py` in only if they need it, decoupled from the main installer's manifest/backup system. See `mpToolSet/dev_notes.md` for why (recurring install failures when it was auto-installed).
+- **Studio Library** is bundled the same way, in `mpToolSet/studioLibrary/` and `studio4AnimToolset/studioLibrary/` — each a top-level folder with its own self-contained `install.py`/`uninstall.py`, installed separately from the main installer for the same reason as ngSkinTools2: it's a set of plain Python packages (`mutils`, `studiolibrary`, `studiolibrarymaya`, `studioqt`, `studiovendor`) that can be actively loaded in a running Maya session, so bundling it into the frequently-rerun main installer risked a `shutil.rmtree` `PermissionError` on Windows that could abort the rest of the install (including shelf building) partway through.
 
 ### Two student toolsets
 
