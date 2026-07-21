@@ -135,6 +135,25 @@ class PBTool(object):
         inner = cmds.columnLayout(adj=True)
         self.widgets["keep_files"] = cmds.checkBox(label="Keep Playblast Files", value=True)
         self.widgets["open_in_rv"] = cmds.checkBox(label="Open in RV", value=True)
+        cmds.separator(h=6, style="none")
+        cmds.flowLayout(columnSpacing=4)
+        self.widgets["auto_prune"] = cmds.checkBox(
+            label="Auto-delete old versions",
+            value=self.get_auto_prune_enabled(),
+            annotation="Like Maya's autosave rotation — keeps only the most "
+                       "recent versions per shot so playblasts don't fill up "
+                       "the drive. Reviews are pushed to ShotGrid separately.",
+            changeCommand=lambda checked: self._on_auto_prune_toggled(checked)
+        )
+        self.widgets["max_versions"] = cmds.intField(
+            value=self.get_max_versions_to_keep(),
+            minValue=0,
+            width=40,
+            enable=self.get_auto_prune_enabled(),
+            changeCommand=lambda *_: self.set_max_versions_to_keep(
+                cmds.intField(self.widgets["max_versions"], q=True, value=True))
+        )
+        cmds.setParent("..")
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -271,6 +290,55 @@ class PBTool(object):
             os.makedirs(version_folder)
 
         return version_folder
+
+    # --------------------------------------------------------
+    # Version rotation — mirrors Maya's autosave "number of saves" cap so
+    # playblast JPEG sequences don't quietly fill up student drives. Reviews
+    # get pushed to ShotGrid separately, so local versions are disposable.
+    # --------------------------------------------------------
+    MAX_VERSIONS_OPTIONVAR = "pbTool_maxVersionsToKeep"
+    AUTO_PRUNE_OPTIONVAR = "pbTool_autoPruneEnabled"
+    DEFAULT_MAX_VERSIONS = 5
+
+    def get_max_versions_to_keep(self):
+        if cmds.optionVar(exists=self.MAX_VERSIONS_OPTIONVAR):
+            return cmds.optionVar(q=self.MAX_VERSIONS_OPTIONVAR)
+        return self.DEFAULT_MAX_VERSIONS
+
+    def set_max_versions_to_keep(self, value):
+        cmds.optionVar(iv=(self.MAX_VERSIONS_OPTIONVAR, max(0, int(value))))
+
+    def get_auto_prune_enabled(self):
+        if cmds.optionVar(exists=self.AUTO_PRUNE_OPTIONVAR):
+            return bool(cmds.optionVar(q=self.AUTO_PRUNE_OPTIONVAR))
+        return True
+
+    def set_auto_prune_enabled(self, enabled):
+        cmds.optionVar(iv=(self.AUTO_PRUNE_OPTIONVAR, 1 if enabled else 0))
+
+    def _on_auto_prune_toggled(self, checked):
+        self.set_auto_prune_enabled(checked)
+        cmds.intField(self.widgets["max_versions"], edit=True, enable=checked)
+
+    def prune_old_versions(self, shot_root, max_versions):
+        """Delete the oldest version folders in shot_root until at most
+        max_versions remain. max_versions <= 0 means unlimited (no-op)."""
+        if max_versions <= 0:
+            return
+
+        existing = self.get_existing_version_numbers(shot_root)
+        excess_count = len(existing) - max_versions
+        if excess_count <= 0:
+            return
+
+        for version_num in existing[:excess_count]:
+            version_folder = os.path.join(shot_root, "v{0:03d}".format(version_num))
+            try:
+                shutil.rmtree(version_folder)
+                print("pbTool: pruned old version {0} (keeping last {1})".format(
+                    version_folder, max_versions))
+            except Exception as exc:
+                cmds.warning("pbTool: could not prune {0} — {1}".format(version_folder, exc))
 
     def get_playblast_prefix(self, version_folder):
         return os.path.join(version_folder, self.get_scene_basename_no_ext())
@@ -799,6 +867,11 @@ class PBTool(object):
                         self.open_in_rv_with_audio(prefix, audio_path, audio_offset, start_frame)
                     else:
                         self.open_in_rv(prefix)
+
+            auto_prune = cmds.checkBox(self.widgets["auto_prune"], q=True, value=True)
+            if auto_prune:
+                shot_root = os.path.dirname(version_folder)
+                self.prune_old_versions(shot_root, self.get_max_versions_to_keep())
 
             self.refresh_ui_state()
 
