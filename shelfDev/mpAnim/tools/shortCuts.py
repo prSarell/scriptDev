@@ -572,10 +572,10 @@ def _clear_key(key, alt, ctrl, shift):
         pass
 
 
-def create_set(name, source=None, data=None):
+def create_set(name, data=None):
     if _set_exists(name):
         return
-    src = source or cmds.hotkeySet(query=True, current=True)
+    src = _BUILTIN_SET if _set_exists(_BUILTIN_SET) else cmds.hotkeySet(query=True, current=True)
     cmds.hotkeySet(name, source=src)
     if data is not None:
         data['sets'].setdefault(name, {'hotkeys': {}, 'spacebar': False})
@@ -604,7 +604,7 @@ def apply_set(name, data):
             _bind_spacebar()
         else:
             _restore_spacebar()
-        if set_data.get('shotcam_toggle', True):
+        if set_data.get('shotcam_toggle', False):
             _bind_backtick(set_data.get('shotcam_command'))
         else:
             _restore_backtick()
@@ -766,7 +766,7 @@ def _init(data):
         set_data = _STAFF_SETS.get(active) if _is_staff_set(active) else data.get('sets', {}).get(active, {})
         if set_data.get('spacebar', False):
             _bind_spacebar()
-        if set_data.get('shotcam_toggle', True):
+        if set_data.get('shotcam_toggle', False):
             _bind_backtick(set_data.get('shotcam_command'))
 
 
@@ -1295,7 +1295,7 @@ class MainPanel(QtWidgets.QWidget):
 
         add_btn = QtWidgets.QPushButton('+')
         add_btn.setObjectName('sidebarBtn')
-        add_btn.setToolTip('New category (copies selected)')
+        add_btn.setToolTip('New category (starts empty)')
         add_btn.clicked.connect(self._new_set)
         btn_row.addWidget(add_btn)
 
@@ -1401,7 +1401,7 @@ class MainPanel(QtWidgets.QWidget):
         if items:
             self._list.setCurrentItem(items[0])
         self._list.blockSignals(False)
-        self._load_hotkeys(self._display_to_set(display))
+        self._on_set_changed(display)
 
     def _display_to_set(self, display):
         return _BUILTIN_SET if display == 'Default (Maya)' else display
@@ -1440,19 +1440,21 @@ class MainPanel(QtWidgets.QWidget):
             self._hotkey_layout.insertWidget(i, row)
 
         idx = len(hotkeys)
-        space_row = _SpecialRow('Space', 'Tap to play  ·  Hold for hotbox',
-                                bool(set_entry.get('spacebar', False)), 'space', readonly=is_staff)
-        if not is_staff:
-            space_row.toggled.connect(lambda en, sn=set_name: set_spacebar(sn, en, self._data))
-        space_row.row_clicked.connect(self._on_special_selected)
-        self._hotkey_layout.insertWidget(idx, space_row)
+        if is_staff or set_name in _STAFF_TEMPLATES:
+            space_row = _SpecialRow('Space', 'Tap to play  ·  Hold for hotbox',
+                                    bool(set_entry.get('spacebar', False)), 'space', readonly=is_staff)
+            if not is_staff:
+                space_row.toggled.connect(lambda en, sn=set_name: set_spacebar(sn, en, self._data))
+            space_row.row_clicked.connect(self._on_special_selected)
+            self._hotkey_layout.insertWidget(idx, space_row)
+            idx += 1
 
-        cam_row = _SpecialRow('`', 'Toggle shot camera',
-                              bool(set_entry.get('shotcam_toggle', False)), 'shotcam', readonly=is_staff)
-        if not is_staff:
-            cam_row.toggled.connect(lambda en, sn=set_name: set_shotcam_toggle(sn, en, self._data))
-        cam_row.row_clicked.connect(self._on_special_selected)
-        self._hotkey_layout.insertWidget(idx + 1, cam_row)
+            cam_row = _SpecialRow('`', 'Toggle shot camera',
+                                  bool(set_entry.get('shotcam_toggle', False)), 'shotcam', readonly=is_staff)
+            if not is_staff:
+                cam_row.toggled.connect(lambda en, sn=set_name: set_shotcam_toggle(sn, en, self._data))
+            cam_row.row_clicked.connect(self._on_special_selected)
+            self._hotkey_layout.insertWidget(idx, cam_row)
 
     def refresh_hotkeys(self, set_name):
         display = 'Default (Maya)' if set_name == _BUILTIN_SET else set_name
@@ -1520,16 +1522,7 @@ class MainPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, 'shortCuts',
                                           f'"{name}" already exists.')
             return
-        source = self.current_set()
-        if source == _BUILTIN_SET:
-            source = None
-        create_set(name, source=source, data=self._data)
-        # Copy hotkeys in JSON from source
-        if source and source in self._data.get('sets', {}):
-            import copy
-            src_hks = self._data['sets'][source].get('hotkeys', {})
-            self._data['sets'][name]['hotkeys'] = copy.deepcopy(src_hks)
-            _save_data(self._data)
+        create_set(name, data=self._data)
         self._refresh_list(select=name)
 
     def _delete_set(self):
