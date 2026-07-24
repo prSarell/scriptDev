@@ -118,6 +118,66 @@ def test_connection(as_login=None):
     return projects
 
 
+def _find_or_create_sequence(sg, project, sequence_name):
+    """Find or create a ShotGrid Sequence by code within project. Named to
+    match ShotGrid's own entity/field names directly (Sequence, sg_sequence)
+    rather than JiffySchedule's "Scene" grouping label elsewhere in the
+    toolset — deliberate divergence, since Jiffy SG code talks to ShotGrid's
+    schema constantly and a translation layer just adds confusion there."""
+    sequence = sg.find_one(
+        "Sequence", [["project", "is", project], ["code", "is", sequence_name]], ["id", "code"]
+    )
+    if sequence:
+        return sequence
+
+    sequence = sg.create("Sequence", {"project": project, "code": sequence_name})
+    print("jiffySG: created Sequence '{0}' (id {1})".format(sequence_name, sequence["id"]))
+    return sequence
+
+
+def create_shot(shot_code, project_name, sequence_name=None, as_login=None):
+    """Create a Shot in the named Project, or return the existing one if a
+    Shot with that code already exists there. sequence_name is optional —
+    if given, the Shot is linked to a Sequence (see _find_or_create_sequence
+    above), created first if it doesn't exist yet. Minimal on purpose
+    otherwise: no Task/status/frame-range fields — those need the Task
+    status codes set up per project first (see jiffySG_brief.md's Stage
+    mapping), which hasn't happened yet."""
+    sg = get_connection(as_login=as_login)
+
+    project = sg.find_one("Project", [["name", "is", project_name]], ["id", "name"])
+    if not project:
+        raise RuntimeError(
+            "jiffySG: no ShotGrid Project named '{0}' visible to '{1}'".format(
+                project_name, as_login or current_login())
+        )
+
+    sequence = _find_or_create_sequence(sg, project, sequence_name) if sequence_name else None
+
+    existing = sg.find_one(
+        "Shot", [["project", "is", project], ["code", "is", shot_code]], ["id", "code", "sg_sequence"]
+    )
+    if existing:
+        if sequence and not existing.get("sg_sequence"):
+            sg.update("Shot", existing["id"], {"sg_sequence": sequence})
+            print("jiffySG: linked existing Shot '{0}' to Sequence '{1}'".format(shot_code, sequence_name))
+        else:
+            print("jiffySG: Shot '{0}' already exists in '{1}' (id {2})".format(
+                shot_code, project_name, existing["id"]))
+        return existing
+
+    shot_data = {"project": project, "code": shot_code}
+    if sequence:
+        shot_data["sg_sequence"] = sequence
+
+    shot = sg.create("Shot", shot_data)
+    print("jiffySG: created Shot '{0}' in '{1}'{2} (id {3})".format(
+        shot_code, project_name,
+        " under Sequence '{0}'".format(sequence_name) if sequence_name else "",
+        shot["id"]))
+    return shot
+
+
 def upload_playblast(shot_name, version_folder, files=None, notes=None):
     """Hand-off target for pbTool's "Send to ShotGrid" button (see
     pbTool.py send_to_shotgrid()). NOT YET IMPLEMENTED — creating a real
