@@ -3,3 +3,4 @@ __pycache__/
 *.pyo
 dist/
 *.zip
+jiffySG_config.json
