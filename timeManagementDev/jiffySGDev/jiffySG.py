@@ -149,8 +149,7 @@ def test_connection(as_login=None):
     Returns the list of Projects visible to as_login. An empty list is a
     legitimate result (the student's Project may not exist/be shared yet)
     — what matters is that this doesn't raise AuthenticationFault."""
-    sg = get_connection(as_login=as_login)
-    projects = sg.find("Project", [], ["name"])
+    projects = list_visible_projects(as_login=as_login)
     print("jiffySG: connected as '{0}' — {1} visible project(s):".format(
         as_login or current_login(), len(projects)))
     for p in projects:
@@ -279,6 +278,24 @@ def update_shot_frame_range(shot_id, frame_start, frame_end, as_login=None):
     return sg.update("Shot", shot_id, {"cut_in": cut_in, "cut_out": cut_out})
 
 
+def upload_shot_thumbnail(shot_id, image_path, as_login=None):
+    """Push Jiffy SG's own captured/browsed thumbnail (ItemRowWidget's
+    ThumbnailLabel) up as the Shot's ShotGrid thumbnail. Silently no-ops on
+    a blank/missing path — a brand-new item may not have a thumbnail yet,
+    and that's not an error.
+
+    NOTE for whoever builds upload_playblast(): ShotGrid does NOT
+    automatically cascade a Version's thumbnail up to its linked Shot just
+    because the Version has one — if playblasts should keep the Shot's
+    thumbnail current (the assumption this feature was built under), that
+    function needs to explicitly call this too after uploading the
+    Version's own thumbnail."""
+    if not image_path or not os.path.isfile(image_path):
+        return None
+    sg = get_connection(as_login=as_login)
+    return sg.upload_thumbnail("Shot", shot_id, image_path)
+
+
 def _find_or_create_task(sg, shot, project, step_code="Animation"):
     """Find or create the one Task Jiffy SG manages per Shot, under
     step_code. Jiffy SG tracks a single Task per Shot (matching
@@ -305,14 +322,45 @@ def _find_or_create_task(sg, shot, project, step_code="Animation"):
 
 def _resolve_artist(sg, project, artist_name):
     """Best-effort HumanUser lookup by exact name, scoped to project
-    members. Returns None (not an error) on no match — Jiffy SG's Artist
-    field is still local free-text, not yet validated against ShotGrid's
-    real roster (see jiffySG_brief.md's "Artist dropdown" design item,
-    not built yet), so a non-match is an expected, non-fatal outcome."""
+    members. Returns None (not an error) on no match — the Artist field's
+    value may have fallen out of the project's real roster (e.g. someone
+    removed from the Project since being assigned), so a non-match is an
+    expected, non-fatal outcome rather than an error."""
     if not artist_name:
         return None
     return sg.find_one(
         "HumanUser", [["projects", "is", project], ["name", "is", artist_name]], ["id", "name"]
+    )
+
+
+def list_visible_projects(as_login=None):
+    """All ShotGrid Projects visible to as_login (defaults to
+    current_login()), as a list of {"id","name"} dicts, name-sorted.
+    ShotGrid itself — not Jiffy SG — is what scopes this: a student on the
+    Artist permission group only ever sees the Project(s) their instructor
+    added them to, so this is exactly the set of Projects that login is
+    allowed to work in. Used by test_connection() (diagnostic) and by the
+    Nav panel's "Add Project" flow, which now only lets a student attach a
+    real ShotGrid Project they're actually a member of — see
+    jiffySG_brief.md's "Project linking" design."""
+    sg = get_connection(as_login=as_login)
+    return sg.find(
+        "Project", [], ["id", "name"], order=[{"field_name": "name", "direction": "asc"}]
+    )
+
+
+def list_project_artists(project_name, as_login=None):
+    """All ShotGrid HumanUsers who are members of the named Project — the
+    real, ShotGrid-backed artist roster for that Project. Read-only (Jiffy
+    SG never writes Project membership, per jiffySG_brief.md); feeds both
+    the Artists tab display and the Shot/Asset Artist dropdown, replacing
+    the old free-text local roster so an assignable name is always a real
+    member of that Project rather than anything a student happens to type."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    return sg.find(
+        "HumanUser", [["projects", "is", project]], ["id", "name"],
+        order=[{"field_name": "name", "direction": "asc"}],
     )
 
 
@@ -851,10 +899,17 @@ class ItemDialog(QtWidgets.QDialog):
         self.due_edit    = QtWidgets.QLineEdit(default_due)
         self.due_edit.setPlaceholderText("DD-MM-YYYY")
         self.artist_edit = QtWidgets.QComboBox()
-        self.artist_edit.setEditable(True)
+        # Deliberately NOT setEditable(True): the Artist list is now the
+        # Project's real ShotGrid roster (see list_project_artists()), and
+        # letting a student type an arbitrary name here would defeat the
+        # whole point of restricting assignment to real project members.
+        self.artist_edit.addItem("")  # explicit "unassigned"
         self.artist_edit.addItems(self._artist_names)
         current_artist = self._data.get("artist", "")
         if current_artist and current_artist not in self._artist_names:
+            # Preserve an already-assigned name even if they've since fallen
+            # out of the roster (e.g. removed from the Project) rather than
+            # silently discarding it.
             self.artist_edit.addItem(current_artist)
         self.artist_edit.setCurrentText(current_artist)
         self.stage_combo = QtWidgets.QComboBox()
@@ -1082,6 +1137,7 @@ class ItemListPanel(QtWidgets.QWidget):
         project, group, shot_code = self._project, self._group, item_data.get("name", "")
         frame_start, frame_end = item_data.get("frame_start"), item_data.get("frame_end")
         stage, due_date, artist = item_data.get("stage"), item_data.get("due_date"), item_data.get("artist")
+        thumbnail = item_data.get("thumbnail")
 
         def work():
             shot = create_shot(shot_code, project, sequence_name=group)
@@ -1093,6 +1149,10 @@ class ItemListPanel(QtWidgets.QWidget):
                 warnings.append(str(exc))
             try:
                 update_shot_task(shot["id"], project, stage=stage, due_date=due_date, artist_name=artist)
+            except Exception as exc:
+                warnings.append(str(exc))
+            try:
+                upload_shot_thumbnail(shot["id"], thumbnail)
             except Exception as exc:
                 warnings.append(str(exc))
             return shot, seq, warnings
@@ -1115,16 +1175,19 @@ class ItemListPanel(QtWidgets.QWidget):
         _run_sg_async(work, done)
 
     def _push_shot_field_sync(self, item_data):
-        """Re-push Frame Start/End + Stage/Due Date/Artist for an already-
-        created Shot (has sg_shot_id). Fires on every local edit/row change
-        to a Shot item — cheap idempotent overwrite, simpler than diffing
-        which specific field actually changed."""
+        """Re-push Frame Start/End + Stage/Due Date/Artist + Thumbnail for an
+        already-created Shot (has sg_shot_id). Fires on every local edit/row
+        change to a Shot item — cheap idempotent overwrite, simpler than
+        diffing which specific field actually changed (yes, this means a
+        thumbnail gets silently re-uploaded to ShotGrid on any unrelated
+        edit too — same tradeoff already accepted for the other fields)."""
         shot_id = item_data.get("sg_shot_id")
         if not shot_id or not self._project:
             return
         project = self._project
         frame_start, frame_end = item_data.get("frame_start"), item_data.get("frame_end")
         stage, due_date, artist = item_data.get("stage"), item_data.get("due_date"), item_data.get("artist")
+        thumbnail = item_data.get("thumbnail")
 
         def work():
             warnings = []
@@ -1134,6 +1197,10 @@ class ItemListPanel(QtWidgets.QWidget):
                 warnings.append(str(exc))
             try:
                 update_shot_task(shot_id, project, stage=stage, due_date=due_date, artist_name=artist)
+            except Exception as exc:
+                warnings.append(str(exc))
+            try:
+                upload_shot_thumbnail(shot_id, thumbnail)
             except Exception as exc:
                 warnings.append(str(exc))
             return warnings
@@ -2239,91 +2306,40 @@ class ProgressPage(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 # Artists tab — global artist roster (name + role)
 # ---------------------------------------------------------------------------
-class _ArtistDialog(QtWidgets.QDialog):
-    def __init__(self, data=None, parent=None):
-        super().__init__(parent)
-        self._is_new = data is None
-        self.setWindowTitle("Add Artist" if self._is_new else "Edit Artist")
-        self.setMinimumWidth(300)
-        self.setStyleSheet(
-            f"QDialog{{background:{DARK_BG};color:white;}}"
-            f"QLabel{{color:white;}}"
-            f"QLineEdit{{background:{ITEM_BG};color:white;border:1px solid {BORDER};padding:4px;}}"
-            f"QPushButton{{background:#444;color:white;border:1px solid {BORDER};padding:4px 12px;}}"
-            f"QPushButton:hover{{background:#555;}}"
-        )
-        self._data = data.copy() if data else {}
-        self._build()
-
-    def _build(self):
-        layout = QtWidgets.QFormLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(16, 16, 16, 16)
-        self.name_edit = QtWidgets.QLineEdit(self._data.get("name", ""))
-        self.role_edit = QtWidgets.QLineEdit(self._data.get("role", ""))
-        self.role_edit.setPlaceholderText("e.g. Animator, Rigger, VFX…")
-        layout.addRow("Name:", self.name_edit)
-        layout.addRow("Role:", self.role_edit)
-        btns = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
-        )
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addRow(btns)
-
-    def get_data(self):
-        return {
-            "name": self.name_edit.text().strip(),
-            "role": self.role_edit.text().strip(),
-        }
-
-
 class _ArtistRow(QtWidgets.QFrame):
-    edit_requested   = QtCore.Signal(int)
-    delete_requested = QtCore.Signal(int)
+    """Read-only — Jiffy SG never writes ShotGrid Project membership, so
+    there's no edit/delete here, just a display of one real project member."""
 
-    def __init__(self, index, data, parent=None):
+    def __init__(self, data, parent=None):
         super().__init__(parent)
-        self._index = index
-        self.setFixedHeight(56)
+        self.setFixedHeight(44)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.setStyleSheet(
             f"_ArtistRow, QFrame{{background:{ITEM_BG}; border-bottom:1px solid {BORDER};}}"
-            f"_ArtistRow:hover, QFrame:hover{{background:{ITEM_HOVER};}}"
         )
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(14, 8, 14, 8)
-        row.setSpacing(10)
-        left = QtWidgets.QVBoxLayout()
-        left.setSpacing(2)
         name_lbl = QtWidgets.QLabel(data.get("name", ""))
         name_lbl.setStyleSheet("font-weight:bold; font-size:13px; color:white;")
-        role_lbl = QtWidgets.QLabel(data.get("role", ""))
-        role_lbl.setStyleSheet(f"font-size:11px; color:{SUBTEXT};")
-        left.addWidget(name_lbl)
-        left.addWidget(role_lbl)
-        row.addLayout(left, stretch=1)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._ctx)
-
-    def _ctx(self, pos):
-        menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
-        edit_act = menu.addAction("Edit Artist")
-        del_act  = menu.addAction("Delete Artist")
-        act = menu.exec_(self.mapToGlobal(pos))
-        if act == edit_act:
-            self.edit_requested.emit(self._index)
-        elif act == del_act:
-            self.delete_requested.emit(self._index)
+        row.addWidget(name_lbl)
+        row.addStretch()
 
 
 class ArtistsPage(QtWidgets.QWidget):
-    data_changed = QtCore.Signal()
+    """Read-only, live-pulled from ShotGrid — replaces the old free-text
+    local roster. Shows exactly the HumanUsers who are members of the
+    currently-active Project (see list_project_artists()), and is the same
+    list fed to the Shot/Asset Artist dropdown, so "who can be assigned"
+    always matches "who ShotGrid says is actually on this Project." Jiffy SG
+    never writes Project membership — add/remove students in ShotGrid
+    itself, then hit Refresh here (or just reselect the Project)."""
+    sg_status      = QtCore.Signal(str, str)   # state "ok"|"error", message
+    artists_loaded = QtCore.Signal(list)       # list of artist names
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._artists = []
+        self._project = ""
         self._build()
 
     def _build(self):
@@ -2336,18 +2352,24 @@ class ArtistsPage(QtWidgets.QWidget):
         header.setStyleSheet(f"background:{PANEL_BG}; border-bottom:1px solid {BORDER};")
         hl = QtWidgets.QHBoxLayout(header)
         hl.setContentsMargins(12, 0, 12, 0)
-        lbl = QtWidgets.QLabel("Artists")
-        lbl.setStyleSheet("font-weight:bold; font-size:13px; color:white;")
-        hl.addWidget(lbl)
+        self._header_lbl = QtWidgets.QLabel("Artists")
+        self._header_lbl.setStyleSheet("font-weight:bold; font-size:13px; color:white;")
+        hl.addWidget(self._header_lbl)
         hl.addStretch()
-        add_btn = QtWidgets.QPushButton("+ Add Artist")
-        add_btn.setStyleSheet(
-            "QPushButton{background:#2e5a2e;color:white;border:none;padding:4px 14px;border-radius:3px;}"
-            "QPushButton:hover{background:#3a7a3a;}"
+        refresh_btn = QtWidgets.QPushButton("⟳ Refresh")
+        refresh_btn.setToolTip("Re-pull this Project's members from ShotGrid")
+        refresh_btn.setStyleSheet(
+            "QPushButton{background:#444;color:white;border:none;padding:4px 14px;border-radius:3px;}"
+            "QPushButton:hover{background:#555;}"
         )
-        add_btn.clicked.connect(self._add_artist)
-        hl.addWidget(add_btn)
+        refresh_btn.clicked.connect(self._refresh)
+        hl.addWidget(refresh_btn)
         layout.addWidget(header)
+
+        self._empty_lbl = QtWidgets.QLabel("Select a Project to see its ShotGrid members.")
+        self._empty_lbl.setStyleSheet(f"color:{SUBTEXT}; font-size:12px; padding:14px;")
+        self._empty_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self._empty_lbl)
 
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2361,52 +2383,50 @@ class ArtistsPage(QtWidgets.QWidget):
         scroll.setWidget(self._container)
         layout.addWidget(scroll)
 
+    def set_project(self, project_name):
+        self._project = project_name
+        if not project_name:
+            self._artists = []
+            self._rebuild()
+            self.artists_loaded.emit([])
+            return
+        self._refresh()
+
+    def _refresh(self):
+        project_name = self._project
+        if not project_name:
+            return
+        self._header_lbl.setText(f"Artists — {project_name}")
+
+        def work():
+            return list_project_artists(project_name)
+
+        def done(result, error):
+            if error is not None:
+                self.sg_status.emit("error", str(error))
+                return
+            self._artists = result
+            self._rebuild()
+            self.sg_status.emit("ok", "")
+            self.artists_loaded.emit([a.get("name", "") for a in result if a.get("name")])
+
+        _run_sg_async(work, done)
+
     def _rebuild(self):
         while self._vbox.count() > 1:
             item = self._vbox.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for i, artist in enumerate(self._artists):
-            row = _ArtistRow(i, artist)
-            row.edit_requested.connect(self._edit_artist)
-            row.delete_requested.connect(self._delete_artist)
-            self._vbox.insertWidget(self._vbox.count() - 1, row)
-
-    def _add_artist(self):
-        dlg = _ArtistDialog(parent=self)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            data = dlg.get_data()
-            if data["name"]:
-                self._artists.append(data)
-                self._rebuild()
-                self.data_changed.emit()
-
-    def _edit_artist(self, idx):
-        if 0 <= idx < len(self._artists):
-            dlg = _ArtistDialog(data=self._artists[idx], parent=self)
-            if dlg.exec_() == QtWidgets.QDialog.Accepted:
-                self._artists[idx] = dlg.get_data()
-                self._rebuild()
-                self.data_changed.emit()
-
-    def _delete_artist(self, idx):
-        if 0 <= idx < len(self._artists):
-            name = self._artists[idx].get("name", "")
-            reply = QtWidgets.QMessageBox.question(
-                self, "Delete Artist", f"Remove '{name}'?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            )
-            if reply == QtWidgets.QMessageBox.Yes:
-                del self._artists[idx]
-                self._rebuild()
-                self.data_changed.emit()
-
-    def get_data(self):
-        return list(self._artists)
-
-    def load_data(self, data):
-        self._artists = list(data) if isinstance(data, list) else []
-        self._rebuild()
+        for artist in self._artists:
+            self._vbox.insertWidget(self._vbox.count() - 1, _ArtistRow(artist))
+        if not self._project:
+            self._empty_lbl.setText("Select a Project to see its ShotGrid members.")
+            self._empty_lbl.show()
+        elif not self._artists:
+            self._empty_lbl.setText(f"No ShotGrid members found on '{self._project}'.")
+            self._empty_lbl.show()
+        else:
+            self._empty_lbl.hide()
 
 
 # ---------------------------------------------------------------------------
@@ -2414,6 +2434,7 @@ class ArtistsPage(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 class NavPanel(QtWidgets.QWidget):
     project_changed            = QtCore.Signal(str)
+    project_add_requested      = QtCore.Signal()
     project_added              = QtCore.Signal(str)
     project_removed            = QtCore.Signal(str)
     group_changed              = QtCore.Signal(str)
@@ -2601,9 +2622,16 @@ class NavPanel(QtWidgets.QWidget):
         ]
 
     def _add_project(self):
-        name, ok = QtWidgets.QInputDialog.getText(self, "Add Project", "Project name:")
-        name = name.strip()
-        if not (ok and name): return
+        # No local free-text entry point anymore — a student can only attach
+        # a Project they're actually a ShotGrid member of. JiffySG (the
+        # parent, which owns the ShotGrid connection) handles the async
+        # lookup + picker and calls add_project() below once one is chosen.
+        self.project_add_requested.emit()
+
+    def add_project(self, name):
+        """Add an already-validated ShotGrid Project name to the local list.
+        Called by JiffySG after the user picks one from the real, ShotGrid-
+        scoped choices — never called with arbitrary free text."""
         existing = [self.project_list.item(i).text() for i in range(self.project_list.count())]
         if name in existing:
             QtWidgets.QMessageBox.warning(self, "Add Project", f"'{name}' already exists.")
@@ -2797,6 +2825,7 @@ class JiffySG(QtWidgets.QWidget):
 
         self.nav = NavPanel()
         self.nav.project_changed.connect(self._on_project_changed)
+        self.nav.project_add_requested.connect(self._on_project_add_requested)
         self.nav.project_added.connect(self._on_project_added)
         self.nav.project_removed.connect(self._on_project_removed)
         self.nav.group_changed.connect(self._on_group_changed)
@@ -2817,7 +2846,8 @@ class JiffySG(QtWidgets.QWidget):
         self.assets_page.data_changed.connect(self._on_assets_changed)
         self.progress_page.data_changed.connect(self._on_milestone_data_changed)
         self.progress_page.save_requested.connect(self.save_data)
-        self.artists_page.data_changed.connect(self._on_artists_changed)
+        self.artists_page.sg_status.connect(self._on_sg_status)
+        self.artists_page.artists_loaded.connect(self._on_artists_loaded)
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.shots_page)
@@ -2941,6 +2971,7 @@ class JiffySG(QtWidgets.QWidget):
         self._active_project = project
         self.shots_page.set_project(project)
         self.assets_page.set_project(project)
+        self.artists_page.set_project(project)
         idx = self.tab_bar.currentIndex()
         if idx == 2:
             self.progress_page.set_project(
@@ -2951,11 +2982,49 @@ class JiffySG(QtWidgets.QWidget):
             else:
                 self.nav.show_bottom_section(False)
         elif idx == 3:
-            pass  # artists tab — global, unaffected by project selection
+            pass  # artists tab's own project label/refresh is handled by set_project above
         else:
             label  = self._group_label_for_tab(idx)
             groups = self._active_page().get_groups_for_project(project)
             self.nav.set_groups(groups, group_label=label, enabled=bool(project))
+
+    def _on_project_add_requested(self):
+        """Look up which real ShotGrid Projects the current login can see,
+        then let the user pick one to attach — see NavPanel.add_project()'s
+        docstring for why this replaced free-text project naming."""
+        existing = set(self.nav.get_projects())
+
+        def work():
+            return list_visible_projects()
+
+        def done(result, error):
+            if error is not None:
+                QtWidgets.QMessageBox.warning(
+                    self, "Add Project",
+                    "Couldn't reach ShotGrid to list your Projects:\n\n{0}".format(error)
+                )
+                return
+            choices = [p["name"] for p in result if p["name"] not in existing]
+            if not choices:
+                QtWidgets.QMessageBox.information(
+                    self, "Add Project",
+                    "All ShotGrid Projects visible to your account are already added."
+                    if result else
+                    "No ShotGrid Projects are visible to your account yet — "
+                    "ask your instructor to add you to one."
+                )
+                return
+            name, ok = QtWidgets.QInputDialog.getItem(
+                self, "Add Project", "ShotGrid Project:", choices, 0, False
+            )
+            if ok and name:
+                self.nav.add_project(name)
+
+        _run_sg_async(work, done)
+
+    def _on_artists_loaded(self, names):
+        self.shots_page.set_artist_names(names)
+        self.assets_page.set_artist_names(names)
 
     def _on_project_added(self, name):
         self.shots_page.project_added(name)
@@ -3009,12 +3078,6 @@ class JiffySG(QtWidgets.QWidget):
         self.progress_page.refresh_data(self.shots_page.get_data(), self.assets_page.get_data())
         self.save_data()
 
-    def _on_artists_changed(self):
-        names = [a.get("name", "") for a in self.artists_page.get_data() if a.get("name")]
-        self.shots_page.set_artist_names(names)
-        self.assets_page.set_artist_names(names)
-        self.save_data()
-
     def _on_milestone_add(self):
         self.progress_page.add_milestone()
 
@@ -3044,7 +3107,6 @@ class JiffySG(QtWidgets.QWidget):
                 "assets":       self.assets_page.get_data(),
                 "milestones":   self.progress_page.get_milestones(),
                 "production":   self.progress_page.get_production(),
-                "artists":      self.artists_page.get_data(),
                 "sg_sequences": self._sg_sequence_ids,
                 "window":       {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height()},
             }
@@ -3086,11 +3148,10 @@ class JiffySG(QtWidgets.QWidget):
             self.assets_page.load_data(saved.get("assets", {}))
             self.progress_page.load_milestones(saved.get("milestones", {}))
             self.progress_page.load_production(saved.get("production", {}))
-            self.artists_page.load_data(saved.get("artists", []))
             self._sg_sequence_ids = saved.get("sg_sequences", {})
-            names = [a.get("name", "") for a in self.artists_page.get_data() if a.get("name")]
-            self.shots_page.set_artist_names(names)
-            self.assets_page.set_artist_names(names)
+            # Artist names are no longer stored locally — they're pulled live
+            # from ShotGrid via artists_page.set_project(), triggered below by
+            # _on_project_changed() once a project is selected.
             win = saved.get("window", {})
             if win:
                 self.setGeometry(
