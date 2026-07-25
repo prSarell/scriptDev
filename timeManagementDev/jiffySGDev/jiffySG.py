@@ -60,6 +60,19 @@ import shotgun_api3
 _CONFIG_FILENAME = "jiffySG_config.json"
 _REQUIRED_KEYS = ("site_url", "script_name", "api_key")
 
+# Cached after the first successful load. NEEDED, not just an optimisation:
+# every ShotGrid call (test_connection/create_shot/etc.) runs inside
+# _run_sg_async's background thread, and maya.cmds is not safe to call off
+# Maya's main thread — cmds.internalVar(userPrefDir=True) was confirmed to
+# silently return "" there instead of raising, which made _config_file()
+# build a bare relative "jiffySG_config.json" path and _load_config() report
+# "no config file found" even when the file existed at the correct prefs
+# path. _run_sg_async() below primes this cache synchronously on the main
+# thread (where it's always called from — UI signal handlers) before ever
+# starting the worker thread, so the background thread only ever hits this
+# cache, never cmds.internalVar directly.
+_config_cache = None
+
 
 def _config_file():
     prefs = cmds.internalVar(userPrefDir=True)
@@ -67,6 +80,9 @@ def _config_file():
 
 
 def _load_config():
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
     path = _config_file()
     if not os.path.isfile(path):
         raise RuntimeError(
@@ -91,6 +107,7 @@ def _load_config():
             "jiffySG: config at {0} is missing: {1}".format(path, ", ".join(missing))
         )
 
+    _config_cache = config
     return config
 
 
@@ -506,7 +523,17 @@ def _capture_viewport(item_name):
 # ---------------------------------------------------------------------------
 def _run_sg_async(fn, on_done):
     """Run fn() on a daemon thread. on_done(result, error) is always called
-    back on Maya's main thread — error is the caught Exception, or None."""
+    back on Maya's main thread — error is the caught Exception, or None.
+
+    Primes the config cache synchronously, on the caller's thread, before
+    starting the worker — see _config_cache's docstring above for why this
+    matters (cmds.internalVar is not safe to call from the worker thread)."""
+    try:
+        _load_config()
+    except Exception as exc:
+        on_done(None, exc)
+        return
+
     def worker():
         try:
             result = fn()
