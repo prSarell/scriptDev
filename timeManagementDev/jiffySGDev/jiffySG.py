@@ -349,6 +349,24 @@ def list_visible_projects(as_login=None):
     )
 
 
+def list_project_shots(project_name, as_login=None):
+    """All ShotGrid Shots that exist in the named Project — read-only, and
+    deliberately never creates one: shotSub's "Link to ShotGrid" flow (see
+    shotSub.py link_to_shotgrid()) may only attach a shot-level Maya
+    project to a Shot an instructor or student already created via Jiffy
+    SG's own Shots tab (create_shot() above), never spin up a new Shot
+    itself. Returns {"id","code"} dicts, code-sorted, so shotSub can
+    resolve an explicit ShotGrid Shot id to store in its local
+    shotgrid_link.json marker file instead of guessing a shot name from
+    folder structure."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    return sg.find(
+        "Shot", [["project", "is", project]], ["id", "code"],
+        order=[{"field_name": "code", "direction": "asc"}],
+    )
+
+
 def list_project_artists(project_name, as_login=None):
     """All ShotGrid HumanUsers who are members of the named Project — the
     real, ShotGrid-backed artist roster for that Project. Read-only (Jiffy
@@ -416,14 +434,22 @@ def update_shot_task(shot_id, project_name, stage=None, due_date=None, artist_na
     return task
 
 
-def upload_playblast(shot_name, version_folder, files=None, notes=None):
-    """Hand-off target for pbTool's "Send to ShotGrid" button (see
-    pbTool.py send_to_shotgrid()). NOT YET IMPLEMENTED — creating a real
-    Shot/Task/Version in ShotGrid needs the real Project code and the
-    Task status codes set up on it (both still open items in
-    jiffySG_brief.md's rollout checklist), plus Jiffy SG's own Project-
-    linking logic, which doesn't exist yet. Confirm test_connection()
-    works first; this is the next piece after that."""
+def upload_playblast(shot_id, version_folder, files=None, notes=None):
+    """Hand-off target for shotSub's "Publish Selected Version" button (see
+    shotSub.py publish_version()). shotSub resolves shot_id itself, from an
+    explicit ShotGrid Project id + Shot id pair stored in a local
+    shotgrid_link.json marker file at the shot's own (nested) Maya project
+    root — written once by shotSub's "Link to ShotGrid" flow (see
+    list_project_shots() above), which may only attach to an existing
+    Shot, never create one. shot_id is a global ShotGrid Shot id, so no
+    project_name/project_id is needed here for the lookup itself — this
+    replaces the earlier pbTool-era design that passed a guessed shot_name
+    string instead.
+
+    NOT YET IMPLEMENTED — creating a real Shot/Task/Version in ShotGrid
+    needs the Task status codes set up on it (still an open item in
+    jiffySG_brief.md's rollout checklist). Confirm test_connection() works
+    first; this is the next piece after that."""
     raise NotImplementedError(
         "jiffySG.upload_playblast() isn't built yet. Run "
         "jiffySG.test_connection() first to confirm ShotGrid auth works, "
