@@ -41,10 +41,15 @@
 # ------------------------------------------------------------
 
 import os
+import re
+import glob
 import json
 import getpass
 import time
+import shutil
 import threading
+import subprocess
+import urllib.request
 from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
 
 import maya.cmds as cmds
@@ -196,6 +201,35 @@ def create_sequence(sequence_name, project_name, as_login=None):
     return _find_or_create_sequence(sg, project, sequence_name)
 
 
+def _find_or_create_asset(sg, project, asset_name):
+    """Find or create a ShotGrid Asset by code within project — same
+    idempotent pattern as _find_or_create_sequence above. Unlike Shots,
+    Assets in Jiffy SG are never scheduled/synced to ShotGrid otherwise (no
+    Task/stage/due/artist push) — this exists purely so an asset's
+    published playblast Versions have a real entity to attach to. No
+    sg_asset_type/category is set: local Jiffy SG categories (Sets,
+    Environments, Rigs, ...) are a purely local/folder-structure concept,
+    never pushed to ShotGrid."""
+    asset = sg.find_one(
+        "Asset", [["project", "is", project], ["code", "is", asset_name]], ["id", "code"]
+    )
+    if asset:
+        return asset
+
+    asset = sg.create("Asset", {"project": project, "code": asset_name})
+    print("jiffySG: created Asset '{0}' (id {1})".format(asset_name, asset["id"]))
+    return asset
+
+
+def find_or_create_asset(asset_name, project_name, as_login=None):
+    """Public wrapper around _find_or_create_asset, used by Jiffy SG's
+    "Set Project" action (ItemDialog._do_set_project) the first time an
+    Asset row gets linked to a local Maya project folder."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    return _find_or_create_asset(sg, project, asset_name)
+
+
 def delete_shot(shot_id, as_login=None):
     """Soft-delete (retire) a Shot by id. Recoverable by a ShotGrid admin
     (revive) — not a permanent destructive operation, so a student mistake
@@ -294,6 +328,19 @@ def upload_shot_thumbnail(shot_id, image_path, as_login=None):
         return None
     sg = get_connection(as_login=as_login)
     return sg.upload_thumbnail("Shot", shot_id, image_path)
+
+
+def upload_entity_thumbnail(entity_type, entity_id, image_path, as_login=None):
+    """Generalized sibling of upload_shot_thumbnail() above, for
+    upload_playblast()'s use — Shots and Assets both push through here so
+    the same function works for either. upload_shot_thumbnail() itself is
+    left untouched since it's still used directly by the existing
+    Shot-only schedule-sync push paths (_push_shot_create/
+    _push_shot_field_sync), which never apply to Assets."""
+    if not image_path or not os.path.isfile(image_path):
+        return None
+    sg = get_connection(as_login=as_login)
+    return sg.upload_thumbnail(entity_type, entity_id, image_path)
 
 
 def _find_or_create_task(sg, shot, project, step_code="Animation"):
@@ -434,28 +481,266 @@ def update_shot_task(shot_id, project_name, stage=None, due_date=None, artist_na
     return task
 
 
-def upload_playblast(shot_id, version_folder, files=None, notes=None):
-    """Hand-off target for shotSub's "Publish Selected Version" button (see
-    shotSub.py publish_version()). shotSub resolves shot_id itself, from an
-    explicit ShotGrid Project id + Shot id pair stored in a local
-    shotgrid_link.json marker file at the shot's own (nested) Maya project
-    root — written once by shotSub's "Link to ShotGrid" flow (see
-    list_project_shots() above), which may only attach to an existing
-    Shot, never create one. shot_id is a global ShotGrid Shot id, so no
-    project_name/project_id is needed here for the lookup itself — this
-    replaces the earlier pbTool-era design that passed a guessed shot_name
-    string instead.
+def _create_note(sg, shot, project, version, note_text):
+    """One new Note per publish (never an overwrite) — a real ShotGrid Note,
+    so a mentor reviewing directly in ShotGrid sees/adds to the same feed.
+    Jiffy SG's own UI still only ever displays the single latest one (see
+    jiffySG_brief.md's 2026-07-26 scope decision) — full history lives in
+    ShotGrid itself."""
+    note_links = [shot] + ([version] if version else [])
+    return sg.create("Note", {
+        "project": project,
+        "subject": "Playblast — {0}".format(shot.get("code", "")),
+        "content": note_text,
+        "note_links": note_links,
+    })
 
-    NOT YET IMPLEMENTED — creating a real Shot/Task/Version in ShotGrid
-    needs the Task status codes set up on it (still an open item in
-    jiffySG_brief.md's rollout checklist). Confirm test_connection() works
-    first; this is the next piece after that."""
-    raise NotImplementedError(
-        "jiffySG.upload_playblast() isn't built yet. Run "
-        "jiffySG.test_connection() first to confirm ShotGrid auth works, "
-        "then see jiffySG_brief.md for what's still needed before this "
-        "can create a real ShotGrid Version."
+
+_RVIO_NAME = "rvio"
+
+
+def _frame_sequence_prefix(version_folder):
+    """Strip the trailing .####.jpg off any one frame file in version_folder
+    to get the sequence prefix rvio/RV need (e.g. .../shotName.#.jpg). Jiffy
+    SG doesn't know the original Maya scene's filename the way shotSub's own
+    prefix construction does, so this derives it generically instead."""
+    files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+    if not files:
+        return None
+    match = re.search(r"^(.*)\.\d+\.jpg$", os.path.basename(files[0]), flags=re.IGNORECASE)
+    return os.path.join(version_folder, match.group(1)) if match else None
+
+
+def _encode_to_mp4(version_folder, fps):
+    """Best-effort JPEG-sequence -> mp4 transcode via RV's bundled rvio (no
+    separate ffmpeg dependency — RV is already a hard requirement for this
+    pipeline's review workflow). Returns the mp4 path, or None on any
+    failure (missing rvio, no frames, encode error) — publish must still
+    succeed thumbnail-only if this doesn't work, never block on it.
+
+    Skips re-encoding if <prefix>.mp4 already exists and is newer than the
+    newest .jpg in the folder, so a notes-only re-publish doesn't re-encode."""
+    prefix = _frame_sequence_prefix(version_folder)
+    if not prefix:
+        return None
+    out_path = prefix + ".mp4"
+
+    jpgs = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+    if os.path.isfile(out_path) and jpgs:
+        newest_jpg = max(os.path.getmtime(f) for f in jpgs)
+        if os.path.getmtime(out_path) >= newest_jpg:
+            return out_path
+
+    rvio = find_rv_executable(_RVIO_NAME)
+    if not rvio:
+        print("jiffySG: rvio not found — publishing thumbnail-only, no scrubbable movie.")
+        return None
+
+    cmd = [rvio, prefix + ".#.jpg", "-o", out_path]
+    if fps:
+        cmd += ["-fps", str(fps)]
+    try:
+        subprocess.run(
+            cmd, capture_output=True, text=True, check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        print("jiffySG: rvio encode failed (publishing thumbnail-only instead) — {0}".format(exc))
+        return None
+
+    return out_path if os.path.isfile(out_path) else None
+
+
+def _push_publish_to_open_window(entity_type, entity_id, note_text, thumbnail_path, version_folder):
+    """Best-effort live push into an already-open Jiffy SG window (see
+    _jiffysg_window global, defined further below) — the "catch the note on
+    the way through" mechanism: since shotSub already calls this function
+    synchronously on Maya's main thread, in the same live session Jiffy SG's
+    own window may be open in, we can update that window's UI instantly
+    instead of waiting for any refresh. Must never let a UI-push failure
+    break the ShotGrid write that already succeeded above."""
+    window = _jiffysg_window
+    if window is None:
+        return
+    try:
+        window.apply_remote_publish(entity_type, entity_id, note_text, thumbnail_path, version_folder)
+    except Exception as exc:
+        print("jiffySG: live UI push after publish failed (non-fatal) — {0}".format(exc))
+
+
+def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None, as_login=None):
+    """Hand-off target for shotSub's "Publish Selected Version" button (see
+    shotSub.py publish_version()). shotSub resolves entity_type/entity_id
+    itself, from an explicit ShotGrid Project id + Shot-or-Asset id pair
+    stored in a local shotgrid_link.json marker file at the shot/asset's
+    own (nested) Maya project root — written either by shotSub's "Link to
+    ShotGrid" flow (Shots only, see list_project_shots() above, may only
+    attach to an existing Shot, never create one) or by Jiffy SG's own
+    "Set Project" action (Shots and Assets — see ItemDialog._do_set_project,
+    which find-or-creates the Asset via find_or_create_asset() above since
+    Assets are never otherwise synced to ShotGrid). entity_id is a global
+    ShotGrid id, so project_name/project_id isn't needed as an input — the
+    Project is looked up directly off the Shot/Asset itself.
+
+    Idempotent on (entity, code): re-publishing the same version_folder
+    finds and reuses the existing Version rather than creating a
+    duplicate, matching create_shot()/create_sequence()'s pattern.
+
+    Publishes a real scrubbable movie (Version.sg_uploaded_movie, encoded
+    via rvio — see _encode_to_mp4) alongside the thumbnail. Also stores
+    Version.sg_path_to_frames (the local version_folder) so Jiffy SG's
+    "launch latest playblast" click can find the real frames later, and
+    creates a ShotGrid Note per publish (see _create_note above), plus a
+    best-effort live push into an already-open Jiffy SG window (see
+    _push_publish_to_open_window).
+
+    Task linking (Stage/Due Date/Artist's single managed Task) only applies
+    to Shots — Assets are never scheduled/synced to ShotGrid otherwise, so
+    there's no Task for an Asset's Version to link to."""
+    sg = get_connection(as_login=as_login)
+
+    entity = sg.find_one(entity_type, [["id", "is", entity_id]], ["id", "code", "project"])
+    if not entity:
+        raise RuntimeError(
+            "jiffySG: no {0} found with id {1} — was it deleted/retired in "
+            "ShotGrid since this project was linked?".format(entity_type, entity_id)
+        )
+    project = entity["project"]
+
+    if files is None:
+        files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+    if not files:
+        raise RuntimeError("jiffySG: no frames found in {0} to publish".format(version_folder))
+
+    version_folder_norm = os.path.normpath(version_folder).replace("\\", "/")
+    version_name = os.path.basename(version_folder_norm)
+    code = "{0}_{1}".format(entity["code"], version_name)
+
+    existing = sg.find_one("Version", [["entity", "is", entity], ["code", "is", code]], ["id"])
+    if existing:
+        print("jiffySG: Version '{0}' already exists on {1} '{2}' (id {3}) — not re-creating".format(
+            code, entity_type, entity["code"], existing["id"]))
+        version = existing
+        sg.update("Version", version["id"], {"sg_path_to_frames": version_folder_norm})
+    else:
+        # Best-effort link to the same single Task Jiffy SG manages per Shot
+        # (see _find_or_create_task/update_shot_task above) — Shots only,
+        # not fatal if the "Animation" Step isn't set up on this Project,
+        # since a Version without a linked Task is still a valid publish.
+        task = None
+        if entity_type == "Shot":
+            try:
+                task = _find_or_create_task(sg, entity, project)
+            except Exception as exc:
+                print("jiffySG: could not resolve/create a Task to link this Version to — {0}".format(exc))
+
+        version_data = {
+            "project": project, "code": code, "entity": entity,
+            "sg_path_to_frames": version_folder_norm,
+        }
+        if task:
+            version_data["sg_task"] = task
+
+        version = sg.create("Version", version_data)
+        print("jiffySG: created Version '{0}' on {1} '{2}' (id {3})".format(
+            code, entity_type, entity["code"], version["id"]))
+
+    representative_frame = files[len(files) // 2]
+    sg.upload_thumbnail("Version", version["id"], representative_frame)
+
+    # ShotGrid does not cascade a Version's thumbnail up to its linked
+    # Shot/Asset on its own (see upload_shot_thumbnail()'s docstring) — do
+    # it explicitly so the Shot/Asset's thumbnail stays current as new
+    # playblasts get published.
+    upload_entity_thumbnail(entity_type, entity_id, representative_frame, as_login=as_login)
+
+    mp4_path = _encode_to_mp4(version_folder_norm, fps)
+    if mp4_path:
+        sg.upload("Version", version["id"], mp4_path, field_name="sg_uploaded_movie")
+        print("jiffySG: uploaded movie '{0}' to Version id {1}".format(mp4_path, version["id"]))
+
+    if notes:
+        try:
+            _create_note(sg, entity, project, version, notes)
+        except Exception as exc:
+            print("jiffySG: could not create ShotGrid Note — {0}".format(exc))
+
+    _push_publish_to_open_window(entity_type, entity_id, notes, representative_frame, version_folder_norm)
+
+    return version
+
+
+def get_latest_playblast_path(entity_type, entity_id, as_login=None):
+    """The local frame-sequence folder (Version.sg_path_to_frames) of the
+    most recently published Version on this Shot/Asset, or None.
+    Deliberately a live lookup (not cached) — used at RV-launch click-time
+    in Jiffy SG's UI, where a brief round-trip for an explicit user action
+    is fine and guarantees "launch latest" really is the latest."""
+    sg = get_connection(as_login=as_login)
+    entity = {"type": entity_type, "id": entity_id}
+    version = sg.find_one(
+        "Version", [["entity", "is", entity], ["sg_path_to_frames", "is_not", None]],
+        ["sg_path_to_frames"],
+        order=[{"field_name": "created_at", "direction": "desc"}],
     )
+    return version.get("sg_path_to_frames") if version else None
+
+
+def list_entity_latest_activity(project_name, entity_type, as_login=None):
+    """{entity_id: {"note": str|None, "image_url": str|None}} for every
+    Shot or Asset in project_name — 2 ShotGrid calls total regardless of
+    entity count, used to batch-refresh Jiffy SG's rows (latest note +
+    thumbnail) as the pull-based fallback for when the live push
+    (_push_publish_to_open_window above) couldn't reach an open window at
+    publish time."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    entities = sg.find(entity_type, [["project", "is", project]], ["id", "image"])
+    result = {e["id"]: {"note": None, "image_url": e.get("image")} for e in entities}
+    if not entities:
+        return result
+
+    entity_refs = [{"type": entity_type, "id": e["id"]} for e in entities]
+    notes = sg.find(
+        "Note", [["note_links", "in", entity_refs]], ["content", "created_at", "note_links"],
+        order=[{"field_name": "created_at", "direction": "desc"}],
+    )
+    seen = set()
+    for note in notes:
+        for link in note.get("note_links") or []:
+            if link.get("type") != entity_type:
+                continue
+            eid = link.get("id")
+            if eid in result and eid not in seen:
+                result[eid]["note"] = note.get("content") or ""
+                seen.add(eid)
+    return result
+
+
+def _thumb_cache_dir():
+    """Must be called on Maya's main thread (cmds.internalVar) — see
+    _config_cache's docstring above for why this can't happen inside an
+    _run_sg_async worker thread."""
+    prefs = cmds.internalVar(userPrefDir=True)
+    d = os.path.join(prefs, "jiffySG_thumb_cache")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _download_shot_thumbnail(shot_id, image_url, cache_dir):
+    """Best-effort download of a Shot's ShotGrid thumbnail (a signed,
+    directly-fetchable HTTPS URL) to a stable local per-shot cache file.
+    Always overwrites — signed URLs differ on every fetch, so there's no
+    cheap way to diff-and-skip an unchanged image."""
+    if not image_url:
+        return None
+    try:
+        dest = os.path.join(cache_dir, "shot_{0}.jpg".format(shot_id))
+        urllib.request.urlretrieve(image_url, dest)
+        return dest
+    except Exception as exc:
+        print("jiffySG: could not download thumbnail for Shot id {0} — {1}".format(shot_id, exc))
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -559,33 +844,183 @@ def _prod_week(target, w1_start, hol_start=None, hol_end=None):
 
 
 # ---------------------------------------------------------------------------
-# Viewport capture
+# RV launch — ported from pipeDev/shotSubDev/shotSub.py (same working
+# implementation, adapted to module-level functions with a distinct RV tag
+# so Jiffy SG's RV window doesn't collide with shotSub's). Used by
+# ItemRowWidget._do_launch_rv (Shot thumbnail click) and _encode_to_mp4
+# above (rvio, from the same RV install).
 # ---------------------------------------------------------------------------
-def _capture_viewport(item_name):
+_JIFFYSG_RV_TAG = "jiffySG"
+
+
+def _rv_install_roots_from_registry():
+    """Reads InstallLocation from the Windows Uninstall registry for any
+    RV / Shotgun / ShotGrid / Flow Production Tracking entry. Install paths
+    and version-folder names vary by machine/imaging, but the installer
+    always registers the real path here."""
     try:
-        root = cmds.workspace(query=True, rootDirectory=True)
-        thumb_dir = os.path.join(root, "jiffyShotData", "thumbnails")
-        os.makedirs(thumb_dir, exist_ok=True)
-        safe  = item_name.replace(" ", "_").replace("/", "_")
-        fname = f"{safe}_{int(time.time())}.jpg"
-        fpath = os.path.join(thumb_dir, fname).replace("\\", "/")
-        cmds.playblast(
-            frame=int(cmds.currentTime(q=True)),
-            format="image",
-            completeFilename=fpath,
-            widthHeight=[THUMB_W * 2, THUMB_H * 2],
-            percent=100,
-            viewer=False,
-            showOrnaments=False,
-            forceOverwrite=True,
-            compression="jpg",
-            quality=85,
-        )
-        if os.path.exists(fpath):
-            return fpath
-    except Exception as e:
-        QtWidgets.QMessageBox.warning(None, "Capture Error", str(e))
-    return ""
+        import winreg
+    except ImportError:
+        return []
+
+    hives_and_keys = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+
+    roots = []
+    for hive, key_path in hives_and_keys:
+        try:
+            key = winreg.OpenKey(hive, key_path)
+        except OSError:
+            continue
+
+        for i in range(winreg.QueryInfoKey(key)[0]):
+            try:
+                subkey = winreg.OpenKey(key, winreg.EnumKey(key, i))
+                display_name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                if re.search(r"\bRV\b|Shotgun|ShotGrid|Flow Production Tracking", display_name, re.IGNORECASE):
+                    install_location = winreg.QueryValueEx(subkey, "InstallLocation")[0]
+                    if install_location:
+                        roots.append(install_location)
+            except OSError:
+                continue
+
+    return roots
+
+
+def find_rv_executable(exe_name):
+    """Locates an RV binary by name (e.g. "rvpush", "rv", "rvio"). Checks,
+    in order: the SHOTSUB_RV_HOME env var override (shared with shotSub.py
+    deliberately, same RV install), PATH, the Windows registry install
+    location, then common Autodesk/Shotgun RV install locations on Windows
+    and Mac. Returns the highest version found."""
+    env_home = os.environ.get("SHOTSUB_RV_HOME")
+    if env_home:
+        for candidate in (
+            os.path.join(env_home, exe_name + ".exe"),
+            os.path.join(env_home, "bin", exe_name + ".exe"),
+            os.path.join(env_home, exe_name),
+            os.path.join(env_home, "bin", exe_name),
+        ):
+            if os.path.isfile(candidate):
+                return candidate
+        print("jiffySG: SHOTSUB_RV_HOME is set to '{0}' but no {1} was found there.".format(env_home, exe_name))
+
+    found = shutil.which(exe_name)
+    if found:
+        return found
+
+    candidates = []
+
+    if cmds.about(nt=True):
+        for install_root in _rv_install_roots_from_registry():
+            for candidate in (
+                os.path.join(install_root, exe_name + ".exe"),
+                os.path.join(install_root, "bin", exe_name + ".exe"),
+            ):
+                if os.path.isfile(candidate):
+                    candidates.append(candidate)
+
+        search_globs = [
+            r"C:\Program Files\Autodesk\RV-*\bin\{0}.exe".format(exe_name),
+            r"C:\Program Files\Shotgun\RV-*\bin\{0}.exe".format(exe_name),
+            r"C:\Program Files\ShotGrid\RV-*\bin\{0}.exe".format(exe_name),
+        ]
+    elif cmds.about(mac=True):
+        search_globs = [
+            "/Applications/RV*.app/Contents/MacOS/{0}".format(exe_name),
+            "/Applications/Autodesk/RV-*.app/Contents/MacOS/{0}".format(exe_name),
+            "/Applications/Shotgun/RV*.app/Contents/MacOS/{0}".format(exe_name),
+            os.path.expanduser("~/Applications/RV*.app/Contents/MacOS/{0}".format(exe_name)),
+        ]
+    else:
+        search_globs = [
+            "/usr/bin/{0}".format(exe_name),
+            "/usr/local/bin/{0}".format(exe_name),
+        ]
+
+    for pattern in search_globs:
+        candidates.extend(glob.glob(pattern))
+
+    if not candidates:
+        return ""
+
+    def version_key(path):
+        match = re.search(r"RV-([\d.]+)", path)
+        if not match:
+            return (0,)
+        return tuple(int(part) for part in match.group(1).split("."))
+
+    candidates.sort(key=version_key)
+    return candidates[-1]
+
+
+def _warn_from_thread(message):
+    maya.utils.executeInMainThreadWithResult(lambda: QtWidgets.QMessageBox.warning(None, "Launch in RV", message))
+
+
+def _push_to_rv(cmd):
+    # Maya has no console of its own, so each subprocess.run() below would
+    # otherwise flash open a new console window for rvpush -- CREATE_NO_WINDOW
+    # stops that (Windows-only flag; harmless no-op value on other platforms).
+    no_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    # When no tagged RV is running, rvpush's cold start spawns RV but does not
+    # forward the media (exit code 15) -- the sequence only loads once that new
+    # session's network listener comes up, so retry the push briefly until it does.
+    # Only the first attempt is allowed to spawn: exit 15 means "started a new RV",
+    # so retrying the same command with spawning still enabled would cold-start a
+    # second (and third...) RV every second a slow-starting session takes to bring
+    # its listener up. RVPUSH_RV_EXECUTABLE_PATH=none on every retry after the first
+    # tells rvpush not to spawn anything -- it just fails to connect (exit 11) until
+    # the one RV we already started is ready.
+    no_spawn_env = os.environ.copy()
+    no_spawn_env["RVPUSH_RV_EXECUTABLE_PATH"] = "none"
+
+    for attempt in range(15):
+        spawning_allowed = (attempt == 0)
+        env = os.environ if spawning_allowed else no_spawn_env
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, env=env,
+                creationflags=no_window_flags,
+            )
+        except Exception as exc:
+            _warn_from_thread("Failed to launch RV: {0}".format(exc))
+            return
+
+        if result.returncode == 0:
+            return
+
+        if result.returncode == 15 or (result.returncode == 11 and not spawning_allowed):
+            time.sleep(1)
+            continue
+
+        _warn_from_thread("Failed to open sequence in RV (rvpush exit {0}): {1}".format(
+            result.returncode, (result.stderr or result.stdout or "").strip()
+        ))
+        return
+
+    _warn_from_thread("Timed out waiting for a newly-launched RV to accept the playblast sequence.")
+
+
+def open_in_rv(prefix):
+    rvpush = find_rv_executable("rvpush")
+    if not rvpush:
+        QtWidgets.QMessageBox.warning(None, "Launch in RV", "Could not find RV (rvpush) on this machine.")
+        return
+
+    sequence_pattern = prefix + ".#.jpg"
+    cmd = [rvpush, "-tag", _JIFFYSG_RV_TAG, "set", sequence_pattern]
+
+    # rvpush blocks synchronously while it connects -- see _push_to_rv's own
+    # comment for why this runs on a background thread rather than Maya's
+    # main thread (mirrors shotSub.py's open_in_rv/_push_to_rv exactly).
+    thread = threading.Thread(target=_push_to_rv, args=(cmd,))
+    thread.daemon = True
+    thread.start()
 
 
 # ---------------------------------------------------------------------------
@@ -658,20 +1093,24 @@ class StageBadge(QtWidgets.QLabel):
 # Thumbnail label
 # ---------------------------------------------------------------------------
 class ThumbnailLabel(QtWidgets.QLabel):
-    capture_requested = QtCore.Signal()
-    browse_requested  = QtCore.Signal()
+    """Read-only display of the Shot/Asset's latest published playblast
+    thumbnail (set via ItemRowWidget._refresh_labels from
+    item_data["thumbnail"] — either a live-pushed local frame path, or a
+    downloaded ShotGrid-thumbnail cache file, see jiffySG.py's backend
+    list_entity_latest_activity/_download_shot_thumbnail). Click launches
+    that playblast in RV — no more local capture/browse, killed in favour
+    of this being purely ShotGrid-driven."""
+    launch_requested = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(THUMB_W, THUMB_H)
         self.setCursor(QtCore.Qt.PointingHandCursor)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._context_menu)
         self._set_placeholder()
 
     def _set_placeholder(self):
         self.clear()
-        self.setText("Click to Capture")
+        self.setText("No playblast yet")
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setStyleSheet(
             f"background:#333; border:1px solid {BORDER}; color:{SUBTEXT}; font-size:10px;"
@@ -692,27 +1131,15 @@ class ThumbnailLabel(QtWidgets.QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
-            self.capture_requested.emit()
+            self.launch_requested.emit()
         super().mousePressEvent(event)
-
-    def _context_menu(self, pos):
-        menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
-        cap_act    = menu.addAction("Recapture from Viewport")
-        browse_act = menu.addAction("Browse for Image…")
-        action = menu.exec_(self.mapToGlobal(pos))
-        if action == cap_act:
-            self.capture_requested.emit()
-        elif action == browse_act:
-            self.browse_requested.emit()
 
 
 class _InlineNotesEdit(QtWidgets.QPlainTextEdit):
-    committed = QtCore.Signal(str)
-
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        self.committed.emit(self.toPlainText().strip())
+    """Read-only display of the Shot's latest ShotGrid Note (see
+    ItemRowWidget._refresh_labels, item_data["sg_latest_note"]) — no longer
+    a local free-text field; Jiffy SG only ever shows the single latest
+    note, full history stays in ShotGrid itself."""
 
 
 # ---------------------------------------------------------------------------
@@ -754,8 +1181,7 @@ class ItemRowWidget(QtWidgets.QFrame):
 
         self.thumb = ThumbnailLabel()
         self.thumb.set_image(self.item_data.get("thumbnail", ""))
-        self.thumb.capture_requested.connect(self._do_capture)
-        self.thumb.browse_requested.connect(self._do_browse)
+        self.thumb.launch_requested.connect(self._do_launch_rv)
         row.addWidget(self.thumb)
 
         col = QtWidgets.QVBoxLayout()
@@ -773,14 +1199,13 @@ class ItemRowWidget(QtWidgets.QFrame):
         row.addLayout(col)
 
         self.notes_edit = _InlineNotesEdit()
-        self.notes_edit.setPlaceholderText("Click to add notes…")
+        self.notes_edit.setReadOnly(True)
+        self.notes_edit.setPlaceholderText("No notes yet")
         self.notes_edit.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.notes_edit.setStyleSheet(
             f"QPlainTextEdit{{background:{DARK_BG}; color:{SUBTEXT}; font-size:11px;"
             f"border:1px solid {BORDER}; border-radius:3px; padding:3px;}}"
-            f"QPlainTextEdit:focus{{border:1px solid #4caf50;}}"
         )
-        self.notes_edit.committed.connect(self._on_notes_committed)
         row.addWidget(self.notes_edit, stretch=1)
 
         if self.item_label == "Shot":
@@ -833,35 +1258,55 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.due_lbl.setText(f"Due: {due}" if due else "Due: —")
         artist = d.get("artist", "")
         self.artist_lbl.setText(f"Artist: {artist}" if artist else "Artist: —")
-        self.notes_edit.setPlainText(d.get("notes", ""))
+        self.notes_edit.setPlainText(d.get("sg_latest_note", ""))
         self.badge.set_stage(d.get("stage", self._stages[0]))
         self.thumb.set_image(d.get("thumbnail", ""))
 
-    def _do_capture(self):
-        path = _capture_viewport(self.item_data.get("name", "item"))
-        if path:
-            self.item_data["thumbnail"] = path
-            self.thumb.set_image(path)
-            self.data_changed.emit(self.item_data)
+    def _do_launch_rv(self):
+        entity_type = self.item_label   # "Shot" or "Asset"
+        entity_id = self.item_data.get("sg_shot_id" if entity_type == "Shot" else "sg_asset_id")
+        if not entity_id:
+            QtWidgets.QMessageBox.information(
+                self, "Launch in RV",
+                "This {0} isn't linked to ShotGrid yet — no published playblast to open.".format(entity_type)
+            )
+            return
 
-    def _do_browse(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Thumbnail", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
-        )
-        if path:
-            self.item_data["thumbnail"] = path
-            self.thumb.set_image(path)
-            self.data_changed.emit(self.item_data)
+        cmds.inViewMessage(amg='Loading RV…', pos='midCenter', fade=True)
+
+        def work():
+            return get_latest_playblast_path(entity_type, entity_id)   # live ShotGrid lookup, not cached
+
+        def done(result, error):
+            if error is not None:
+                QtWidgets.QMessageBox.warning(
+                    self, "Launch in RV", "Could not reach ShotGrid:\n\n{0}".format(error)
+                )
+            elif not result:
+                QtWidgets.QMessageBox.information(
+                    self, "Launch in RV", "No published playblast found for this Shot yet."
+                )
+            elif not os.path.isdir(result):
+                QtWidgets.QMessageBox.warning(
+                    self, "Launch in RV",
+                    "The published playblast folder isn't reachable from this machine:\n\n"
+                    "{0}\n\n(playblasts on portable drives / different machines don't "
+                    "resolve here.)".format(result)
+                )
+            else:
+                prefix = _frame_sequence_prefix(result)
+                if prefix:
+                    open_in_rv(prefix)
+                else:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Launch in RV", "No frames found in:\n\n{0}".format(result)
+                    )
+
+        _run_sg_async(work, done)
 
     def _on_stage_changed(self, stage):
         self.item_data["stage"] = stage
         self.data_changed.emit(self.item_data)
-
-    def _on_notes_committed(self, text):
-        if text != self.item_data.get("notes", ""):
-            self.item_data["notes"] = text
-            self.data_changed.emit(self.item_data)
 
     def _send_to_pomo(self):
         try:
@@ -893,11 +1338,13 @@ class ItemRowWidget(QtWidgets.QFrame):
 # Item dialog
 # ---------------------------------------------------------------------------
 class ItemDialog(QtWidgets.QDialog):
-    def __init__(self, item_data=None, item_label="Shot", stages=None, artist_names=None, parent=None):
+    def __init__(self, item_data=None, item_label="Shot", stages=None, artist_names=None,
+                 project_name=None, parent=None):
         super().__init__(parent)
         self._stages       = stages or SHOT_STAGES
         self._artist_names = artist_names or []
-        self.item_label = item_label
+        self.item_label     = item_label
+        self._project_name  = project_name
         self._is_new    = item_data is None
         self.setWindowTitle(f"Add {item_label}" if self._is_new else f"Edit {item_label}")
         self.setMinimumWidth(340)
@@ -952,6 +1399,28 @@ class ItemDialog(QtWidgets.QDialog):
         layout.addRow("Artist:",    self.artist_edit)
         layout.addRow("Stage:",     self.stage_combo)
         layout.addRow("Notes:",     self.notes_edit)
+
+        # "Set Project" line — links this row's local Maya project folder to
+        # ShotGrid (writes shotgrid_link.json there) and switches Maya's
+        # active project to it. See _do_set_project(). ShotGrid Project is
+        # read-only here, inherited from whichever Project is active in the
+        # Nav panel — no per-row picker, since a row's Project is already
+        # unambiguous (see jiffySG_brief.md's access-control reasoning).
+        self._path_lbl = QtWidgets.QLabel(self._data.get("local_project_path") or "Not set")
+        self._path_lbl.setStyleSheet(f"color:{SUBTEXT};")
+        self._change_btn = QtWidgets.QPushButton("Change…")
+        self._change_btn.setVisible(bool(self._data.get("local_project_path")))
+        self._change_btn.clicked.connect(self._do_change_folder)
+        self._set_project_btn = QtWidgets.QPushButton("Set Project")
+        self._set_project_btn.clicked.connect(self._do_set_project)
+        project_row = QtWidgets.QWidget()
+        project_row_layout = QtWidgets.QHBoxLayout(project_row)
+        project_row_layout.setContentsMargins(0, 0, 0, 0)
+        project_row_layout.addWidget(self._path_lbl, stretch=1)
+        project_row_layout.addWidget(self._change_btn)
+        project_row_layout.addWidget(self._set_project_btn)
+        layout.addRow(f"ShotGrid Project: {self._project_name or '—'}", project_row)
+
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
@@ -959,17 +1428,115 @@ class ItemDialog(QtWidgets.QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
+    def _do_change_folder(self):
+        self._data["local_project_path"] = ""
+        self._do_set_project()
+
+    def _do_set_project(self):
+        """Deliberately synchronous (not _run_sg_async) — an occasional,
+        explicit "link" action can afford a brief blocking pause, same
+        reasoning as shotSub.link_to_shotgrid(), and avoids new
+        async/dialog-lifetime complexity (the modal dialog could be closed
+        before an async callback fires)."""
+        entity_type = self.item_label   # "Shot" or "Asset"
+        entity_code = self.name_edit.text().strip()
+        if not entity_code:
+            QtWidgets.QMessageBox.warning(self, "Set Project", "Name this {0} first.".format(entity_type))
+            return
+
+        if entity_type == "Shot":
+            entity_id = self._data.get("sg_shot_id")
+            if not entity_id:
+                QtWidgets.QMessageBox.warning(
+                    self, "Set Project",
+                    "This Shot is still linking to ShotGrid — try again in a moment."
+                )
+                return
+        else:
+            entity_id = self._data.get("sg_asset_id")
+            if not entity_id:
+                if not self._project_name:
+                    QtWidgets.QMessageBox.warning(self, "Set Project", "No active ShotGrid Project selected.")
+                    return
+                try:
+                    asset = find_or_create_asset(entity_code, self._project_name)
+                except Exception as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Set Project", "Could not reach ShotGrid:\n\n{0}".format(exc)
+                    )
+                    return
+                entity_id = asset["id"]
+                self._data["sg_asset_id"] = entity_id
+
+        path = self._data.get("local_project_path", "")
+        if not path or not os.path.isdir(path):
+            chosen = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Select Maya Project Folder", path or os.path.expanduser("~")
+            )
+            if not chosen:
+                return
+            path = chosen
+            self._data["local_project_path"] = path
+
+        try:
+            cmds.workspace(path, openWorkspace=True)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Set Project", "Failed to set Maya project:\n\n{0}".format(exc))
+            return
+
+        try:
+            self._write_link_marker(path, entity_type, entity_id, entity_code)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Set Project",
+                "Maya project set, but failed to write the ShotGrid link marker:\n\n{0}".format(exc)
+            )
+            return
+
+        self._path_lbl.setText(path)
+        self._change_btn.setVisible(True)
+        cmds.inViewMessage(
+            amg='Maya project set to <hl>{0}</hl>.'.format(entity_code), pos='midCenter', fade=True
+        )
+
+    def _write_link_marker(self, project_root, entity_type, entity_id, entity_code):
+        """Writes the same shotgrid_link.json shape shotSub.py reads (see
+        shotSub.py's write_shotgrid_link()/read_shotgrid_link() — schema
+        generalized to sg_entity_type/sg_entity_id/sg_entity_code so it
+        covers both Shots and Assets). Deliberately a small self-contained
+        write here rather than a shared function with shotSub.py — keeps
+        the two files decoupled, matching the existing precedent of
+        hand-porting small blocks (e.g. the RV-launch functions) instead of
+        creating a new cross-file dependency for something this small."""
+        sg = get_connection()
+        project = _find_project(sg, self._project_name)
+        data = {
+            "schema_version": 2,
+            "sg_project_id": project["id"],
+            "sg_project_name": project["name"],
+            "sg_entity_type": entity_type,
+            "sg_entity_id": entity_id,
+            "sg_entity_code": entity_code,
+            "linked_at": _datetime.now().isoformat(timespec="seconds"),
+            "linked_by": current_login(),
+        }
+        with open(os.path.join(project_root, "shotgrid_link.json"), "w") as f:
+            json.dump(data, f, indent=2)
+
     def get_data(self):
         return {
-            "name":        self.name_edit.text().strip(),
-            "frame_start": self.frame_start_edit.text().strip(),
-            "frame_end":   self.frame_end_edit.text().strip(),
-            "due_date":    self.due_edit.text().strip(),
-            "artist":      self.artist_edit.currentText().strip(),
-            "stage":       self.stage_combo.currentText(),
-            "notes":       self.notes_edit.toPlainText().strip(),
-            "thumbnail":   self._data.get("thumbnail", ""),
-            "sg_shot_id":  self._data.get("sg_shot_id"),
+            "name":              self.name_edit.text().strip(),
+            "frame_start":       self.frame_start_edit.text().strip(),
+            "frame_end":         self.frame_end_edit.text().strip(),
+            "due_date":          self.due_edit.text().strip(),
+            "artist":            self.artist_edit.currentText().strip(),
+            "stage":             self.stage_combo.currentText(),
+            "notes":             self.notes_edit.toPlainText().strip(),
+            "thumbnail":         self._data.get("thumbnail", ""),
+            "sg_shot_id":        self._data.get("sg_shot_id"),
+            "sg_asset_id":       self._data.get("sg_asset_id"),
+            "sg_latest_note":    self._data.get("sg_latest_note", ""),
+            "local_project_path": self._data.get("local_project_path", ""),
         }
 
 
@@ -1047,6 +1614,7 @@ class ItemListPanel(QtWidgets.QWidget):
     data_changed          = QtCore.Signal()
     sg_status             = QtCore.Signal(str, str)   # state "ok"|"error", message
     sg_sequence_resolved  = QtCore.Signal(str, str, int)  # project, group, sg_sequence_id
+    refresh_requested     = QtCore.Signal()
 
     def __init__(self, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
@@ -1087,6 +1655,14 @@ class ItemListPanel(QtWidgets.QWidget):
         )
         self.add_btn.clicked.connect(self._add_item)
         hl.addWidget(self.add_btn)
+        refresh_btn = QtWidgets.QPushButton("⟳ Refresh")
+        refresh_btn.setToolTip("Re-pull latest notes/thumbnails from ShotGrid for this Project")
+        refresh_btn.setStyleSheet(
+            "QPushButton{background:#444;color:white;border:none;padding:4px 14px;border-radius:3px;}"
+            "QPushButton:hover{background:#555;}"
+        )
+        refresh_btn.clicked.connect(self.refresh_requested)
+        hl.addWidget(refresh_btn)
         layout.addWidget(header)
 
         col_bar = QtWidgets.QWidget()
@@ -1149,7 +1725,7 @@ class ItemListPanel(QtWidgets.QWidget):
 
         dlg = ItemDialog(item_data=defaults if defaults else None,
                          item_label=self.item_label, stages=self._stages,
-                         artist_names=self._artist_names, parent=self)
+                         artist_names=self._artist_names, project_name=self._project, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             data = dlg.get_data()
             if data["name"]:
@@ -1246,7 +1822,7 @@ class ItemListPanel(QtWidgets.QWidget):
         if idx is None:
             return
         dlg = ItemDialog(item_data=item_data, item_label=self.item_label, stages=self._stages,
-                         artist_names=self._artist_names, parent=self)
+                         artist_names=self._artist_names, project_name=self._project, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             self.items[idx] = dlg.get_data()
             self._rebuild()
@@ -1306,6 +1882,7 @@ class SchedulePage(QtWidgets.QWidget):
     data_changed          = QtCore.Signal()
     sg_status             = QtCore.Signal(str, str)
     sg_sequence_resolved  = QtCore.Signal(str, str, int)
+    refresh_requested     = QtCore.Signal()
 
     def __init__(self, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
@@ -1321,6 +1898,7 @@ class SchedulePage(QtWidgets.QWidget):
         self.item_panel.data_changed.connect(self._on_items_changed)
         self.item_panel.sg_status.connect(self.sg_status)
         self.item_panel.sg_sequence_resolved.connect(self.sg_sequence_resolved)
+        self.item_panel.refresh_requested.connect(self.refresh_requested)
         layout.addWidget(self.item_panel)
 
     def set_artist_names(self, names):
@@ -2869,7 +3447,11 @@ class JiffySG(QtWidgets.QWidget):
         self.shots_page.data_changed.connect(self._on_shots_changed)
         self.shots_page.sg_status.connect(self._on_sg_status)
         self.shots_page.sg_sequence_resolved.connect(self._on_sequence_resolved)
+        self.shots_page.refresh_requested.connect(
+            lambda: self._refresh_entity_activity(self.shots_page, self._active_project, "Shot"))
         self.assets_page.data_changed.connect(self._on_assets_changed)
+        self.assets_page.refresh_requested.connect(
+            lambda: self._refresh_entity_activity(self.assets_page, self._active_project, "Asset"))
         self.progress_page.data_changed.connect(self._on_milestone_data_changed)
         self.progress_page.save_requested.connect(self.save_data)
         self.artists_page.sg_status.connect(self._on_sg_status)
@@ -2998,6 +3580,8 @@ class JiffySG(QtWidgets.QWidget):
         self.shots_page.set_project(project)
         self.assets_page.set_project(project)
         self.artists_page.set_project(project)
+        self._refresh_entity_activity(self.shots_page, project, "Shot")
+        self._refresh_entity_activity(self.assets_page, project, "Asset")
         idx = self.tab_bar.currentIndex()
         if idx == 2:
             self.progress_page.set_project(
@@ -3095,6 +3679,102 @@ class JiffySG(QtWidgets.QWidget):
         self.save_data()
         if is_shots_tab and (sequence_id or shot_ids):
             self._push_sequence_delete(sequence_id, shot_ids)
+
+    def _entity_id_key(self, entity_type):
+        return "sg_shot_id" if entity_type == "Shot" else "sg_asset_id"
+
+    def _page_for_entity_type(self, entity_type):
+        return self.shots_page if entity_type == "Shot" else self.assets_page
+
+    def _find_item(self, entity_type, entity_id):
+        """Scans every loaded Project/Sequence-or-category row of the given
+        entity_type (not just the currently-displayed one) for the
+        item_data dict matching entity_id. SchedulePage._data holds all
+        projects at once (see load_data() below), so a publish can land
+        even if the student is looking at a different Project/tab right
+        now."""
+        key = self._entity_id_key(entity_type)
+        page = self._page_for_entity_type(entity_type)
+        for groups in page._data.values():
+            for items in groups.values():
+                for item in items:
+                    if item.get(key) == entity_id:
+                        return item
+        return None
+
+    def apply_remote_publish(self, entity_type, entity_id, note_text, thumbnail_path, playblast_folder):
+        """Live push from jiffySG.upload_playblast() (see
+        _push_publish_to_open_window) — called on Maya's main thread the
+        instant a shotSub publish completes, while this window is open, so
+        the note/thumbnail appear without waiting for any refresh.
+
+        Always rebuilds the current view (matching _apply_entity_activity's
+        pull-fallback pattern) rather than trying to surgically find/repaint
+        just the one visible row — the published Shot/Asset may belong to a
+        different Project/group than whatever's currently on screen, in
+        which case a single-row lookup would silently find nothing while
+        the underlying data (and save_data() below) is still correctly
+        updated. _refresh_view() is a safe no-op if the row isn't part of
+        the current view."""
+        item_data = self._find_item(entity_type, entity_id)
+        if item_data is None:
+            return
+        item_data["sg_latest_note"] = note_text or ""
+        if thumbnail_path and os.path.isfile(thumbnail_path):
+            item_data["thumbnail"] = thumbnail_path
+        self._page_for_entity_type(entity_type)._refresh_view()
+        self.save_data()
+
+    def _refresh_entity_activity(self, page, project, entity_type):
+        """Pull-based fallback for when the live push above couldn't reach
+        an open window at publish time (Jiffy SG wasn't open, or was open
+        to a different project/session) — re-pulls latest note + thumbnail
+        for every Shot/Asset in project from ShotGrid. Triggered on Project
+        select/load and by each tab's '⟳ Refresh' button."""
+        if not project:
+            return
+        cache_dir = _thumb_cache_dir()   # main thread only, see its docstring
+
+        def work():
+            activity = list_entity_latest_activity(project, entity_type)
+            for entity_id, info in activity.items():
+                url = info.get("image_url")
+                info["thumbnail_path"] = _download_shot_thumbnail(entity_id, url, cache_dir) if url else None
+            return activity
+
+        def done(result, error):
+            if error is not None:
+                self._set_sg_status("error", str(error))
+                return
+            self._apply_entity_activity(page, project, result, entity_type)
+            self._set_sg_status("ok", "")
+
+        _run_sg_async(work, done)
+
+    def _apply_entity_activity(self, page, project, activity, entity_type):
+        """project is the one actually queried by _refresh_entity_activity
+        above (closed over from its caller), not necessarily self._active_
+        project — the user may have switched Projects while this async
+        pull was in flight, and applying to the wrong Project's data here
+        would silently corrupt it."""
+        key = self._entity_id_key(entity_type)
+        groups = page._data.get(project, {})
+        changed = False
+        for items in groups.values():
+            for item in items:
+                info = activity.get(item.get(key))
+                if not info:
+                    continue
+                if info.get("note") is not None and info["note"] != item.get("sg_latest_note"):
+                    item["sg_latest_note"] = info["note"]
+                    changed = True
+                tp = info.get("thumbnail_path")
+                if tp and tp != item.get("thumbnail"):
+                    item["thumbnail"] = tp
+                    changed = True
+        if changed:
+            page._refresh_view()
+            self.save_data()
 
     def _on_shots_changed(self):
         self.progress_page.refresh_data(self.shots_page.get_data(), self.assets_page.get_data())

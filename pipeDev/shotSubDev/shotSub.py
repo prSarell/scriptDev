@@ -39,9 +39,9 @@
 #   shotgun_api3 and never touches ShotGrid credentials — Jiffy SG owns the
 #   single ShotGrid session per student (shared Script API key +
 #   sudo_as_login) and every other tool calls into it, per jiffySG_brief.md.
-#   That hand-off target is currently NotImplementedError on Jiffy SG's
-#   side, pending its own real ShotGrid Version-creation work; the wiring
-#   here just needs to already be correct for when it lands.
+#   jiffySG.upload_playblast() creates a real ShotGrid Version (+ Note,
+#   + Shot/Version thumbnail, + an rvio-encoded review movie) from this
+#   hand-off.
 #
 # Shelf button:
 # import importlib
@@ -107,7 +107,8 @@ class ShotSub(object):
             widthHeight=(560, 820)
         )
 
-        root = cmds.columnLayout(adj=True)
+        scroll = cmds.scrollLayout(childResizable=True)
+        root = cmds.columnLayout(adj=True, parent=scroll)
         cmds.separator(h=8, style="none")
 
         cmds.frameLayout(
@@ -206,6 +207,14 @@ class ShotSub(object):
         )
         inner = cmds.columnLayout(adj=True)
         self.widgets["version_list"] = cmds.textScrollList(numberOfRows=6, allowMultiSelection=False)
+        cmds.separator(h=6, style="none")
+        cmds.text(label="Notes (sent with this publish)", align="left")
+        self.widgets["publish_notes"] = cmds.scrollField(
+            height=50,
+            wordWrap=True,
+            annotation='e.g. "blocking pass, ignore the left arm" — posted '
+                       "to ShotGrid with the selected version."
+        )
         cmds.separator(h=6, style="none")
         cmds.button(label="Publish Selected Version", h=30, c=lambda *_: self.publish_selected_version())
         cmds.setParent("..")
@@ -454,7 +463,7 @@ class ShotSub(object):
         cmds.textField(self.widgets["resolution_field"], e=True, text=render_size)
 
         link = self.read_shotgrid_link()
-        link_text = "{0} / {1}".format(link["sg_project_name"], link["sg_shot_code"]) if link else "<not linked>"
+        link_text = "{0} / {1}".format(link["sg_project_name"], link["sg_entity_code"]) if link else "<not linked>"
         cmds.textField(self.widgets["link_status_field"], e=True, text=link_text)
 
         self.populate_version_list()
@@ -472,7 +481,15 @@ class ShotSub(object):
     def read_shotgrid_link(self):
         """Returns the current project's shotgrid_link.json as a dict, or
         None if unlinked/unreadable. A corrupt file warns (visible mistake)
-        rather than silently behaving as unlinked."""
+        rather than silently behaving as unlinked.
+
+        Generalized keys are sg_entity_type/sg_entity_id/sg_entity_code
+        (schema_version 2 -- covers both Shots and Assets, written either by
+        link_to_shotgrid() below or by Jiffy SG's "Set Project" action).
+        schema_version 1 files (sg_shot_id/sg_shot_code, Shot-only -- from
+        before Assets were supported) are migrated on read so projects
+        linked before this change don't silently break; new writes always
+        use v2."""
         try:
             path = self.get_link_file_path()
         except Exception:
@@ -481,15 +498,21 @@ class ShotSub(object):
             return None
         try:
             with open(path, "r") as f:
-                return json.load(f)
+                data = json.load(f)
         except (ValueError, OSError) as exc:
             cmds.warning("shotSub: could not read {0} — {1}".format(path, exc))
             return None
 
-    def write_shotgrid_link(self, sg_project_id, sg_project_name, sg_shot_id, sg_shot_code):
-        """Writes the explicit ShotGrid Project id + Shot id this shot's
-        Maya project is linked to. Ids are authoritative for every
-        downstream ShotGrid call (upload_playblast() keys off sg_shot_id
+        if data.get("schema_version") == 1:
+            data["sg_entity_type"] = "Shot"
+            data["sg_entity_id"] = data.get("sg_shot_id")
+            data["sg_entity_code"] = data.get("sg_shot_code")
+        return data
+
+    def write_shotgrid_link(self, sg_project_id, sg_project_name, entity_type, entity_id, entity_code):
+        """Writes the explicit ShotGrid Project id + Shot-or-Asset id this
+        project is linked to. Ids are authoritative for every downstream
+        ShotGrid call (upload_playblast() keys off entity_type/entity_id
         alone) -- the name/code fields are display-only convenience copies,
         never re-resolved by name, so a later ShotGrid rename can't break
         the link the way folder-name guessing could."""
@@ -501,11 +524,12 @@ class ShotSub(object):
             pass
 
         data = {
-            "schema_version": 1,
+            "schema_version": 2,
             "sg_project_id": sg_project_id,
             "sg_project_name": sg_project_name,
-            "sg_shot_id": sg_shot_id,
-            "sg_shot_code": sg_shot_code,
+            "sg_entity_type": entity_type,
+            "sg_entity_id": entity_id,
+            "sg_entity_code": entity_code,
             "linked_at": datetime.now().isoformat(timespec="seconds"),
             "linked_by": linked_by,
         }
@@ -1221,7 +1245,7 @@ class ShotSub(object):
         shot = next(s for s in shots if s["code"] == shot_code)
 
         try:
-            self.write_shotgrid_link(project["id"], project["name"], shot["id"], shot["code"])
+            self.write_shotgrid_link(project["id"], project["name"], "Shot", shot["id"], shot["code"])
         except Exception as exc:
             cmds.warning("Failed to write {0}: {1}".format(self.LINK_FILENAME, exc))
             return
@@ -1238,14 +1262,17 @@ class ShotSub(object):
         Hand-off to jiffySG.upload_playblast() for an explicit local
         version (picked from the Local Versions list, not necessarily this
         session's last playblast -- publishing is deliberately decoupled
-        from playblast creation). Resolves shot_id from the local
-        shotgrid_link.json marker file rather than guessing a shot name
-        from folder structure.
+        from playblast creation). Resolves the linked ShotGrid entity
+        (Shot or Asset) from the local shotgrid_link.json marker file
+        rather than guessing a name from folder structure -- that marker
+        may have been written either by this tool's own link_to_shotgrid()
+        (Shots only) or by Jiffy SG's "Set Project" action (Shots and
+        Assets).
 
-        Only ever sends the raw JPEG sequence as-is — no video encoding
-        step in shotSub. What jiffySG.upload_playblast() does with that
-        sequence (e.g. thumbnail-only vs. per-frame) is its own decision,
-        not shotSub's.
+        Only ever sends the raw JPEG sequence as-is plus fps -- no video
+        encoding step in shotSub itself. jiffySG.upload_playblast() encodes
+        the review movie (via rvio) and decides what to do with the
+        sequence; not shotSub's concern.
         """
         if not version_folder or not os.path.isdir(version_folder):
             cmds.warning("Selected version folder no longer exists.")
@@ -1267,13 +1294,16 @@ class ShotSub(object):
             return
 
         files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+        notes = cmds.scrollField(self.widgets["publish_notes"], q=True, text=True).strip()
 
         try:
             result = jiffySG.upload_playblast(
-                link["sg_shot_id"],
+                link.get("sg_entity_type", "Shot"),
+                link["sg_entity_id"],
                 version_folder,
                 files=files,
-                notes=None,
+                notes=notes or None,
+                fps=self.get_fps_value(),
             )
         except NotImplementedError as exc:
             cmds.warning("ShotGrid publish isn't built yet: {0}".format(exc))
@@ -1285,6 +1315,7 @@ class ShotSub(object):
         sg_version_id = result.get("id") if isinstance(result, dict) else None
         version_name = os.path.basename(version_folder)
         self.mark_version_published(version_name, sg_version_id=sg_version_id)
+        cmds.scrollField(self.widgets["publish_notes"], e=True, text="")
         self.refresh_ui_state()
         cmds.inViewMessage(
             amg='Published <hl>{0}</hl> to ShotGrid.'.format(version_name),
