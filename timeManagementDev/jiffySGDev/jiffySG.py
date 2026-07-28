@@ -203,13 +203,12 @@ def create_sequence(sequence_name, project_name, as_login=None):
 
 def _find_or_create_asset(sg, project, asset_name):
     """Find or create a ShotGrid Asset by code within project — same
-    idempotent pattern as _find_or_create_sequence above. Unlike Shots,
-    Assets in Jiffy SG are never scheduled/synced to ShotGrid otherwise (no
-    Task/stage/due/artist push) — this exists purely so an asset's
-    published playblast Versions have a real entity to attach to. No
-    sg_asset_type/category is set: local Jiffy SG categories (Sets,
-    Environments, Rigs, ...) are a purely local/folder-structure concept,
-    never pushed to ShotGrid."""
+    idempotent pattern as _find_or_create_sequence above. Assets are now
+    scheduled/synced to ShotGrid the same shape as Shots (see
+    update_asset_task()/set_asset_type()) — Assets have no Sequence-
+    equivalent grouping entity in ShotGrid, so unlike Shots there's no
+    "create the container first" step here; sg_asset_type is set
+    separately, per-asset, once it exists."""
     asset = sg.find_one(
         "Asset", [["project", "is", project], ["code", "is", asset_name]], ["id", "code"]
     )
@@ -222,9 +221,11 @@ def _find_or_create_asset(sg, project, asset_name):
 
 
 def find_or_create_asset(asset_name, project_name, as_login=None):
-    """Public wrapper around _find_or_create_asset, used by Jiffy SG's
-    "Set Project" action (ItemDialog._do_set_project) the first time an
-    Asset row gets linked to a local Maya project folder."""
+    """Public wrapper around _find_or_create_asset. Currently unused within
+    jiffySG.py itself — its only caller (the old per-row "Set Project"
+    action) was removed once Jiffy SG moved to a single-Maya-project-per-
+    film model (see jiffySG_brief.md). Left in place as a primitive for
+    whatever the Asset-handling rebuild ends up needing."""
     sg = get_connection(as_login=as_login)
     project = _find_project(sg, project_name, as_login=as_login)
     return _find_or_create_asset(sg, project, asset_name)
@@ -343,27 +344,29 @@ def upload_entity_thumbnail(entity_type, entity_id, image_path, as_login=None):
     return sg.upload_thumbnail(entity_type, entity_id, image_path)
 
 
-def _find_or_create_task(sg, shot, project, step_code="Animation"):
-    """Find or create the one Task Jiffy SG manages per Shot, under
-    step_code. Jiffy SG tracks a single Task per Shot (matching
+def _find_or_create_task(sg, entity, project, entity_type="Shot", step_code="Animation"):
+    """Find or create the one Task Jiffy SG manages per Shot/Asset, under
+    step_code. Jiffy SG tracks a single Task per entity (matching
     JiffySchedule's single Stage/Due Date/Artist per shot model) rather
     than one Task per pipeline step. step_code must be an existing
-    Shot-type Pipeline Step on the site — raises RuntimeError if not."""
+    Pipeline Step of type entity_type on the site — raises RuntimeError if
+    not. Shared by update_shot_task() (entity_type="Shot") and
+    update_asset_task() (entity_type="Asset")."""
     step = sg.find_one(
-        "Step", [["code", "is", step_code], ["entity_type", "is", "Shot"]], ["id", "code"]
+        "Step", [["code", "is", step_code], ["entity_type", "is", entity_type]], ["id", "code"]
     )
     if not step:
         raise RuntimeError(
-            "jiffySG: no Shot-type Pipeline Step named '{0}' on this site".format(step_code)
+            "jiffySG: no {0}-type Pipeline Step named '{1}' on this site".format(entity_type, step_code)
         )
 
-    task = sg.find_one("Task", [["entity", "is", shot], ["step", "is", step]], ["id"])
+    task = sg.find_one("Task", [["entity", "is", entity], ["step", "is", step]], ["id"])
     if task:
         return task
 
-    task = sg.create("Task", {"project": project, "entity": shot, "content": step_code, "step": step})
-    print("jiffySG: created Task '{0}' on Shot id {1} (id {2})".format(
-        step_code, shot["id"], task["id"]))
+    task = sg.create("Task", {"project": project, "entity": entity, "content": step_code, "step": step})
+    print("jiffySG: created Task '{0}' on {1} id {2} (id {3})".format(
+        step_code, entity_type, entity["id"], task["id"]))
     return task
 
 
@@ -417,16 +420,70 @@ def list_project_shots(project_name, as_login=None):
 def list_project_artists(project_name, as_login=None):
     """All ShotGrid HumanUsers who are members of the named Project — the
     real, ShotGrid-backed artist roster for that Project. Read-only (Jiffy
-    SG never writes Project membership, per jiffySG_brief.md); feeds both
-    the Artists tab display and the Shot/Asset Artist dropdown, replacing
-    the old free-text local roster so an assignable name is always a real
-    member of that Project rather than anything a student happens to type."""
+    SG never writes Project membership, per jiffySG_brief.md); feeds the
+    Artists tab display, the Shot/Asset Artist dropdown, and the Project
+    Settings admin picker, replacing the old free-text local roster so an
+    assignable name is always a real member of that Project rather than
+    anything a student happens to type. Includes "login" (not just "name")
+    since the admin picker needs it — current_login()/sudo_as_login work in
+    logins, not display names, so that's what sg_jiffy_admin_login stores."""
     sg = get_connection(as_login=as_login)
     project = _find_project(sg, project_name, as_login=as_login)
     return sg.find(
-        "HumanUser", [["projects", "is", project]], ["id", "name"],
+        "HumanUser", [["projects", "is", project]], ["id", "name", "login"],
         order=[{"field_name": "name", "direction": "asc"}],
     )
+
+
+# Project-level settings (solo vs group, group admin) — written to two
+# custom fields added to the Project entity by setup_schema.py, site-wide,
+# once. Deliberately stored on ShotGrid, not in Jiffy SG's local
+# jiffysg.json: each group member runs Jiffy SG on their own machine with
+# their own local save file, so ShotGrid's Project is the only thing all
+# of a group's separate installs actually share. See jiffySG_brief.md's
+# "Project settings" section.
+PROJECT_TYPE_FIELD = "sg_jiffy_project_type"
+PROJECT_ADMIN_FIELD = "sg_jiffy_admin_login"
+
+
+def get_project_settings(project_name, as_login=None):
+    """Reads this Project's Jiffy SG settings straight from ShotGrid.
+    Returns {"project_type": "Solo"|"Group"|None, "admin_login": str|None}
+    — both None means nobody has set them yet (e.g. a brand new Project
+    nobody has linked in Jiffy SG before)."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    result = sg.find_one(
+        "Project", [["id", "is", project["id"]]],
+        [PROJECT_TYPE_FIELD, PROJECT_ADMIN_FIELD],
+    )
+    return {
+        "project_type": result.get(PROJECT_TYPE_FIELD) if result else None,
+        "admin_login": result.get(PROJECT_ADMIN_FIELD) if result else None,
+    }
+
+
+def set_project_type(project_name, project_type, as_login=None):
+    """Writes Solo/Group to this Project's shared type field. Only meant to
+    be called when a student links a Project that doesn't have a type set
+    yet — see JiffySG._link_project(): first group member to link a
+    Project in Jiffy SG decides its type, everyone after just reads it."""
+    if project_type not in ("Solo", "Group"):
+        raise ValueError("project_type must be 'Solo' or 'Group', got {0!r}".format(project_type))
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    sg.update("Project", project["id"], {PROJECT_TYPE_FIELD: project_type})
+
+
+def set_project_admin(project_name, admin_login, as_login=None):
+    """Writes the ShotGrid login of the group member chosen as this
+    Project's Jiffy SG admin — the only member able to edit shot/asset
+    order or create shots/assets once the Project is a Group (see
+    JiffySG._on_project_settings_requested). admin_login=None/"" clears it
+    (e.g. when the Project is switched back to Solo)."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    sg.update("Project", project["id"], {PROJECT_ADMIN_FIELD: admin_login or None})
 
 
 # ShotGrid's Task.sg_status_list only accepts these three status *codes*
@@ -478,6 +535,51 @@ def update_shot_task(shot_id, project_name, stage=None, due_date=None, artist_na
         sg.update("Task", task["id"], updates)
         print("jiffySG: updated Task id {0} on Shot id {1} — {2}".format(
             task["id"], shot_id, ", ".join(updates.keys())))
+    return task
+
+
+def set_asset_type(asset_id, asset_type, as_login=None):
+    """Writes Asset.sg_asset_type — the real ShotGrid grouping mechanism
+    for Assets (see jiffySG_brief.md's "Assets brought in line with Shots"
+    discussion). Unlike Shots/Sequences, this is a plain list field
+    directly on the Asset, not a separate linked entity — no find-or-create
+    step needed. No-ops on a blank asset_type (e.g. not set yet)."""
+    if not asset_type:
+        return None
+    sg = get_connection(as_login=as_login)
+    return sg.update("Asset", asset_id, {"sg_asset_type": asset_type})
+
+
+def update_asset_task(asset_id, project_name, stage=None, due_date=None, artist_name=None, as_login=None):
+    """Push Stage/Due Date/Artist to the Asset's single Jiffy SG Task
+    (created under ASSET_PIPELINE_STEP if it doesn't exist yet) — the exact
+    same shape as update_shot_task() above, just entity_type="Asset" and a
+    different Pipeline Step. One Task per Asset, not one per pipeline
+    stage (Model/Texture/Rig) — a deliberate simplification since ~90% of
+    this course's assets are done start-to-finish by one student; the rare
+    shared-work case just means reassigning this one Task's artist as
+    ownership hands off, same as any other Artist field edit."""
+    sg = get_connection(as_login=as_login)
+    project = _find_project(sg, project_name, as_login=as_login)
+    asset = {"type": "Asset", "id": asset_id}
+    task = _find_or_create_task(sg, asset, project, entity_type="Asset", step_code=ASSET_PIPELINE_STEP)
+
+    updates = {}
+    if stage:
+        updates["sg_status_list"] = SHOT_STAGE_TO_SG_STATUS.get(stage, stage)
+    if due_date:
+        iso_date = _dmy_to_iso(due_date)
+        if iso_date:
+            updates["due_date"] = iso_date
+    if artist_name:
+        person = _resolve_artist(sg, project, artist_name)
+        if person:
+            updates["task_assignees"] = [person]
+
+    if updates:
+        sg.update("Task", task["id"], updates)
+        print("jiffySG: updated Task id {0} on Asset id {1} — {2}".format(
+            task["id"], asset_id, ", ".join(updates.keys())))
     return task
 
 
@@ -572,15 +674,15 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
     """Hand-off target for shotSub's "Publish Selected Version" button (see
     shotSub.py publish_version()). shotSub resolves entity_type/entity_id
     itself, from an explicit ShotGrid Project id + Shot-or-Asset id pair
-    stored in a local shotgrid_link.json marker file at the shot/asset's
-    own (nested) Maya project root — written either by shotSub's "Link to
-    ShotGrid" flow (Shots only, see list_project_shots() above, may only
-    attach to an existing Shot, never create one) or by Jiffy SG's own
-    "Set Project" action (Shots and Assets — see ItemDialog._do_set_project,
-    which find-or-creates the Asset via find_or_create_asset() above since
-    Assets are never otherwise synced to ShotGrid). entity_id is a global
-    ShotGrid id, so project_name/project_id isn't needed as an input — the
-    Project is looked up directly off the Shot/Asset itself.
+    stored in a local shotgrid_link.json marker file — written by shotSub's
+    "Link to ShotGrid" flow (Shots only, see list_project_shots() above,
+    may only attach to an existing Shot, never create one). Asset linking
+    has no writer since Jiffy SG's old per-row "Set Project" action was
+    removed (single-Maya-project-per-film model, see jiffySG_brief.md) —
+    Asset publish is a known gap until the Asset-handling rebuild lands.
+    entity_id is a global ShotGrid id, so project_name/project_id isn't
+    needed as an input — the Project is looked up directly off the Shot/
+    Asset itself.
 
     Idempotent on (entity, code): re-publishing the same version_folder
     finds and reuses the existing Version rather than creating a
@@ -770,17 +872,30 @@ _DATA_DIR_PREF = "jiffySGDataDir"
 # site's Task statuses turned out to be fixed at Waiting to Start/In
 # Progress/Final rather than reconfigurable to match a custom list.
 SHOT_STAGES  = ["Waiting to Start", "In Progress", "Final"]
-ASSET_STAGES = ["WIP", "Testing", "Production Ready", "Omit"]
+# Assets now share SHOT_STAGES/STAGE_COLORS/SHOT_STAGE_TO_SG_STATUS directly
+# (real Task sync, same as Shots — see ASSET_PIPELINE_STEP below) rather than
+# keeping a separate local-only ASSET_STAGES list.
 
 STAGE_COLORS = {
     "Waiting to Start": "#607d8b",
     "In Progress":      "#e0a030",
     "Final":            "#4caf50",
-    "WIP":              "#7a93ad",
-    "Testing":          "#e0a030",
-    "Production Ready": "#4caf50",
-    "Omit":             "#e05050",
 }
+
+# Real sg_asset_type valid values on the site (confirmed via
+# schema_field_read, 2026-07-28) — populates the Asset Type dropdown in
+# ItemDialog and is written straight to Asset.sg_asset_type.
+ASSET_TYPE_VALUES = [
+    "Character", "Environment", "Prop", "FX", "Graphic", "Matte Painting",
+    "Vehicle", "Weapon", "Model", "Theme", "Zone", "Part",
+]
+
+# The Asset-type Pipeline Step Jiffy SG's single per-Asset Task lives under —
+# same role "Animation" plays for Shots. Confirmed to exist on the site
+# 2026-07-28 (real Asset-type Steps: Art/Model/Rig/Texture/Animation/Design/
+# Clay/Visualization/Class-A/Character FX). Course is rig-focused, hence
+# "Rig" rather than a user choice — mirrors Shots' fixed single Step.
+ASSET_PIPELINE_STEP = "Rig"
 
 THUMB_W, THUMB_H = 128, 72
 _ITEM_MIME = "application/x-jiffy-item"
@@ -794,6 +909,19 @@ _LIST_STYLE = (
 _MENU_STYLE = (
     f"QMenu{{background:{PANEL_BG};color:white;border:1px solid {BORDER};}}"
     f"QMenu::item:selected{{background:#444;}}"
+)
+# Shared by the small "settings" dialogs (_ProjectSettingsDialog, _ItemLinkDialog)
+_SETTINGS_DIALOG_STYLE = (
+    f"QDialog{{background:{DARK_BG};color:white;}}"
+    f"QLabel{{color:white;}}"
+    f"QComboBox{{background:{ITEM_BG};color:white;border:1px solid {BORDER};"
+    f"padding:5px;font-size:12px;border-radius:3px;}}"
+    f"QComboBox:disabled{{color:{SUBTEXT};}}"
+    f"QLineEdit{{background:{ITEM_BG};color:white;border:1px solid {BORDER};"
+    f"padding:5px;font-size:12px;border-radius:3px;}}"
+    f"QLineEdit:disabled{{color:{SUBTEXT};}}"
+    f"QPushButton{{background:#444;color:white;border:1px solid {BORDER};padding:5px 14px;}}"
+    f"QPushButton:hover{{background:#555;}}"
 )
 
 # ---------------------------------------------------------------------------
@@ -1143,12 +1271,93 @@ class _InlineNotesEdit(QtWidgets.QPlainTextEdit):
 
 
 # ---------------------------------------------------------------------------
+# Item (Shot/Asset) folder-link dialog — one-time setup, per row.
+# Browses/collects a local folder to link, then hands it up the signal
+# chain (ItemRowWidget -> ItemListPanel -> SchedulePage -> JiffySG) since
+# actually writing shotgrid_link.json needs a ShotGrid connection this
+# dialog doesn't have. Under the single-Maya-project-per-film model (see
+# jiffySG_brief.md's "Project settings"/nested-projects discussion), the
+# folder a student picks here should be that Shot/Asset's own scenes/
+# subfolder (e.g. scenes/sequence001/shot001) — shotSub resolves the same
+# folder independently, from wherever the currently-open scene file sits
+# relative to the project's scenes/ rule, so the two tools agree on
+# "which shot is this" structurally rather than by name-guessing. This
+# dialog deliberately does NOT touch Maya's active workspace — that's
+# gone entirely now, students manage which Maya project is open manually.
+# ---------------------------------------------------------------------------
+class _ItemLinkDialog(QtWidgets.QDialog):
+    def __init__(self, item_label, name, local_folder_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{item_label} Settings")
+        self.setMinimumWidth(360)
+        self.setStyleSheet(_SETTINGS_DIALOG_STYLE)
+        self._item_label = item_label
+        self._build(name, local_folder_path)
+
+    def _build(self, name, local_folder_path):
+        layout = QtWidgets.QFormLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        name_lbl = QtWidgets.QLabel(name or "(unnamed)")
+        name_lbl.setStyleSheet("font-weight:bold; font-size:13px;")
+        layout.addRow(f"{self._item_label}:", name_lbl)
+
+        self.path_edit = QtWidgets.QLineEdit(local_folder_path or "")
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setPlaceholderText("Not linked")
+        browse_btn = QtWidgets.QPushButton("Browse…")
+        browse_btn.clicked.connect(self._browse)
+        path_row = QtWidgets.QWidget()
+        path_row_layout = QtWidgets.QHBoxLayout(path_row)
+        path_row_layout.setContentsMargins(0, 0, 0, 0)
+        path_row_layout.setSpacing(6)
+        path_row_layout.addWidget(self.path_edit, 1)
+        path_row_layout.addWidget(browse_btn)
+        layout.addRow("Scene Folder:", path_row)
+
+        note_lbl = QtWidgets.QLabel(
+            "One-time setup — pick the folder this {0}'s own scene files\n"
+            "live in (e.g. under the film project's scenes/sequence\n"
+            "folder). Used to tell ShotGrid publishes apart by {0};\n"
+            "doesn't switch Maya's active project.".format(self._item_label.lower())
+        )
+        note_lbl.setStyleSheet(f"font-size:10px; color:{SUBTEXT};")
+        layout.addRow("", note_lbl)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _browse(self):
+        start = self.path_edit.text() or ""
+        if not start:
+            try:
+                start = cmds.workspace(query=True, rootDirectory=True)
+            except Exception:
+                start = ""
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Link {0} Scene Folder".format(self._item_label), start
+        )
+        if path:
+            self.path_edit.setText(path)
+
+    def get_path(self):
+        return self.path_edit.text().strip() or None
+
+
+# ---------------------------------------------------------------------------
 # Item row
 # ---------------------------------------------------------------------------
 class ItemRowWidget(QtWidgets.QFrame):
-    edit_requested   = QtCore.Signal(dict)
-    delete_requested = QtCore.Signal(str)
-    data_changed     = QtCore.Signal(dict)
+    edit_requested        = QtCore.Signal(dict)
+    delete_requested      = QtCore.Signal(str)
+    data_changed          = QtCore.Signal(dict)
+    link_folder_requested = QtCore.Signal(dict, str)   # item_data, new local folder path
 
     def __init__(self, item_data, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
@@ -1158,13 +1367,16 @@ class ItemRowWidget(QtWidgets.QFrame):
         self._drag_start = None
         self.setFixedHeight(90)
         self.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.setStyleSheet(
-            f"ItemRowWidget, QFrame{{background:{ITEM_BG};}}"
-            f"ItemRowWidget:hover, QFrame:hover{{background:{ITEM_HOVER};}}"
-        )
+        self._apply_style()
         self._build()
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
+
+    def _apply_style(self):
+        self.setStyleSheet(
+            f"ItemRowWidget, QFrame{{background:{ITEM_BG}; border:1px solid transparent;}}"
+            f"ItemRowWidget:hover, QFrame:hover{{background:{ITEM_HOVER};}}"
+        )
 
     def _build(self):
         row = QtWidgets.QHBoxLayout(self)
@@ -1223,6 +1435,17 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.badge.stage_changed.connect(self._on_stage_changed)
         row.addWidget(self.badge, alignment=QtCore.Qt.AlignVCenter)
 
+        self.link_btn = QtWidgets.QPushButton("⚙")
+        self.link_btn.setFixedSize(20, 20)
+        self.link_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.link_btn.setToolTip("Link scene folder (for ShotGrid publish)")
+        self.link_btn.setStyleSheet(
+            "QPushButton{background:transparent;color:#aaaaaa;border:none;font-size:12px;}"
+            "QPushButton:hover{color:white;}"
+        )
+        self.link_btn.clicked.connect(self._open_link_dialog)
+        row.addWidget(self.link_btn, alignment=QtCore.Qt.AlignVCenter)
+
         self._refresh_labels()
 
     def eventFilter(self, obj, event):
@@ -1252,8 +1475,12 @@ class ItemRowWidget(QtWidgets.QFrame):
     def _refresh_labels(self):
         d = self.item_data
         self.name_lbl.setText(d.get("name", ""))
-        fs, fe = d.get("frame_start", ""), d.get("frame_end", "")
-        self.frames_lbl.setText(f"Frames: {fs} – {fe}" if fs or fe else "")
+        if self.item_label == "Asset":
+            asset_type = d.get("asset_type", "")
+            self.frames_lbl.setText(f"Type: {asset_type}" if asset_type else "Type: —")
+        else:
+            fs, fe = d.get("frame_start", ""), d.get("frame_end", "")
+            self.frames_lbl.setText(f"Frames: {fs} – {fe}" if fs or fe else "")
         due = d.get("due_date", "")
         self.due_lbl.setText(f"Due: {due}" if due else "Due: —")
         artist = d.get("artist", "")
@@ -1308,6 +1535,23 @@ class ItemRowWidget(QtWidgets.QFrame):
         self.item_data["stage"] = stage
         self.data_changed.emit(self.item_data)
 
+    def _open_link_dialog(self):
+        dialog = _ItemLinkDialog(
+            self.item_label,
+            self.item_data.get("name", ""),
+            self.item_data.get("local_folder_path", ""),
+            parent=self,
+        )
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        new_path = dialog.get_path()
+        if not new_path or new_path == self.item_data.get("local_folder_path"):
+            return
+        # Actually writing shotgrid_link.json needs a ShotGrid connection
+        # this widget doesn't have — hands off up the chain to JiffySG,
+        # which owns it (see JiffySG._link_item_folder).
+        self.link_folder_requested.emit(self.item_data, new_path)
+
     def _send_to_pomo(self):
         try:
             import Jiffypomo
@@ -1339,12 +1583,11 @@ class ItemRowWidget(QtWidgets.QFrame):
 # ---------------------------------------------------------------------------
 class ItemDialog(QtWidgets.QDialog):
     def __init__(self, item_data=None, item_label="Shot", stages=None, artist_names=None,
-                 project_name=None, parent=None):
+                 parent=None):
         super().__init__(parent)
         self._stages       = stages or SHOT_STAGES
         self._artist_names = artist_names or []
         self.item_label     = item_label
-        self._project_name  = project_name
         self._is_new    = item_data is None
         self.setWindowTitle(f"Add {item_label}" if self._is_new else f"Edit {item_label}")
         self.setMinimumWidth(340)
@@ -1392,7 +1635,13 @@ class ItemDialog(QtWidgets.QDialog):
         self.notes_edit = QtWidgets.QPlainTextEdit(self._data.get("notes", ""))
         self.notes_edit.setFixedHeight(70)
         layout.addRow(f"{self.item_label} Name:", self.name_edit)
-        if self.item_label != "Asset":
+        if self.item_label == "Asset":
+            self.asset_type_combo = QtWidgets.QComboBox()
+            self.asset_type_combo.addItem("")  # explicit "unset"
+            self.asset_type_combo.addItems(ASSET_TYPE_VALUES)
+            self.asset_type_combo.setCurrentText(self._data.get("asset_type", ""))
+            layout.addRow("Asset Type:", self.asset_type_combo)
+        else:
             layout.addRow("Frame Start:", self.frame_start_edit)
             layout.addRow("Frame End:",   self.frame_end_edit)
         layout.addRow("Due Date:",  self.due_edit)
@@ -1400,128 +1649,12 @@ class ItemDialog(QtWidgets.QDialog):
         layout.addRow("Stage:",     self.stage_combo)
         layout.addRow("Notes:",     self.notes_edit)
 
-        # "Set Project" line — links this row's local Maya project folder to
-        # ShotGrid (writes shotgrid_link.json there) and switches Maya's
-        # active project to it. See _do_set_project(). ShotGrid Project is
-        # read-only here, inherited from whichever Project is active in the
-        # Nav panel — no per-row picker, since a row's Project is already
-        # unambiguous (see jiffySG_brief.md's access-control reasoning).
-        self._path_lbl = QtWidgets.QLabel(self._data.get("local_project_path") or "Not set")
-        self._path_lbl.setStyleSheet(f"color:{SUBTEXT};")
-        self._change_btn = QtWidgets.QPushButton("Change…")
-        self._change_btn.setVisible(bool(self._data.get("local_project_path")))
-        self._change_btn.clicked.connect(self._do_change_folder)
-        self._set_project_btn = QtWidgets.QPushButton("Set Project")
-        self._set_project_btn.clicked.connect(self._do_set_project)
-        project_row = QtWidgets.QWidget()
-        project_row_layout = QtWidgets.QHBoxLayout(project_row)
-        project_row_layout.setContentsMargins(0, 0, 0, 0)
-        project_row_layout.addWidget(self._path_lbl, stretch=1)
-        project_row_layout.addWidget(self._change_btn)
-        project_row_layout.addWidget(self._set_project_btn)
-        layout.addRow(f"ShotGrid Project: {self._project_name or '—'}", project_row)
-
         btns = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
-
-    def _do_change_folder(self):
-        self._data["local_project_path"] = ""
-        self._do_set_project()
-
-    def _do_set_project(self):
-        """Deliberately synchronous (not _run_sg_async) — an occasional,
-        explicit "link" action can afford a brief blocking pause, same
-        reasoning as shotSub.link_to_shotgrid(), and avoids new
-        async/dialog-lifetime complexity (the modal dialog could be closed
-        before an async callback fires)."""
-        entity_type = self.item_label   # "Shot" or "Asset"
-        entity_code = self.name_edit.text().strip()
-        if not entity_code:
-            QtWidgets.QMessageBox.warning(self, "Set Project", "Name this {0} first.".format(entity_type))
-            return
-
-        if entity_type == "Shot":
-            entity_id = self._data.get("sg_shot_id")
-            if not entity_id:
-                QtWidgets.QMessageBox.warning(
-                    self, "Set Project",
-                    "This Shot is still linking to ShotGrid — try again in a moment."
-                )
-                return
-        else:
-            entity_id = self._data.get("sg_asset_id")
-            if not entity_id:
-                if not self._project_name:
-                    QtWidgets.QMessageBox.warning(self, "Set Project", "No active ShotGrid Project selected.")
-                    return
-                try:
-                    asset = find_or_create_asset(entity_code, self._project_name)
-                except Exception as exc:
-                    QtWidgets.QMessageBox.warning(
-                        self, "Set Project", "Could not reach ShotGrid:\n\n{0}".format(exc)
-                    )
-                    return
-                entity_id = asset["id"]
-                self._data["sg_asset_id"] = entity_id
-
-        path = self._data.get("local_project_path", "")
-        if not path or not os.path.isdir(path):
-            chosen = QtWidgets.QFileDialog.getExistingDirectory(
-                self, "Select Maya Project Folder", path or os.path.expanduser("~")
-            )
-            if not chosen:
-                return
-            path = chosen
-            self._data["local_project_path"] = path
-
-        try:
-            cmds.workspace(path, openWorkspace=True)
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "Set Project", "Failed to set Maya project:\n\n{0}".format(exc))
-            return
-
-        try:
-            self._write_link_marker(path, entity_type, entity_id, entity_code)
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(
-                self, "Set Project",
-                "Maya project set, but failed to write the ShotGrid link marker:\n\n{0}".format(exc)
-            )
-            return
-
-        self._path_lbl.setText(path)
-        self._change_btn.setVisible(True)
-        cmds.inViewMessage(
-            amg='Maya project set to <hl>{0}</hl>.'.format(entity_code), pos='midCenter', fade=True
-        )
-
-    def _write_link_marker(self, project_root, entity_type, entity_id, entity_code):
-        """Writes the same shotgrid_link.json shape shotSub.py reads (see
-        shotSub.py's write_shotgrid_link()/read_shotgrid_link() — schema
-        generalized to sg_entity_type/sg_entity_id/sg_entity_code so it
-        covers both Shots and Assets). Deliberately a small self-contained
-        write here rather than a shared function with shotSub.py — keeps
-        the two files decoupled, matching the existing precedent of
-        hand-porting small blocks (e.g. the RV-launch functions) instead of
-        creating a new cross-file dependency for something this small."""
-        sg = get_connection()
-        project = _find_project(sg, self._project_name)
-        data = {
-            "schema_version": 2,
-            "sg_project_id": project["id"],
-            "sg_project_name": project["name"],
-            "sg_entity_type": entity_type,
-            "sg_entity_id": entity_id,
-            "sg_entity_code": entity_code,
-            "linked_at": _datetime.now().isoformat(timespec="seconds"),
-            "linked_by": current_login(),
-        }
-        with open(os.path.join(project_root, "shotgrid_link.json"), "w") as f:
-            json.dump(data, f, indent=2)
 
     def get_data(self):
         return {
@@ -1532,11 +1665,13 @@ class ItemDialog(QtWidgets.QDialog):
             "artist":            self.artist_edit.currentText().strip(),
             "stage":             self.stage_combo.currentText(),
             "notes":             self.notes_edit.toPlainText().strip(),
+            "asset_type":        self.asset_type_combo.currentText() if hasattr(self, "asset_type_combo")
+                                  else self._data.get("asset_type", ""),
             "thumbnail":         self._data.get("thumbnail", ""),
             "sg_shot_id":        self._data.get("sg_shot_id"),
             "sg_asset_id":       self._data.get("sg_asset_id"),
             "sg_latest_note":    self._data.get("sg_latest_note", ""),
-            "local_project_path": self._data.get("local_project_path", ""),
+            "local_folder_path": self._data.get("local_folder_path", ""),
         }
 
 
@@ -1615,6 +1750,7 @@ class ItemListPanel(QtWidgets.QWidget):
     sg_status             = QtCore.Signal(str, str)   # state "ok"|"error", message
     sg_sequence_resolved  = QtCore.Signal(str, str, int)  # project, group, sg_sequence_id
     refresh_requested     = QtCore.Signal()
+    link_folder_requested = QtCore.Signal(dict, str)   # item_data, new local folder path
 
     def __init__(self, item_label="Shot", stages=None, parent=None):
         super().__init__(parent)
@@ -1713,6 +1849,7 @@ class ItemListPanel(QtWidgets.QWidget):
         row.edit_requested.connect(self._edit_item)
         row.delete_requested.connect(self._delete_item)
         row.data_changed.connect(self._on_row_changed)
+        row.link_folder_requested.connect(self.link_folder_requested)
         self.vbox.insertWidget(self.vbox.count() - 1, row)
 
     def _add_item(self):
@@ -1725,15 +1862,30 @@ class ItemListPanel(QtWidgets.QWidget):
 
         dlg = ItemDialog(item_data=defaults if defaults else None,
                          item_label=self.item_label, stages=self._stages,
-                         artist_names=self._artist_names, project_name=self._project, parent=self)
+                         artist_names=self._artist_names, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             data = dlg.get_data()
             if data["name"]:
+                # Best-effort default for the ⚙ Settings link (see
+                # ItemRowWidget._open_link_dialog/JiffySG._link_item_folder)
+                # — most students save a new scene for the shot/asset, then
+                # create its row in Jiffy SG right after, so the currently
+                # open scene's folder is usually already the right one to
+                # link. Only a default: doesn't write shotgrid_link.json
+                # itself (sg_shot_id may not have come back from ShotGrid
+                # yet), and the Settings dialog can still Browse to correct
+                # it if this guess is wrong or nothing was open/saved.
+                if not data.get("local_folder_path"):
+                    scene_path = cmds.file(query=True, sceneName=True)
+                    if scene_path:
+                        data["local_folder_path"] = os.path.dirname(scene_path)
                 self.items.append(data)
                 self._append_row(data)
                 self.data_changed.emit()
                 if self.item_label == "Shot" and self._project and self._group:
                     self._push_shot_create(data)
+                elif self.item_label == "Asset" and self._project:
+                    self._push_asset_create(data)
 
     def _push_shot_create(self, item_data):
         project, group, shot_code = self._project, self._group, item_data.get("name", "")
@@ -1817,18 +1969,88 @@ class ItemListPanel(QtWidgets.QWidget):
 
         _run_sg_async(work, done)
 
+    def _push_asset_create(self, item_data):
+        project, asset_name = self._project, item_data.get("name", "")
+        asset_type = item_data.get("asset_type")
+        stage, due_date, artist = item_data.get("stage"), item_data.get("due_date"), item_data.get("artist")
+
+        def work():
+            asset = find_or_create_asset(asset_name, project)
+            warnings = []
+            try:
+                set_asset_type(asset["id"], asset_type)
+            except Exception as exc:
+                warnings.append(str(exc))
+            try:
+                update_asset_task(asset["id"], project, stage=stage, due_date=due_date, artist_name=artist)
+            except Exception as exc:
+                warnings.append(str(exc))
+            return asset, warnings
+
+        def done(result, error):
+            if error is not None:
+                self.sg_status.emit("error", str(error))
+                return
+            asset, warnings = result
+            if any(existing is item_data for existing in self.items):
+                item_data["sg_asset_id"] = asset["id"]
+                self.data_changed.emit()
+            else:
+                print("jiffySG: Asset '{0}' created (id {1}) but local item no longer present".format(
+                    asset_name, asset["id"]))
+            self.sg_status.emit("error", "; ".join(warnings)) if warnings else self.sg_status.emit("ok", "")
+
+        _run_sg_async(work, done)
+
+    def _push_asset_field_sync(self, item_data):
+        """Re-push Asset Type + Stage/Due Date/Artist for an already-created
+        Asset (has sg_asset_id). Same "fire on every local edit, cheap
+        idempotent overwrite" shape as _push_shot_field_sync above — no
+        frame range or thumbnail push, neither applies to Assets (see
+        find_or_create_asset()'s docstring)."""
+        asset_id = item_data.get("sg_asset_id")
+        if not asset_id or not self._project:
+            return
+        project = self._project
+        asset_type = item_data.get("asset_type")
+        stage, due_date, artist = item_data.get("stage"), item_data.get("due_date"), item_data.get("artist")
+
+        def work():
+            warnings = []
+            try:
+                set_asset_type(asset_id, asset_type)
+            except Exception as exc:
+                warnings.append(str(exc))
+            try:
+                update_asset_task(asset_id, project, stage=stage, due_date=due_date, artist_name=artist)
+            except Exception as exc:
+                warnings.append(str(exc))
+            return warnings
+
+        def done(result, error):
+            if error is not None:
+                self.sg_status.emit("error", str(error))
+            elif result:
+                self.sg_status.emit("error", "; ".join(result))
+            else:
+                self.sg_status.emit("ok", "")
+
+        _run_sg_async(work, done)
+
     def _edit_item(self, item_data):
         idx = next((i for i, s in enumerate(self.items) if s.get("name") == item_data.get("name")), None)
         if idx is None:
             return
         dlg = ItemDialog(item_data=item_data, item_label=self.item_label, stages=self._stages,
-                         artist_names=self._artist_names, project_name=self._project, parent=self)
+                         artist_names=self._artist_names, parent=self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             self.items[idx] = dlg.get_data()
             self._rebuild()
             self.data_changed.emit()
             if self.item_label == "Shot":
                 self._push_shot_field_sync(self.items[idx])
+            elif self.item_label == "Asset":
+                self._push_asset_field_sync(self.items[idx])
 
     def _delete_item(self, name):
         reply = QtWidgets.QMessageBox.question(
@@ -1862,6 +2084,8 @@ class ItemListPanel(QtWidgets.QWidget):
         self.data_changed.emit()
         if self.item_label == "Shot":
             self._push_shot_field_sync(item_data)
+        elif self.item_label == "Asset":
+            self._push_asset_field_sync(item_data)
 
     def _on_drop(self, name, target_idx):
         src_idx = next((i for i, s in enumerate(self.items) if s.get("name") == name), None)
@@ -1883,11 +2107,22 @@ class SchedulePage(QtWidgets.QWidget):
     sg_status             = QtCore.Signal(str, str)
     sg_sequence_resolved  = QtCore.Signal(str, str, int)
     refresh_requested     = QtCore.Signal()
+    link_folder_requested = QtCore.Signal(dict, str)   # item_data, new local folder path
 
-    def __init__(self, item_label="Shot", stages=None, parent=None):
+    # Sentinel _active_group value for has_groups=False pages (Assets — no
+    # Sequence-equivalent grouping in ShotGrid, see jiffySG_brief.md).
+    # Reuses the exact same {project: {group: [items]}} storage as Shots
+    # rather than forking a separate flat-list data shape, just with one
+    # fixed, never-shown, always-selected group — keeps _flush/_refresh_view/
+    # get_data/load_data identical between the two rather than duplicating
+    # them for a "groupless" variant.
+    _UNGROUPED = "__ungrouped__"
+
+    def __init__(self, item_label="Shot", stages=None, has_groups=True, parent=None):
         super().__init__(parent)
         self.item_label       = item_label
         self._stages          = stages or SHOT_STAGES
+        self._has_groups      = has_groups
         self._data            = {}
         self._current_project = ""
         self._active_group    = ""
@@ -1899,6 +2134,7 @@ class SchedulePage(QtWidgets.QWidget):
         self.item_panel.sg_status.connect(self.sg_status)
         self.item_panel.sg_sequence_resolved.connect(self.sg_sequence_resolved)
         self.item_panel.refresh_requested.connect(self.refresh_requested)
+        self.item_panel.link_folder_requested.connect(self.link_folder_requested)
         layout.addWidget(self.item_panel)
 
     def set_artist_names(self, names):
@@ -1907,10 +2143,12 @@ class SchedulePage(QtWidgets.QWidget):
     def set_project(self, project):
         self._flush()
         self._current_project = project
-        self._active_group    = ""
+        self._active_group    = self._UNGROUPED if not self._has_groups else ""
         self._refresh_view()
 
     def select_group(self, group):
+        # Only ever called for has_groups=True pages — NavPanel never shows
+        # a Groups list for has_groups=False ones (see JiffySG._on_tab_changed).
         self._flush()
         self._active_group = group
         if group:
@@ -1940,6 +2178,10 @@ class SchedulePage(QtWidgets.QWidget):
             items = [i for p in self._data.values() for g in p.values() for i in g]
             self.item_panel.set_content(f"All {self.item_label}s", items, writable=False)
             self.item_panel.set_context("", "")
+        elif not self._has_groups:
+            items = self._data.get(proj, {}).get(self._UNGROUPED, [])
+            self.item_panel.set_content(f"{proj}  —  All {self.item_label}s", items, writable=True)
+            self.item_panel.set_context(proj, "")
         elif not group:
             items = [i for g in self._data.get(proj, {}).values() for i in g]
             self.item_panel.set_content(f"{proj}  —  All {self.item_label}s", items, writable=False)
@@ -1960,6 +2202,16 @@ class SchedulePage(QtWidgets.QWidget):
     def load_data(self, data):
         if any(isinstance(v, list) for v in data.values()):
             data = {}
+        if not self._has_groups:
+            # One-time flatten of any pre-existing grouped data (e.g. local
+            # Asset "categories" saved before Assets dropped Groups) into
+            # the single sentinel group, so it isn't silently orphaned
+            # under group keys nothing looks at anymore.
+            flattened = {}
+            for proj, groups in data.items():
+                items = [i for g in groups.values() for i in g] if isinstance(groups, dict) else list(groups)
+                flattened[proj] = {self._UNGROUPED: items}
+            data = flattened
         self._data = data
         self._refresh_view()
 
@@ -2659,7 +2911,7 @@ class ProgressPage(QtWidgets.QWidget):
 
         self._hdr_lbl.setText(f"{proj}  —  Progress")
         shots_counts  = self._stage_counts(self._shots_data.get(proj, {}),  SHOT_STAGES)
-        assets_counts = self._stage_counts(self._assets_data.get(proj, {}), ASSET_STAGES)
+        assets_counts = self._stage_counts(self._assets_data.get(proj, {}), SHOT_STAGES)
         prod_settings = self._production.get(proj, {})
 
         widgets = [
@@ -2705,7 +2957,7 @@ class ProgressPage(QtWidgets.QWidget):
         total_shots  = sum(shots_counts.values())
         finaled      = shots_counts.get("Final", 0)
         total_assets = sum(assets_counts.values())
-        prod_ready   = assets_counts.get("Production Ready", 0)
+        assets_final = assets_counts.get("Final", 0)
 
         strip = QtWidgets.QWidget()
         strip.setStyleSheet(f"background:{PANEL_BG}; border-radius:6px;")
@@ -2717,7 +2969,7 @@ class ProgressPage(QtWidgets.QWidget):
             ("TOTAL SHOTS",      str(total_shots),  TEXT),
             ("FINAL",            str(finaled),      "#9575cd"),
             ("TOTAL ASSETS",     str(total_assets), TEXT),
-            ("PRODUCTION READY", str(prod_ready),   "#4caf50"),
+            ("ASSETS FINAL",     str(assets_final), "#4caf50"),
         ]
         for i, (label, value, val_color) in enumerate(cards):
             if i > 0:
@@ -2760,10 +3012,10 @@ class ProgressPage(QtWidgets.QWidget):
         sep.setStyleSheet(f"color:{BORDER};")
         row.addWidget(sep)
 
-        assets_pie = PieChartWidget(title="Assets", complete_stages=["Production Ready"])
+        assets_pie = PieChartWidget(title="Assets", complete_stages=["Final"])
         assets_pie.set_data(assets_counts)
         row.addWidget(assets_pie, alignment=QtCore.Qt.AlignTop)
-        row.addLayout(self._stats_col(assets_counts, ASSET_STAGES))
+        row.addLayout(self._stats_col(assets_counts, SHOT_STAGES))
         row.addStretch()
         return panel
 
@@ -3034,11 +3286,181 @@ class ArtistsPage(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Project Settings dialog — Solo/Group (+ future project-level parameters,
+# see jiffySG_brief.md's "Project settings" section)
+# ---------------------------------------------------------------------------
+class _ProjectSettingsDialog(QtWidgets.QDialog):
+    def __init__(self, project_name, settings, artists, film_project_path=None, parent=None):
+        """artists: [{"id","name","login"}, ...] from list_project_artists()
+        — the real ShotGrid roster for this Project, used to populate the
+        admin picker (only a real Project member can be admin).
+
+        film_project_path: this machine's local path to the top-level Maya
+        project housing the Project's shot/asset sub-projects, or None if
+        not linked yet. Deliberately local-only, not read from ShotGrid —
+        students are on their own Dropbox/portable-drive paths, which
+        won't match between group members' machines."""
+        super().__init__(parent)
+        self.setWindowTitle("Project Settings")
+        self.setMinimumWidth(360)
+        self.setStyleSheet(_SETTINGS_DIALOG_STYLE)
+        self._project_name = project_name
+        self._settings = settings
+        self._artists = artists
+        self._film_project_path = film_project_path
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QFormLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setLabelAlignment(QtCore.Qt.AlignRight)
+
+        name_lbl = QtWidgets.QLabel(self._project_name)
+        name_lbl.setStyleSheet("font-weight:bold; font-size:13px;")
+        layout.addRow("Project:", name_lbl)
+
+        self.type_combo = QtWidgets.QComboBox()
+        self.type_combo.addItems(["Solo", "Group"])
+        current = self._settings.get("project_type") or "Solo"
+        self.type_combo.setCurrentText(current if current in ("Solo", "Group") else "Solo")
+        self.type_combo.currentTextChanged.connect(self._on_type_changed)
+        layout.addRow("Project Type:", self.type_combo)
+
+        self.admin_combo = QtWidgets.QComboBox()
+        self.admin_combo.addItem("— none —", "")
+        for artist in self._artists:
+            self.admin_combo.addItem(artist["name"], artist.get("login") or "")
+        current_admin = self._settings.get("admin_login") or ""
+        idx = self.admin_combo.findData(current_admin)
+        if idx >= 0:
+            self.admin_combo.setCurrentIndex(idx)
+        layout.addRow("Admin:", self.admin_combo)
+        self._on_type_changed(self.type_combo.currentText())
+
+        self.film_path_edit = QtWidgets.QLineEdit(self._film_project_path or "")
+        self.film_path_edit.setReadOnly(True)
+        self.film_path_edit.setPlaceholderText("Not linked")
+        browse_btn = QtWidgets.QPushButton("Browse…")
+        browse_btn.clicked.connect(self._browse_film_project)
+        film_row = QtWidgets.QWidget()
+        film_row_layout = QtWidgets.QHBoxLayout(film_row)
+        film_row_layout.setContentsMargins(0, 0, 0, 0)
+        film_row_layout.setSpacing(6)
+        film_row_layout.addWidget(self.film_path_edit, 1)
+        film_row_layout.addWidget(browse_btn)
+        layout.addRow("Maya Film Project:", film_row)
+
+        film_note_lbl = QtWidgets.QLabel(
+            "Stored on this machine only, not shared to ShotGrid — each\n"
+            "group member links their own local/Dropbox copy."
+        )
+        film_note_lbl.setStyleSheet(f"font-size:10px; color:{SUBTEXT};")
+        layout.addRow("", film_note_lbl)
+
+        note_lbl = QtWidgets.QLabel(
+            "Shared with every group member's Jiffy SG — changing this here\n"
+            "changes it for everyone linked to this Project. Admin can edit\n"
+            "shot/asset order and create shots/assets; other members can\n"
+            "still add notes and publish."
+        )
+        note_lbl.setStyleSheet(f"font-size:10px; color:{SUBTEXT};")
+        layout.addRow("", note_lbl)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _on_type_changed(self, text):
+        # Admin is a Group-only concept — Solo Projects have no other
+        # members to restrict, so disable it rather than leave it live.
+        self.admin_combo.setEnabled(text == "Group")
+
+    def _browse_film_project(self):
+        start = self.film_path_edit.text() or ""
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Link Maya Film Project", start
+        )
+        if path:
+            self.film_path_edit.setText(path)
+
+    def get_project_type(self):
+        return self.type_combo.currentText()
+
+    def get_admin_login(self):
+        if self.type_combo.currentText() != "Group":
+            return None
+        return self.admin_combo.currentData() or None
+
+    def get_film_project_path(self):
+        return self.film_path_edit.text().strip() or None
+
+
+def _item_name(item):
+    """The name behind a QListWidgetItem, whether it carries a visible
+    .text() (plain rows, e.g. the Groups list) or the name only lives in
+    Qt.UserRole (Projects list rows — see _ProjectRow below: the item's own
+    .text() is deliberately left blank there, since setItemWidget()
+    doesn't reliably suppress the native item's own text paint underneath
+    a custom row widget with a transparent background, which was
+    double-printing the Project name)."""
+    if item is None:
+        return ""
+    data = item.data(QtCore.Qt.UserRole)
+    return data if data else item.text()
+
+
+# ---------------------------------------------------------------------------
+# Project row — label + inline ⚙ Settings button, used in NavPanel's
+# Projects list. A plain QLabel doesn't accept the mouse press, so it
+# bubbles up to this widget's own mousePressEvent for row activation —
+# same pattern as ItemRowWidget's row-selection (jiffySG.py, "Row
+# selection is new" per jiffySG_brief.md) — while the QPushButton
+# consumes its own click, so Settings never also re-triggers activation.
+# ---------------------------------------------------------------------------
+class _ProjectRow(QtWidgets.QWidget):
+    activate_requested = QtCore.Signal(str)
+    settings_requested  = QtCore.Signal(str)
+
+    def __init__(self, name, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self.setFixedHeight(30)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(4)
+
+        label = QtWidgets.QLabel(name)
+        label.setStyleSheet("color:white; font-size:12px; background:transparent;")
+        layout.addWidget(label, 1)
+
+        gear = QtWidgets.QPushButton("⚙")
+        gear.setFixedSize(20, 20)
+        gear.setCursor(QtCore.Qt.PointingHandCursor)
+        gear.setToolTip("Project Settings")
+        gear.setStyleSheet(
+            "QPushButton{background:transparent;color:#aaaaaa;border:none;font-size:12px;}"
+            "QPushButton:hover{color:white;}"
+        )
+        gear.clicked.connect(lambda: self.settings_requested.emit(self._name))
+        layout.addWidget(gear)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.activate_requested.emit(self._name)
+        super().mousePressEvent(event)
+
+
+# ---------------------------------------------------------------------------
 # NavPanel — Projects (top) + Groups or Milestones (bottom)
 # ---------------------------------------------------------------------------
 class NavPanel(QtWidgets.QWidget):
     project_changed            = QtCore.Signal(str)
     project_add_requested      = QtCore.Signal()
+    project_settings_requested = QtCore.Signal(str)
     project_added              = QtCore.Signal(str)
     project_removed            = QtCore.Signal(str)
     group_changed              = QtCore.Signal(str)
@@ -3064,8 +3486,8 @@ class NavPanel(QtWidgets.QWidget):
             "PROJECTS", self._add_project, self._remove_project
         ))
         self.project_list = self._make_list()
-        self.project_list.currentTextChanged.connect(
-            lambda t: self.project_changed.emit(t or "")
+        self.project_list.currentRowChanged.connect(
+            lambda row: self.project_changed.emit(_item_name(self.project_list.item(row)))
         )
         self.project_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.project_list.customContextMenuRequested.connect(
@@ -3215,15 +3637,39 @@ class NavPanel(QtWidgets.QWidget):
         self.project_list.blockSignals(True)
         self.project_list.clear()
         for p in projects:
-            self.project_list.addItem(p)
+            self._add_project_row(p)
         self.project_list.setCurrentRow(0)
         self.project_list.blockSignals(False)
 
     def get_projects(self):
         return [
-            self.project_list.item(i).text()
+            _item_name(self.project_list.item(i))
             for i in range(self.project_list.count())
         ]
+
+    def _add_project_row(self, name):
+        item = QtWidgets.QListWidgetItem()
+        # Name goes in UserRole, not .text() — see _item_name()'s docstring:
+        # a visible .text() here double-prints next to _ProjectRow's own
+        # label, since setItemWidget doesn't fully suppress the native
+        # item's text paint underneath a transparent-background row widget.
+        item.setData(QtCore.Qt.UserRole, name)
+        self.project_list.addItem(item)
+        row = _ProjectRow(name)
+        row.activate_requested.connect(self._activate_project)
+        row.settings_requested.connect(self._on_row_settings_requested)
+        item.setSizeHint(row.sizeHint())
+        self.project_list.setItemWidget(item, row)
+
+    def _activate_project(self, name):
+        for i in range(self.project_list.count()):
+            if _item_name(self.project_list.item(i)) == name:
+                self.project_list.setCurrentRow(i)
+                return
+
+    def _on_row_settings_requested(self, name):
+        self._activate_project(name)
+        self.project_settings_requested.emit(name)
 
     def _add_project(self):
         # No local free-text entry point anymore — a student can only attach
@@ -3236,11 +3682,11 @@ class NavPanel(QtWidgets.QWidget):
         """Add an already-validated ShotGrid Project name to the local list.
         Called by JiffySG after the user picks one from the real, ShotGrid-
         scoped choices — never called with arbitrary free text."""
-        existing = [self.project_list.item(i).text() for i in range(self.project_list.count())]
+        existing = self.get_projects()
         if name in existing:
             QtWidgets.QMessageBox.warning(self, "Add Project", f"'{name}' already exists.")
             return
-        self.project_list.addItem(name)
+        self._add_project_row(name)
         self.project_added.emit(name)
         self.project_list.setCurrentRow(self.project_list.count() - 1)
 
@@ -3248,7 +3694,7 @@ class NavPanel(QtWidgets.QWidget):
         item = self.project_list.currentItem()
         if not item:
             return
-        name = item.text()
+        name = _item_name(item)
         reply = QtWidgets.QMessageBox.question(
             self, "Remove Project",
             f"Remove '{name}' and all its contents?",
@@ -3260,8 +3706,7 @@ class NavPanel(QtWidgets.QWidget):
             self.project_list.setCurrentRow(0)
             self.project_list.blockSignals(False)
             self.project_removed.emit(name)
-            next_item = self.project_list.currentItem()
-            self.project_changed.emit(next_item.text() if next_item else "")
+            self.project_changed.emit(_item_name(self.project_list.currentItem()))
 
     def _remove_group(self):
         item = self.group_list.currentItem()
@@ -3312,25 +3757,23 @@ class NavPanel(QtWidgets.QWidget):
         remove_act = menu.addAction(f"Remove {label}")
         action = menu.exec_(list_widget.mapToGlobal(pos))
         if action == remove_act:
+            name = _item_name(item)
             reply = QtWidgets.QMessageBox.question(
                 self, f"Remove {label}",
-                f"Remove '{item.text()}' and all its contents?",
+                f"Remove '{name}' and all its contents?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             )
             if reply == QtWidgets.QMessageBox.Yes:
-                name = item.text()
                 list_widget.blockSignals(True)
                 list_widget.takeItem(list_widget.row(item))
                 list_widget.setCurrentRow(0)
                 list_widget.blockSignals(False)
                 if label == "Project":
                     self.project_removed.emit(name)
-                    next_item = list_widget.currentItem()
-                    self.project_changed.emit(next_item.text() if next_item else "")
+                    self.project_changed.emit(_item_name(list_widget.currentItem()))
                 else:
                     self.group_removed.emit(name)
-                    next_item = list_widget.currentItem()
-                    self.group_changed.emit(next_item.text() if next_item else "")
+                    self.group_changed.emit(_item_name(list_widget.currentItem()))
 
 
 # ---------------------------------------------------------------------------
@@ -3346,6 +3789,8 @@ class JiffySG(QtWidgets.QWidget):
         self._active_project = ""
         self._workspace_job = None
         self._sg_sequence_ids = {}   # {project: {sequence_name: sg_id}}
+        self._project_settings = {}  # {project: {"project_type": ..., "admin_login": ...}}
+        self._film_project_paths = {}  # {project: local path to top-level Maya film project} — local-only, never pushed to ShotGrid
         self._data_dir = cmds.optionVar(q=_DATA_DIR_PREF) if cmds.optionVar(exists=_DATA_DIR_PREF) else ""
         self._build()
         self._make_dockable()
@@ -3415,13 +3860,18 @@ class JiffySG(QtWidgets.QWidget):
         else:
             banner_text = f"Project:  {project_name}"
             banner_color = "#4caf50"
+
+        banner = QtWidgets.QWidget()
+        banner.setFixedHeight(36)
+        banner.setStyleSheet(f"background:#1a1a1a; border-bottom:1px solid {BORDER};")
+        bl = QtWidgets.QHBoxLayout(banner)
+        bl.setContentsMargins(16, 0, 8, 0)
         self._project_banner = QtWidgets.QLabel(banner_text)
-        self._project_banner.setFixedHeight(36)
         self._project_banner.setStyleSheet(
-            f"background:#1a1a1a; color:{banner_color}; font-size:15px; font-weight:bold;"
-            f"padding-left:16px; border-bottom:1px solid {BORDER};"
+            f"color:{banner_color}; font-size:15px; font-weight:bold; border:none; background:transparent;"
         )
-        layout.addWidget(self._project_banner)
+        bl.addWidget(self._project_banner, stretch=1)
+        layout.addWidget(banner)
 
         body = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         body.setHandleWidth(1)
@@ -3430,6 +3880,7 @@ class JiffySG(QtWidgets.QWidget):
         self.nav = NavPanel()
         self.nav.project_changed.connect(self._on_project_changed)
         self.nav.project_add_requested.connect(self._on_project_add_requested)
+        self.nav.project_settings_requested.connect(self._on_project_settings_requested)
         self.nav.project_added.connect(self._on_project_added)
         self.nav.project_removed.connect(self._on_project_removed)
         self.nav.group_changed.connect(self._on_group_changed)
@@ -3440,7 +3891,7 @@ class JiffySG(QtWidgets.QWidget):
         self.nav.milestone_edit_requested.connect(self._on_milestone_edit)
 
         self.shots_page    = SchedulePage(item_label="Shot",  stages=SHOT_STAGES)
-        self.assets_page   = SchedulePage(item_label="Asset", stages=ASSET_STAGES)
+        self.assets_page   = SchedulePage(item_label="Asset", stages=SHOT_STAGES, has_groups=False)
         self.progress_page = ProgressPage()
         self.artists_page  = ArtistsPage()
 
@@ -3449,9 +3900,13 @@ class JiffySG(QtWidgets.QWidget):
         self.shots_page.sg_sequence_resolved.connect(self._on_sequence_resolved)
         self.shots_page.refresh_requested.connect(
             lambda: self._refresh_entity_activity(self.shots_page, self._active_project, "Shot"))
+        self.shots_page.link_folder_requested.connect(
+            lambda item_data, path: self._link_item_folder(item_data, path, "Shot"))
         self.assets_page.data_changed.connect(self._on_assets_changed)
         self.assets_page.refresh_requested.connect(
             lambda: self._refresh_entity_activity(self.assets_page, self._active_project, "Asset"))
+        self.assets_page.link_folder_requested.connect(
+            lambda item_data, path: self._link_item_folder(item_data, path, "Asset"))
         self.progress_page.data_changed.connect(self._on_milestone_data_changed)
         self.progress_page.save_requested.connect(self.save_data)
         self.artists_page.sg_status.connect(self._on_sg_status)
@@ -3544,20 +3999,18 @@ class JiffySG(QtWidgets.QWidget):
         if idx == 1: return self.assets_page
         return None
 
-    def _group_label_for_tab(self, index):
-        return "Sequence" if index == 0 else "Asset"
-
     def _on_tab_changed(self, index):
         self.stack.setCurrentIndex(index)
         if index == 2:
             self._enter_progress_tab()
-        elif index == 3:
+        elif index in (1, 3):
+            # Assets (1) have no Sequence-equivalent grouping in ShotGrid
+            # (see jiffySG_brief.md) — no Groups panel at all, same as
+            # Artists (3).
             self.nav.show_bottom_section(False)
         else:
-            page    = self._active_page()
-            label   = self._group_label_for_tab(index)
-            groups  = page.get_groups_for_project(self._active_project)
-            self.nav.set_groups(groups, group_label=label, enabled=bool(self._active_project))
+            groups = self.shots_page.get_groups_for_project(self._active_project)
+            self.nav.set_groups(groups, group_label="Sequence", enabled=bool(self._active_project))
 
     def _enter_progress_tab(self):
         proj = self._active_project
@@ -3591,12 +4044,14 @@ class JiffySG(QtWidgets.QWidget):
                 self.nav.show_milestones(self.progress_page.get_milestones_for_project(project))
             else:
                 self.nav.show_bottom_section(False)
-        elif idx == 3:
-            pass  # artists tab's own project label/refresh is handled by set_project above
+        elif idx in (1, 3):
+            # Assets (1) have no Sequence-equivalent grouping in ShotGrid —
+            # no Groups panel, same as Artists (3), whose own project label/
+            # refresh is handled by set_project above.
+            self.nav.show_bottom_section(False)
         else:
-            label  = self._group_label_for_tab(idx)
-            groups = self._active_page().get_groups_for_project(project)
-            self.nav.set_groups(groups, group_label=label, enabled=bool(project))
+            groups = self.shots_page.get_groups_for_project(project)
+            self.nav.set_groups(groups, group_label="Sequence", enabled=bool(project))
 
     def _on_project_add_requested(self):
         """Look up which real ShotGrid Projects the current login can see,
@@ -3628,9 +4083,197 @@ class JiffySG(QtWidgets.QWidget):
                 self, "Add Project", "ShotGrid Project:", choices, 0, False
             )
             if ok and name:
-                self.nav.add_project(name)
+                self._link_project(name)
 
         _run_sg_async(work, done)
+
+    def _link_project(self, name):
+        """Reads (or, if unset, asks for and writes) this Project's Jiffy
+        SG type before actually adding it locally. The type lives on
+        ShotGrid's Project entity — shared across every group member's
+        separate local install — so it's only ever asked once per Project:
+        whoever links it first in Jiffy SG decides, everyone after just
+        reads what's already there."""
+        def work():
+            return get_project_settings(name)
+
+        def done(settings, error):
+            if error is not None:
+                QtWidgets.QMessageBox.warning(
+                    self, "Add Project",
+                    "Couldn't read '{0}''s Jiffy SG settings from ShotGrid:\n\n{1}".format(name, error)
+                )
+                return
+
+            if settings.get("project_type"):
+                self._project_settings[name] = settings
+                self.nav.add_project(name)
+                return
+
+            # Nobody has linked this Project in Jiffy SG before — decide its type now.
+            choice, ok = QtWidgets.QInputDialog.getItem(
+                self, "Project Type",
+                "Is '{0}' a solo or group project?".format(name),
+                ["Solo", "Group"], 0, False,
+            )
+            if not ok:
+                return  # backed out — Project stays unlinked, still blank in ShotGrid
+
+            self._project_settings[name] = {"project_type": choice, "admin_login": None}
+            self.nav.add_project(name)
+
+            def write_work():
+                set_project_type(name, choice)
+
+            def write_done(_, werror):
+                if werror is not None:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Add Project",
+                        "'{0}' was added, but saving its project type to ShotGrid failed:\n\n{1}\n\n"
+                        "Other group members may be asked to set it again.".format(name, werror)
+                    )
+            _run_sg_async(write_work, write_done)
+
+        _run_sg_async(work, done)
+
+    def _on_project_settings_requested(self, name):
+        """Opens the Project Settings dialog for the given (already-linked)
+        Project — always re-reads settings AND the artist roster from
+        ShotGrid first rather than trusting self._project_settings' cache,
+        since another group member could have changed either from their
+        own Jiffy SG since this one last asked."""
+        def work():
+            return get_project_settings(name), list_project_artists(name)
+
+        def done(result, error):
+            if error is not None:
+                QtWidgets.QMessageBox.warning(
+                    self, "Project Settings",
+                    "Couldn't read '{0}''s settings from ShotGrid:\n\n{1}".format(name, error)
+                )
+                return
+            settings, artists = result
+
+            self._project_settings[name] = settings
+            old_film_path = self._film_project_paths.get(name)
+            dialog = _ProjectSettingsDialog(name, settings, artists, old_film_path, parent=self)
+            if dialog.exec_() != QtWidgets.QDialog.Accepted:
+                return
+
+            new_type  = dialog.get_project_type()
+            new_admin = dialog.get_admin_login()
+            new_admin_display = dialog.admin_combo.currentText() if new_admin else "none set"
+            old_admin = settings.get("admin_login") or None
+            type_changed  = new_type != settings.get("project_type")
+            admin_changed = new_admin != old_admin
+
+            new_film_path = dialog.get_film_project_path()
+            film_path_changed = new_film_path != old_film_path
+            if film_path_changed:
+                if new_film_path:
+                    self._film_project_paths[name] = new_film_path
+                else:
+                    self._film_project_paths.pop(name, None)
+                self.save_data()  # local-only field, no ShotGrid round-trip needed
+
+            if not (type_changed or admin_changed):
+                return  # nothing ShotGrid-side to push
+
+            self._project_settings[name] = {"project_type": new_type, "admin_login": new_admin}
+
+            def write_work():
+                if type_changed:
+                    set_project_type(name, new_type)
+                if admin_changed:
+                    set_project_admin(name, new_admin)
+
+            def write_done(_, werror):
+                if werror is not None:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Project Settings",
+                        "Failed to save the new settings to ShotGrid:\n\n{0}".format(werror)
+                    )
+                    return
+                msg = "'{0}' is now a <hl>{1}</hl> project.".format(name, new_type)
+                if new_type == "Group":
+                    msg += " Admin: <hl>{0}</hl>.".format(new_admin_display)
+                cmds.inViewMessage(amg=msg, pos='midCenter', fade=True)
+            _run_sg_async(write_work, write_done)
+
+        _run_sg_async(work, done)
+
+    def _link_item_folder(self, item_data, folder_path, entity_type):
+        """Writes shotgrid_link.json into folder_path — a Shot/Asset's own
+        scenes/<sequence>/<shot> subfolder, picked via that row's ⚙ Settings
+        (ItemRowWidget._open_link_dialog). This is what lets shotSub resolve
+        which ShotGrid entity a publish belongs to, purely from where the
+        currently-open scene file sits — no Maya project switching, single
+        film project the whole time. Deliberately synchronous (not
+        _run_sg_async): an occasional, explicit "link" action can afford a
+        brief blocking pause, same reasoning as shotSub.link_to_shotgrid()."""
+        entity_code = item_data.get("name", "").strip()
+        if not entity_code:
+            QtWidgets.QMessageBox.warning(self, "Link Folder", "Name this {0} first.".format(entity_type))
+            return
+
+        if entity_type == "Shot":
+            entity_id = item_data.get("sg_shot_id")
+            if not entity_id:
+                QtWidgets.QMessageBox.warning(
+                    self, "Link Folder",
+                    "This Shot is still linking to ShotGrid — try again in a moment."
+                )
+                return
+        else:
+            entity_id = item_data.get("sg_asset_id")
+            if not entity_id:
+                if not self._active_project:
+                    QtWidgets.QMessageBox.warning(self, "Link Folder", "No active ShotGrid Project selected.")
+                    return
+                try:
+                    asset = find_or_create_asset(entity_code, self._active_project)
+                except Exception as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Link Folder", "Could not reach ShotGrid:\n\n{0}".format(exc)
+                    )
+                    return
+                entity_id = asset["id"]
+                item_data["sg_asset_id"] = entity_id
+
+        try:
+            self._write_shotgrid_link(folder_path, entity_type, entity_id, entity_code)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Link Folder", "Failed to write the ShotGrid link marker:\n\n{0}".format(exc)
+            )
+            return
+
+        item_data["local_folder_path"] = folder_path
+        self.save_data()   # item_data is the same dict backing the row's stored item, mutated in place
+        cmds.inViewMessage(
+            amg='<hl>{0}</hl> linked for ShotGrid publish.'.format(entity_code), pos='midCenter', fade=True
+        )
+
+    def _write_shotgrid_link(self, folder_path, entity_type, entity_id, entity_code):
+        """Writes the same shotgrid_link.json shape shotSub.py reads (see
+        shotSub.py's write_shotgrid_link()/read_shotgrid_link() — schema
+        sg_entity_type/sg_entity_id/sg_entity_code, covers both Shots and
+        Assets)."""
+        sg = get_connection()
+        project = _find_project(sg, self._active_project)
+        data = {
+            "schema_version": 2,
+            "sg_project_id": project["id"],
+            "sg_project_name": project["name"],
+            "sg_entity_type": entity_type,
+            "sg_entity_id": entity_id,
+            "sg_entity_code": entity_code,
+            "linked_at": _datetime.now().isoformat(timespec="seconds"),
+            "linked_by": current_login(),
+        }
+        os.makedirs(folder_path, exist_ok=True)
+        with open(os.path.join(folder_path, "shotgrid_link.json"), "w") as f:
+            json.dump(data, f, indent=2)
 
     def _on_artists_loaded(self, names):
         self.shots_page.set_artist_names(names)
@@ -3814,6 +4457,7 @@ class JiffySG(QtWidgets.QWidget):
                 "milestones":   self.progress_page.get_milestones(),
                 "production":   self.progress_page.get_production(),
                 "sg_sequences": self._sg_sequence_ids,
+                "film_project_paths": self._film_project_paths,
                 "window":       {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height()},
             }
             with open(path + ".tmp", "w") as f:
@@ -3855,6 +4499,7 @@ class JiffySG(QtWidgets.QWidget):
             self.progress_page.load_milestones(saved.get("milestones", {}))
             self.progress_page.load_production(saved.get("production", {}))
             self._sg_sequence_ids = saved.get("sg_sequences", {})
+            self._film_project_paths = saved.get("film_project_paths", {})
             # Artist names are no longer stored locally — they're pulled live
             # from ShotGrid via artists_page.set_project(), triggered below by
             # _on_project_changed() once a project is selected.
@@ -3874,16 +4519,13 @@ class JiffySG(QtWidgets.QWidget):
         project_name = os.path.basename(workspace)
         if not project_name or project_name == "default":
             self._project_banner.setText("Project:  No project set")
-            self._project_banner.setStyleSheet(
-                f"background:#1a1a1a; color:#e05050; font-size:15px; font-weight:bold;"
-                f"padding-left:16px; border-bottom:1px solid {BORDER};"
-            )
+            color = "#e05050"
         else:
             self._project_banner.setText(f"Project:  {project_name}")
-            self._project_banner.setStyleSheet(
-                f"background:#1a1a1a; color:#4caf50; font-size:15px; font-weight:bold;"
-                f"padding-left:16px; border-bottom:1px solid {BORDER};"
-            )
+            color = "#4caf50"
+        self._project_banner.setStyleSheet(
+            f"color:{color}; font-size:15px; font-weight:bold; border:none; background:transparent;"
+        )
 
     def _save_path(self):
         if not self._data_dir:

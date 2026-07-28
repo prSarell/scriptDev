@@ -24,15 +24,18 @@
 #   (local playblasts are disposable -- ShotGrid is the record of truth
 #   once a version is published)
 # - Uses render resolution from Maya render settings
-# - Assumes the "nested Maya projects" convention: one outer Maya project
-#   per film/show, and inside its scenes/ folder, each shot/asset is its
-#   OWN Maya project. shotSub operates on whatever project is currently
-#   set (cmds.workspace) -- it doesn't create these nested shot-projects
-#   itself.
-# - "Link to ShotGrid" writes a local shotgrid_link.json marker at the
-#   current (shot-level) Maya project's root, storing an explicit ShotGrid
-#   Project id + Shot id (picked from existing ShotGrid Projects/Shots --
-#   shotSub never creates a Shot itself, only jiffySG's Shots tab does).
+# - Assumes ONE Maya project per film/show (single cmds.workspace, opened
+#   manually by the student and left alone) -- shots/assets are plain
+#   subfolders under its scenes/ directory, not separate nested Maya
+#   projects. "Which shot is this" is resolved structurally, from where
+#   the currently-open scene file sits under scenes/ (see
+#   get_scene_relative_folder_from_scenes()/get_scene_folder_path()), not
+#   from a per-shot workspace.
+# - "Link to ShotGrid" writes a local shotgrid_link.json marker into the
+#   current scene's own scenes/<sequence>/<shot> subfolder (see
+#   get_link_file_path()), storing an explicit ShotGrid Project id + Shot
+#   id (picked from existing ShotGrid Projects/Shots -- shotSub never
+#   creates a Shot itself, only jiffySG's Shots tab does).
 #   "Publish Selected Version" then hands that shot_id off to
 #   jiffySG.upload_playblast() (see timeManagementDev/jiffySGDev/jiffySG.py)
 #   rather than authenticating to ShotGrid itself. shotSub never imports
@@ -278,29 +281,7 @@ class ShotSub(object):
             os.makedirs(images_root)
         return images_root
 
-    def get_scene_relative_folder_from_scenes(self):
-        """
-        Returns the scene directory path relative to the CURRENT Maya
-        project's own scenes directory (its workspace "scene" file rule,
-        normally "scenes") -- not a bare string search for "scenes"
-        anywhere in the absolute path.
-
-        Anchoring to the current project matters under the nested-per-shot-
-        project convention: a shot-level Maya project lives inside the
-        outer show project's own scenes/ folder, so the full absolute path
-        routinely contains "scenes" twice (once for the show, once for the
-        shot). Searching for the first match would resolve against the
-        outer project's scenes/ folder instead of the current (shot-level)
-        one and produce a wrong, too-deep relative path.
-
-        Example:
-            <shot project>/scenes/anim/file.ma
-        returns:
-            anim
-        """
-        scene_path = os.path.normpath(os.path.abspath(self.ensure_scene_saved()))
-        scene_dir = os.path.dirname(scene_path)
-
+    def get_scenes_root(self):
         project_root = self.get_project_root()
         # cmds.workspace(fileRuleEntry="scene", query=True) raises
         # "Flag 'fileRuleEntry' must be passed a boolean argument when query
@@ -308,7 +289,25 @@ class ShotSub(object):
         # binding for this flag combo even though the equivalent MEL command
         # works fine, so query through mel.eval instead.
         scene_rule = mel.eval('workspace -q -fileRuleEntry "scene";') or "scenes"
-        scenes_root = os.path.normpath(os.path.join(project_root, scene_rule))
+        return os.path.normpath(os.path.join(project_root, scene_rule))
+
+    def get_scene_relative_folder_from_scenes(self):
+        """
+        Returns the scene directory path relative to the current Maya
+        project's own scenes directory (its workspace "scene" file rule,
+        normally "scenes") -- not a bare string search for "scenes"
+        anywhere in the absolute path, since one Maya project can contain
+        several sequence/shot subfolders under scenes/ that would each
+        match a naive search.
+
+        Example:
+            <project>/scenes/sequence001/shot001/file.ma
+        returns:
+            sequence001/shot001
+        """
+        scene_path = os.path.normpath(os.path.abspath(self.ensure_scene_saved()))
+        scene_dir = os.path.dirname(scene_path)
+        scenes_root = self.get_scenes_root()
 
         cmp_scene_dir = scene_dir.lower() if cmds.about(nt=True) else scene_dir
         cmp_scenes_root = scenes_root.lower() if cmds.about(nt=True) else scenes_root
@@ -316,12 +315,24 @@ class ShotSub(object):
         if cmp_scene_dir != cmp_scenes_root and not cmp_scene_dir.startswith(cmp_scenes_root + os.sep):
             raise RuntimeError(
                 "Scene is not saved inside the current Maya project's scenes "
-                "folder ('{0}'). Save it there, or Set Project to the "
-                "shot-level project this scene belongs to.".format(scenes_root)
+                "folder ('{0}'). Save it there before publishing.".format(scenes_root)
             )
 
         relative = os.path.relpath(scene_dir, scenes_root)
         return "" if relative == "." else relative
+
+    def get_scene_folder_path(self):
+        """Absolute path to the current scene's own subfolder inside the
+        project's scenes/ directory -- e.g. <project_root>/scenes/
+        sequence001/shot001. This is also where Jiffy SG's per-Shot/Asset
+        "Settings" link writes shotgrid_link.json (see jiffySG.py's
+        _link_item_folder) -- shotSub resolving its link/publish-log paths
+        the same way is what lets the two tools agree on "which shot is
+        this" structurally, from where the scene file actually is, rather
+        than either one guessing from names."""
+        relative_folder = self.get_scene_relative_folder_from_scenes()
+        scenes_root = self.get_scenes_root()
+        return os.path.join(scenes_root, relative_folder) if relative_folder else scenes_root
 
     def get_shot_root(self, create=True):
         images_root = self.get_images_root()
@@ -476,17 +487,22 @@ class ShotSub(object):
     PUBLISH_LOG_FILENAME = "shotgrid_publish_log.json"
 
     def get_link_file_path(self):
-        return os.path.join(self.get_project_root(), self.LINK_FILENAME)
+        # Lives in the current scene's own scenes/ subfolder, not the bare
+        # project root -- one Maya project now covers the whole film, so a
+        # single project-root marker file could only ever represent one
+        # shot. See get_scene_folder_path()'s docstring.
+        return os.path.join(self.get_scene_folder_path(), self.LINK_FILENAME)
 
     def read_shotgrid_link(self):
-        """Returns the current project's shotgrid_link.json as a dict, or
+        """Returns the current scene's shotgrid_link.json as a dict, or
         None if unlinked/unreadable. A corrupt file warns (visible mistake)
         rather than silently behaving as unlinked.
 
         Generalized keys are sg_entity_type/sg_entity_id/sg_entity_code
         (schema_version 2 -- covers both Shots and Assets, written either by
-        link_to_shotgrid() below or by Jiffy SG's "Set Project" action).
-        schema_version 1 files (sg_shot_id/sg_shot_code, Shot-only -- from
+        link_to_shotgrid() below or by Jiffy SG's per-row "Settings" link,
+        see jiffySG.py's _link_item_folder). schema_version 1 files
+        (sg_shot_id/sg_shot_code, Shot-only -- from
         before Assets were supported) are migrated on read so projects
         linked before this change don't silently break; new writes always
         use v2."""
@@ -538,7 +554,12 @@ class ShotSub(object):
         return data
 
     def get_publish_log_path(self):
-        return os.path.join(self.get_project_root(), self.PUBLISH_LOG_FILENAME)
+        # Same reasoning as get_link_file_path(): rooted at the current
+        # scene's own scenes/ subfolder, not project root -- a single
+        # project-root log would collide version names (e.g. "v001") across
+        # every shot in the film, mislabeling other shots' versions as
+        # published/pruneable.
+        return os.path.join(self.get_scene_folder_path(), self.PUBLISH_LOG_FILENAME)
 
     def read_publish_log(self):
         try:
@@ -1187,9 +1208,10 @@ class ShotSub(object):
     # --------------------------------------------------------
     def link_to_shotgrid(self):
         """
-        Attach the current (shot-level) Maya project to an EXISTING
-        ShotGrid Shot -- never creates one, that's Jiffy SG's Shots tab's
-        job (see jiffySG.list_project_shots()'s docstring). Two
+        Attach the current scene's own scenes/<sequence>/<shot> subfolder
+        (see get_scene_folder_path()) to an EXISTING ShotGrid Shot -- never
+        creates one, that's Jiffy SG's Shots tab's job (see
+        jiffySG.list_project_shots()'s docstring). Two
         QInputDialog.getItem pickers (Project, then Shot within it), run
         synchronously on Maya's main thread: jiffySG's own async machinery
         (_run_sg_async) is deliberately not reused here -- a brief pause
@@ -1266,8 +1288,8 @@ class ShotSub(object):
         (Shot or Asset) from the local shotgrid_link.json marker file
         rather than guessing a name from folder structure -- that marker
         may have been written either by this tool's own link_to_shotgrid()
-        (Shots only) or by Jiffy SG's "Set Project" action (Shots and
-        Assets).
+        (Shots only) or by Jiffy SG's per-row "Settings" link (Shots and
+        Assets -- see jiffySG.py's _link_item_folder).
 
         Only ever sends the raw JPEG sequence as-is plus fps -- no video
         encoding step in shotSub itself. jiffySG.upload_playblast() encodes
