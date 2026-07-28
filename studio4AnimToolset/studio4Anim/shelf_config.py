@@ -37,6 +37,17 @@ BUTTONS = [
         ),
     },
     {
+        "label": "Shot Submit",
+        "tooltip": "Open shotSub — playblast + publish to ShotGrid for review",
+        "icon": "playblast.png",
+        "command": (
+            "import importlib\n"
+            "import shotSub\n"
+            "importlib.reload(shotSub)\n"
+            "shotSub.show_shotSub()"
+        ),
+    },
+    {
         "label": "CamPreset",
         "tooltip": "Open the Camera Preset Manager — save and apply named camera/render presets",
         "icon": "iconCamPreset.png",

@@ -4,3 +4,5 @@ __pycache__/
 dist/
 *.zip
 jiffySG_config.json
+shotSub_config.json
+shotSub_student.json

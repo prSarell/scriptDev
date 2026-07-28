@@ -103,6 +103,41 @@ def _copy_flat(src_dir, dst_dir, backup_dir, category, ext=None):
     return copied
 
 
+def _backup_dir(dst_path, backup_dir):
+    """If dst_path (an already-installed folder) exists, copy it into
+    backup_dir/dirs/<name>/ before it gets overwritten -- same reasoning
+    as _backup_file() above, just for a nested package folder instead of
+    a single file. Skips if a backup already exists in this version."""
+    if not os.path.isdir(dst_path):
+        return
+    name = os.path.basename(dst_path.rstrip("/\\"))
+    dest = os.path.join(backup_dir, "dirs", name)
+    if os.path.isdir(dest):
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copytree(dst_path, dest)
+
+
+def _copy_dir(src_dir, dst_parent, backup_dir):
+    """Wholesale-copies a nested package folder (e.g. the vendored
+    shotgun_api3, needed by shotSub/shotgridConnect.py) into dst_parent --
+    _copy_flat() above only ever iterates top-level files, so a real
+    Python package with its own subfolders needs this instead. Backs up
+    whatever was there before. Returns the destination path if a folder
+    was copied, else None -- callers append that path to all_dirs so it
+    lands in the manifest as a "dir:" entry (uninstall.py already handles
+    that entry type; only the install side was missing it)."""
+    if not os.path.isdir(src_dir):
+        return None
+    name = os.path.basename(src_dir.rstrip("/\\"))
+    dst = os.path.join(dst_parent, name).replace("\\", "/")
+    _backup_dir(dst, backup_dir)
+    if os.path.isdir(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(src_dir, dst)
+    return dst
+
+
 # -- shelf ------------------------------------------------------------------
 
 def _build_shelf(shelf_config_path, backup_dir):
@@ -217,6 +252,11 @@ def _install(root):
         backup_dir, "scripts", ext=".py",
     )
     all_files.extend(copied)
+
+    shotgun_api3_src = os.path.join(shelf_path, "scripts", "shotgun_api3")
+    copied_dir = _copy_dir(shotgun_api3_src, scripts_dst, backup_dir)
+    if copied_dir:
+        all_dirs.append(copied_dir)
 
     staff_src = os.path.join(shelf_path, "scripts", "staff_shortcuts")
     if os.path.isdir(staff_src):
