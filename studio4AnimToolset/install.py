@@ -49,6 +49,10 @@ def _maya_shelves_dir():
     ).replace("\\", "/")
 
 
+def _maya_prefs_dir():
+    return cmds.internalVar(userPrefDir=True).replace("\\", "/")
+
+
 def _manifest_path():
     return os.path.join(
         cmds.internalVar(userPrefDir=True), _MANIFEST_NAME
@@ -270,6 +274,21 @@ def _install(root):
         backup_dir, "icons", ext=".png",
     )
     all_files.extend(copied)
+
+    # shotSub's ShotGrid connection config -- baked into the release zip at
+    # build time from GitHub Actions secrets (see
+    # .github/workflows/release-studio4anim.yml), never committed to the
+    # repo itself. Deploys to Maya's prefs root (not scripts_dst), where
+    # shotgridConnect.py's _config_file() expects to find it, so students
+    # never have to create/paste this by hand.
+    shotgrid_config_src = os.path.join(shelf_path, "shotSub_config.json")
+    if os.path.isfile(shotgrid_config_src):
+        shotgrid_config_dst = os.path.join(
+            _maya_prefs_dir(), "shotSub_config.json"
+        ).replace("\\", "/")
+        _backup_file(shotgrid_config_dst, backup_dir, "prefs")
+        shutil.copy2(shotgrid_config_src, shotgrid_config_dst)
+        all_files.append(shotgrid_config_dst)
 
     config_file = os.path.join(shelf_path, "shelf_config.py")
     if os.path.isfile(config_file):

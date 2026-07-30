@@ -26,17 +26,6 @@ BUTTONS = [
         ),
     },
     {
-        "label": "Playblast",
-        "tooltip": "Open the Playblast Manager — creates versioned JPEG sequences with burn-ins",
-        "icon": "playblast.png",
-        "command": (
-            "import importlib\n"
-            "import pbTool\n"
-            "importlib.reload(pbTool)\n"
-            "pbTool.show_pbTool()"
-        ),
-    },
-    {
         "label": "Shot Submit",
         "tooltip": "Open shotSub — playblast + publish to ShotGrid for review",
         "icon": "playblast.png",

@@ -179,11 +179,13 @@ def _restore_from(backup_dir):
     scripts_dst = _maya_scripts_dir()
     icons_dst = _maya_icons_dir()
     shelves_dst = _maya_shelves_dir()
+    prefs_dst = cmds.internalVar(userPrefDir=True).replace("\\", "/")
 
     mapping = {
         "scripts": scripts_dst,
         "icons": icons_dst,
         "shelves": shelves_dst,
+        "prefs": prefs_dst,
     }
     for category, dst in mapping.items():
         src = os.path.join(backup_dir, category)

@@ -14,6 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Write ShotGrid config
+        run: |
+          cat > mpToolSet/mpAnim/shotSub_config.json <<EOF
+          {
+            "site_url": "${{ secrets.SHOTGRID_SITE_URL }}",
+            "script_name": "${{ secrets.SHOTGRID_SCRIPT_NAME }}",
+            "api_key": "${{ secrets.SHOTGRID_API_KEY }}"
+          }
+          EOF
+
       - name: Zip mpToolSet
         run: zip -r mpToolSet.zip mpToolSet/
 

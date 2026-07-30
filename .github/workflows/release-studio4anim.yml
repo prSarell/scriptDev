@@ -14,6 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Write ShotGrid config
+        run: |
+          cat > studio4AnimToolset/studio4Anim/shotSub_config.json <<EOF
+          {
+            "site_url": "${{ secrets.SHOTGRID_SITE_URL }}",
+            "script_name": "${{ secrets.SHOTGRID_SCRIPT_NAME }}",
+            "api_key": "${{ secrets.SHOTGRID_API_KEY }}"
+          }
+          EOF
+
       - name: Zip studio4AnimToolset
         run: zip -r studio4AnimToolset.zip studio4AnimToolset/
 
