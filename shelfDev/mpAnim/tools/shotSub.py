@@ -1312,6 +1312,23 @@ class ShotSub(object):
             )
             return
 
+        # A brand-new install has no sudo_as_login and no student-identity
+        # file yet, so the very first connection attempt would fall
+        # through to getpass.getuser() (looks like a student ID on RMIT
+        # lab machines, but isn't a real ShotGrid login) and fail with
+        # AuthenticationFault -- before the student ever gets a chance to
+        # supply the info that would fix it. Ask for identity up front
+        # whenever it isn't already resolvable, so the very first attempt
+        # can actually succeed instead of requiring a working connection
+        # to unlock the thing that establishes one.
+        if not shotgridConnect.has_known_identity():
+            if not self.ensure_student_identity():
+                cmds.warning(
+                    "shotSub needs your name and student ID before it can connect "
+                    "to ShotGrid — click 'Link to ShotGrid' again when ready."
+                )
+                return
+
         try:
             projects = shotgridConnect.list_visible_projects()
         except Exception as exc:

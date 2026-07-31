@@ -159,6 +159,24 @@ def current_login():
     return getpass.getuser()
 
 
+def has_known_identity():
+    """True if current_login() would resolve to a real identity (explicit
+    sudo_as_login override, or a derived student login) rather than
+    falling through to the getpass.getuser() last resort -- which looks
+    like a plausible login on RMIT lab machines (OS username is often the
+    student ID) but is never actually valid on this site, since real
+    logins are full email addresses. Lets a caller ask for identity
+    *before* attempting a connection that's certain to fail with
+    AuthenticationFault, instead of only reacting after the fact."""
+    try:
+        config = _load_config()
+    except RuntimeError:
+        config = {}
+    if config.get("sudo_as_login"):
+        return True
+    return _student_login_from_identity_file() is not None
+
+
 def get_connection(as_login=None):
     """Return an authenticated shotgun_api3.Shotgun connection, impersonating
     as_login (defaults to current_login()) via sudo_as_login."""
