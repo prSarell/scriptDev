@@ -235,14 +235,17 @@ def upload_entity_thumbnail(entity_type, entity_id, image_path, as_login=None):
     return sg.upload_thumbnail(entity_type, entity_id, image_path)
 
 
-def _create_note(sg, entity, project, version, note_text):
+def _create_note(sg, entity, project, version, note_text, subject=None):
     """One new Note per publish (never an overwrite) -- a real ShotGrid
     Note, so a mentor reviewing directly in ShotGrid sees/adds to the same
-    feed."""
+    feed. subject defaults to the normal student-review-note subject; also
+    used by upload_playblast() with a distinct subject for the automatic
+    "no review movie" note (see machine_diagnostic below), so the two are
+    easy to tell apart in the Shot's Notes feed."""
     note_links = [entity] + ([version] if version else [])
     return sg.create("Note", {
         "project": project,
-        "subject": "Playblast — {0}".format(entity.get("code", "")),
+        "subject": subject or "Playblast — {0}".format(entity.get("code", "")),
         "content": note_text,
         "note_links": note_links,
     })
@@ -299,7 +302,7 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
 
 
 def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None,
-                      rvio_path=None, as_login=None):
+                      rvio_path=None, as_login=None, machine_diagnostic=None):
     """Hand-off target for shotSub's "Publish Selected Version" button (see
     shotSub.py publish_version()). shotSub resolves entity_type/entity_id
     itself, from an explicit ShotGrid Shot id stored in a local
@@ -317,6 +320,15 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
     via rvio -- see _encode_to_mp4) alongside the thumbnail. Also stores
     Version.sg_path_to_frames (the local version_folder), and creates a
     ShotGrid Note per publish (see _create_note above) if notes are given.
+
+    machine_diagnostic (str or None): passed straight through from
+    shotSub.py's publish_version() when it couldn't find rvio on the
+    student's machine -- a movie-less publish used to be silent (a local
+    print() nobody sees, see _encode_to_mp4), leaving instructors to
+    discover a blank review after the fact with no way to tell why. When
+    set, an automatic Note carrying it gets attached directly to the Shot
+    (and Version), landing wherever the instructor is already looking
+    instead of depending on the student noticing and reporting it.
 
     No Task/stage linking here -- that's schedule-tracking territory
     (JiffySG's Stage/Due Date/Artist model), not needed for a plain
@@ -366,6 +378,14 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
     if mp4_path:
         sg.upload("Version", version["id"], mp4_path, field_name="sg_uploaded_movie")
         print("shotSub: uploaded movie '{0}' to Version id {1}".format(mp4_path, version["id"]))
+    elif machine_diagnostic:
+        try:
+            _create_note(
+                sg, entity, project, version, machine_diagnostic,
+                subject="shotSub: no review movie — {0}".format(code),
+            )
+        except Exception as exc:
+            print("shotSub: could not create rvio-missing diagnostic Note — {0}".format(exc))
 
     if notes:
         try:

@@ -1400,6 +1400,27 @@ class ShotSub(object):
             fade=True
         )
 
+    def _get_machine_diagnostic_summary(self):
+        """Short "which machine/who" identity string, used only to help
+        diagnose a missing-review-movie publish (see publish_version()) --
+        e.g. distinguishing a lab machine with a nonstandard RV install
+        from a personal machine that never had RV installed at all."""
+        identity = self.read_student_identity()
+        student = "{0} ({1})".format(identity["student_name"], identity["student_id"]) if identity else "<unknown>"
+        return (
+            "Computer: {0}\n"
+            "Windows user: {1}\n"
+            "shotSub student: {2}\n"
+            "Maya: {3}\n"
+            "Time: {4}"
+        ).format(
+            os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "<unknown>",
+            os.environ.get("USERNAME") or os.environ.get("USER") or "<unknown>",
+            student,
+            cmds.about(version=True),
+            datetime.now().isoformat(timespec="seconds"),
+        )
+
     def publish_version(self, version_folder):
         """
         Hand-off to shotgridConnect.upload_playblast() for an explicit
@@ -1413,7 +1434,11 @@ class ShotSub(object):
         Only ever sends the raw JPEG sequence as-is plus fps -- no video
         encoding step in shotSub itself beyond resolving rvio's path;
         shotgridConnect.upload_playblast() does the actual mp4 encode (via
-        rvio) and decides what to do with the sequence.
+        rvio) and decides what to do with the sequence. If rvio can't be
+        found at all, machine_diagnostic is passed through so
+        upload_playblast() can attach it to an automatic ShotGrid Note --
+        see that function's docstring -- instead of the publish silently
+        going out thumbnail-only with no record of why.
         """
         if not version_folder or not os.path.isdir(version_folder):
             cmds.warning("Selected version folder no longer exists.")
@@ -1437,6 +1462,15 @@ class ShotSub(object):
         notes = cmds.scrollField(self.widgets["publish_notes"], q=True, text=True).strip()
         rvio_path = self.find_rv_executable("rvio")
 
+        machine_diagnostic = None
+        if not rvio_path:
+            machine_diagnostic = self._get_machine_diagnostic_summary()
+            cmds.warning(
+                "shotSub: RV's rvio tool was not found on this machine — this publish "
+                "will go to ShotGrid with a thumbnail only, no review movie. A note "
+                "with this machine's details has been attached to the Shot in ShotGrid."
+            )
+
         try:
             result = shotgridConnect.upload_playblast(
                 link.get("sg_entity_type", "Shot"),
@@ -1446,6 +1480,7 @@ class ShotSub(object):
                 notes=notes or None,
                 fps=self.get_fps_value(),
                 rvio_path=rvio_path,
+                machine_diagnostic=machine_diagnostic,
             )
         except NotImplementedError as exc:
             cmds.warning("ShotGrid publish isn't built yet: {0}".format(exc))
