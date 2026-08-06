@@ -146,7 +146,7 @@ def _copy_dir(src_dir, dst_parent, backup_dir):
 
 def _build_shelf(shelf_config_path, backup_dir):
     config_ns = {}
-    with open(shelf_config_path, "r") as f:
+    with open(shelf_config_path, "r", encoding="utf-8") as f:
         exec(f.read(), config_ns)
 
     shelf_name = config_ns["SHELF_NAME"]
@@ -189,7 +189,7 @@ def _build_shelf(shelf_config_path, backup_dir):
 def _write_manifest(files, dirs, shelves, usersetups=None):
     path = _manifest_path()
     seen = set()
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for shelf_name in shelves:
             f.write("shelf:{}\n".format(shelf_name))
         for d in dirs:
@@ -207,7 +207,7 @@ def _patch_usersetup(scripts_dir, backup_dir):
     _backup_file(path, backup_dir, "scripts")
     content = ""
     if os.path.isfile(path):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
     content = re.sub(
         r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
@@ -221,7 +221,7 @@ def _patch_usersetup(scripts_dir, backup_dir):
         "    pass\n"
         "{end}\n"
     ).format(start=_US_START, end=_US_END)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content.rstrip("\n") + block)
     return path
 

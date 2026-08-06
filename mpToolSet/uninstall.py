@@ -86,14 +86,14 @@ def _strip_usersetup(path):
     """Remove the mpToolSet startup block from userSetup.py."""
     if not os.path.isfile(path):
         return
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         content = f.read()
     cleaned = re.sub(
         r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
         "", content, flags=re.DOTALL,
     )
     if cleaned != content:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(cleaned)
 
 
@@ -254,7 +254,7 @@ def _uninstall():
         )
         return
 
-    with open(manifest, "r") as f:
+    with open(manifest, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
 
     versions = _available_versions()
