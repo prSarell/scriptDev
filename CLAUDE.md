@@ -12,7 +12,7 @@ Maya Python tool development workspace for a 3D animation teaching pipeline. Scr
 
 Development follows the existing folder structure — always save files in the correct location, never create ad-hoc locations.
 
-### Three-stage pipeline
+### Pipeline
 
 1. **Develop** — tool scripts are written and iterated on in the `*Dev/` folders:
    - `rigDev/` — rigging tool scripts
@@ -21,20 +21,20 @@ Development follows the existing folder structure — always save files in the c
    - `renderDev/` — rendering tool scripts
    - `pipeDev/` — pipeline tool scripts
 
-2. **Stage for testing** — when a tool is ready to test in Maya, its scripts and icons go into the corresponding `shelfDev/` subfolder:
-   - `shelfDev/mpRig/scripts/` — rigging tool scripts ready for shelf
-   - `shelfDev/mpRig/icons/` — rigging shelf icons
-   - `shelfDev/mpAnim/scripts/` — animation tool scripts ready for shelf
-   - `shelfDev/mpAnim/icons/` — animation shelf icons
-   - The mpToolSet installer (`install.py`) deploys from here to Maya's prefs folders for testing.
+2. **Personal testing in Maya** — `shelfDev/mpInstaller.py` is the drag-and-drop personal installer. It builds the mpAnim and mpRig shelves and copies scripts into Maya's prefs `scripts/` folder every time it's run. Two patterns exist, per tool:
+   - **Shelf-native tools** live directly under `shelfDev/mpAnim/tools/` or `shelfDev/mpRig/tools/` (a handful of mpAnim tools — pbTool, shotSub, shortCuts, smoothTool, ps_cam_preset_simple, PlaybackTempoTool — and currently none for mpRig). Edit these in place once a tool has graduated out of active `*Dev/` iteration.
+   - **Dev-direct tools** — most tools, and *all* current mpRig tools — stay in their `*Dev/` source folder permanently. `mpInstaller.py` copies them straight from there (e.g. `simDev/`, `rigDev/`, `renderDev/`, `animDev/`, `metahuman_facial_transfer/`) into Maya's scripts folder on each run — there is no persisted `shelfDev/` copy for these. Which files get copied, and from where, is declared per-shelf in `shelfDev/mpAnim/shelf_config.py` and `shelfDev/mpRig/shelf_config.py` via named lists (`SIMTOOL_SCRIPTS`, `MULTITOOL_SCRIPTS`, `JIFFYPOMO_SCRIPTS`, `JIFFYSCHEDULE_SCRIPTS`, `METAHUMAN_SCRIPTS`, `ANIMDEV_SCRIPTS`, `RIGTOOL_SCRIPTS`, `RENDERDEV_SCRIPTS`). Icons for both patterns live in `shelfDev/mpAnim/icons/` / `shelfDev/mpRig/icons/` regardless of which pattern the tool's scripts follow.
+   - Shelf button definitions (label, tooltip, icon, launch command) live in `shelf_config.py` either way.
 
-3. **Deploy to students** — copy final scripts and icons from `shelfDev/` into `mpToolSet/` for student rollout:
+3. **Deploy to students** — when a tool is ready to ship, manually copy its current scripts and icons into `mpToolSet/`:
    - `mpToolSet/mpRig/scripts/`, `mpToolSet/mpRig/icons/`
    - `mpToolSet/mpAnim/scripts/`, `mpToolSet/mpAnim/icons/`
+   - This hop is manual and not diff-checked — for dev-direct tools especially, nothing flags it if the `*Dev/` source and the `mpToolSet/` copy drift apart between rollouts. Do a deliberate resync pass (diff dev source against `mpToolSet/`) before a student release if a tool has changed since the last one.
+   - The real, separate `mpToolSet/install.py` (not `mpInstaller.py`) is what students run, deploying from `mpToolSet/` to their own Maya prefs.
 
 ### Rules
 
-- Never edit tool scripts or icons directly in `mpToolSet/` — always update from the source folders.
+- Never edit tool scripts or icons directly in `mpToolSet/` — always update from the source folders (`*Dev/` for dev-direct tools, `shelfDev/.../tools/` for shelf-native ones).
 - Never save files outside the established folder structure (no loose files in `scriptDev/` root, etc.).
 - Icons always live in the `icons/` folder within their specific `shelfDev/` shelf folder.
 
