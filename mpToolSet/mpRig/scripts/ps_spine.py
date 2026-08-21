@@ -1,5 +1,7 @@
+import math
 import maya.cmds as cmds
 import maya.mel as mel
+import maya.api.OpenMaya as om2
 from PySide6 import QtWidgets, QtCore, QtGui
 from shiboken6 import wrapInstance
 from maya import OpenMayaUI as omui
@@ -26,11 +28,78 @@ def show():
 
 # ── rig builder ───────────────────────────────────────────────────────────────
 
-def buildSpine(prefix, surface_spans=3):
+def _arcLengthSampledPoints(curve_shape, count):
+    # Evenly distribute points by arc length along the curve rather than using
+    # raw CV positions. A curved (non-collinear) control polygon is longer
+    # than the smooth curve it defines -- the curve cuts the corners -- so a
+    # joint chain built with CV-to-CV rigid bone lengths runs out of curve
+    # before it runs out of joints once spline IK bends it onto the curve,
+    # bunching the trailing joints at the curve's tip.
+    sel = om2.MSelectionList()
+    sel.add(curve_shape)
+    curve_fn = om2.MFnNurbsCurve(sel.getDagPath(0))
+    total_length = curve_fn.length()
+    points = []
+    for i in range(count):
+        frac = i / float(count - 1) if count > 1 else 0.0
+        param = curve_fn.findParamFromLength(frac * total_length)
+        pt = curve_fn.getPointAtParam(param, space=om2.MSpace.kWorld)
+        points.append((pt.x, pt.y, pt.z))
+    return points
+
+
+def _alignCtlShapeToTangent(ctl, curve_shape, frac):
+    # Component-level fix: rotate the CTL's circle CVs (not its transform) so
+    # its visual facing direction (local Y) matches the spine curve's tangent
+    # at the given arc-length fraction. Btm_CTL/Top_CTL are aim-constrained
+    # straight off the curve/joint chain and already track its direction
+    # closely. Mid_CTL instead inherits its orientation from a surface-
+    # follicle tangent frame, which only loosely tracks the curve's actual
+    # direction (and badly for a horizontal-running spine, since the loft
+    # rail offset that builds that surface is hardcoded along world X) --
+    # this only edits the shape's CVs, so the control's transform,
+    # constraints, and rig behavior are unaffected.
+    sel = om2.MSelectionList()
+    sel.add(curve_shape)
+    curve_fn = om2.MFnNurbsCurve(sel.getDagPath(0))
+    total_length = curve_fn.length()
+    param = curve_fn.findParamFromLength(frac * total_length)
+    tangent = curve_fn.tangent(param, space=om2.MSpace.kWorld)
+    target_world = om2.MVector(tangent.x, tangent.y, tangent.z)
+    target_world.normalize()
+
+    world_matrix = om2.MMatrix(cmds.xform(ctl, q=True, ws=True, m=True))
+    world_rot = om2.MTransformationMatrix(world_matrix).rotation(asQuaternion=True)
+
+    # Bring the target direction into the control's local (object) space,
+    # then find the local rotation that takes local +Y onto it.
+    local_target = target_world.rotateBy(world_rot.inverse())
+    local_target.normalize()
+    local_up = om2.MVector(0, 1, 0)
+
+    axis = local_up ^ local_target
+    if axis.length() < 1e-6:
+        return  # already aligned (or exactly opposite -- ambiguous axis, skip)
+    axis.normalize()
+    angle = local_up.angle(local_target)
+    euler = om2.MQuaternion(angle, axis).asEulerRotation()
+
+    cmds.rotate(math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z),
+                ctl + '.cv[*]', relative=True, objectSpace=True)
+
+
+_MASTER_POS_CTL_SUFFIX = {'bottom': '_000_CTL', 'mid': '_001_CTL', 'top': '_002_CTL'}
+_MASTER_POS_FRAC = {'bottom': 0.0, 'mid': 0.5, 'top': 1.0}
+
+
+def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
     # Strip any DAG path so the prefix is always a short name used for naming,
     # not a scene path. cmds.joint() in a chain creates children, so an absolute
     # path like |head_001_FK would address the wrong location in the hierarchy.
     prefix = prefix.split('|')[-1].split(':')[-1]
+
+    if master_pos not in _MASTER_POS_CTL_SUFFIX:
+        raise ValueError("master_pos must be one of 'top', 'mid', 'bottom' (got %r)" % master_pos)
 
     existing = cmds.ls(prefix + '_000_FK', prefix + '_000_SKL', prefix + '_000_JNT')
     if existing:
@@ -51,7 +120,7 @@ def buildSpine(prefix, surface_spans=3):
         degree = cmds.getAttr(prefix + '.degree')
         span = cmds.getAttr(prefix + '.spans')
         pointNumber = degree + span
-        points = cmds.getAttr(prefix + '.cv[0:' + str(pointNumber) + ']')
+        points = _arcLengthSampledPoints(curve_shape, pointNumber)
         joint = None
 
         for i in range(0, pointNumber):
@@ -60,7 +129,15 @@ def buildSpine(prefix, surface_spans=3):
                                n=(prefix + '_' + str(i).zfill(3) + '_FK'))
             if i > 0:
                 cmds.joint(lastJoint, e=True, zso=True, oj='xyz', sao='xup')
+                # Auto-orient can put roll into jointOrientX to keep the up-vector
+                # consistent across bends in a non-collinear chain. A raw setAttr
+                # here doesn't compensate the child, so it swings joint (and
+                # everything below it) around lastJoint. Restore the child's
+                # world position across the strip (xform -m is refused by Maya
+                # on joints that already carry a rotate value, so translate only).
+                child_pos = cmds.xform(joint, q=True, ws=True, t=True)
                 cmds.setAttr(lastJoint + '.jointOrientX', 0)
+                cmds.xform(joint, ws=True, t=child_pos)
             cmds.joint(e=True, oj='none', secondaryAxisOrient='xup', zso=True)
 
         cmds.setAttr(prefix + '_' + str(pointNumber - 1).zfill(3) + '_FK.jointOrient', 0, 0, 0)
@@ -123,8 +200,8 @@ def buildSpine(prefix, surface_spans=3):
 
         cmds.rebuildCurve('loft000_CRV', rt=0, s=pointNumber)
         cmds.rebuildCurve('loft001_CRV', rt=0, s=pointNumber)
-        cmds.move(.5, 0, 0, 'loft000_CRV', absolute=True)
-        cmds.move(-.5, 0, 0, 'loft001_CRV', absolute=True)
+        cmds.move(.5, 0, 0, 'loft000_CRV', relative=True)
+        cmds.move(-.5, 0, 0, 'loft001_CRV', relative=True)
 
         cmds.loft('loft000_CRV', 'loft001_CRV', ch=True, rn=True, ar=True, n=(prefix + '_000_GEO'))
         cmds.rebuildSurface(prefix + '_000_GEO', ch=True, rpo=True, rt=False, end=True, kr=False,
@@ -187,6 +264,7 @@ def buildSpine(prefix, surface_spans=3):
 
         cmds.parentConstraint(prefix + '_001_CTL', prefix + '_Geo001_FK')
         cmds.setAttr(prefix + '_CTL001_BtmSDK_GRP.rotate', 0, 0, 0)
+        _alignCtlShapeToTangent(prefix + '_001_CTL', curve_shape, 0.5)
         pc = cmds.pointConstraint(prefix + '_000_EFF', prefix + '_CTL002_GRP', mo=False)[0]
         cmds.delete(pc)
         cmds.parentConstraint(prefix + '_002_CTL', prefix + '_Geo002_FK')
@@ -416,10 +494,23 @@ def buildSpine(prefix, surface_spans=3):
         cmds.parent(prefix + '_All000_CTL', prefix + '_All000_GRP')
         cmds.parent(prefix + '_All001_CTL', prefix + '_All001_GRP')
         cmds.parent(prefix + '_All002_CTL', prefix + '_All002_GRP')
-        pc = cmds.parentConstraint(prefix + '_000_CTL', prefix + '_All000_GRP')[0]
+        master_anchor_ctl = prefix + _MASTER_POS_CTL_SUFFIX[master_pos]
+        pc = cmds.parentConstraint(master_anchor_ctl, prefix + '_All000_GRP')[0]
         cmds.delete(pc)
         cmds.parentConstraint(prefix + '_All000_CTL', prefix + '_All001_GRP')
         cmds.parentConstraint(prefix + '_All001_CTL', prefix + '_All002_GRP')
+
+        # Same component-level fix as Mid_CTL: the master stack's transform
+        # rotation is snapped from master_anchor_ctl's transform, which (for
+        # 'mid', and to a lesser degree 'top'/'bottom') doesn't reliably
+        # track the curve's actual direction -- see _alignCtlShapeToTangent.
+        # All000/001/002_CTL share that same inherited transform rotation
+        # (each nested GRP is a zero-offset live constraint down the stack),
+        # but each is a separate shape, so each needs its own CV correction.
+        master_frac = _MASTER_POS_FRAC[master_pos]
+        for master_ctl_name in (prefix + '_All000_CTL', prefix + '_All001_CTL', prefix + '_All002_CTL'):
+            _alignCtlShapeToTangent(master_ctl_name, curve_shape, master_frac)
+
         cmds.group(em=True, name=(prefix + '_NoTransform000_GRP'))
 
         cmds.connectAttr(prefix + '_All000_CTL.subControlOneVisibility',
@@ -446,7 +537,13 @@ def buildSpine(prefix, surface_spans=3):
         cmds.parent(prefix + '_NoTransform000_GRP', prefix + '_Master000_GRP')
         cmds.parent(prefix + '_All000_GRP', prefix + '_Master000_GRP')
 
-        cmds.parentConstraint(prefix + '_All002_CTL', prefix + '_CTL000_GRP')
+        # mo=True preserves whatever offset exists between the master stack's
+        # anchor point (master_pos: bottom/mid/top) and CTL000_GRP's built
+        # position. With master_pos='bottom' that offset is zero (unchanged
+        # behavior); for 'mid'/'top' the master no longer sits at Btm_CTL, so
+        # without mo=True this constraint would snap the whole base spine
+        # over onto the master's position at build time.
+        cmds.parentConstraint(prefix + '_All002_CTL', prefix + '_CTL000_GRP', mo=True)
         cmds.group(em=True, name=prefix + '_CTL002constraint_GRP')
         pc = cmds.parentConstraint(prefix + '_002_CTL', prefix + '_CTL002constraint_GRP')[0]
         cmds.delete(pc)
@@ -637,7 +734,10 @@ def addTip(prefix, tip_crv):
     last_spine_skl = prefix + '_' + str(len(jnt_list) - 1).zfill(3) + '_SKL'
     if not cmds.objExists(last_spine_skl):
         raise RuntimeError('Last spine SKL not found: ' + last_spine_skl)
-    next_skl_idx = len(jnt_list)
+    # Base new indices on the current total SKL count, not the spine (JNT)
+    # count -- if addTail already ran, its SKL joints occupy indices at/above
+    # the spine count too, and len(jnt_list) alone would collide with them.
+    next_skl_idx = len(cmds.ls(prefix + '_*_SKL', type='joint') or [])
 
     # Container group for the tip CTL chain
     cmds.group(em=True, name=tip_grp)
@@ -756,6 +856,175 @@ def _wireTipToFKRig(prefix):
         return
     cmds.connectAttr(pma + '.output1D', tip_pc + '.' + tip_weights[0], force=True)
     cmds.connectAttr(mdn + '.outputX',  tip_pc + '.' + tip_weights[1], force=True)
+
+
+def addTail(prefix, tail_crv):
+    """
+    Append FK tail controls to the base of an existing spine rig -- the
+    mirror-image counterpart of addTip. Useful e.g. for a fish rig: buildSpine
+    covers the body, addTail extends a simple FK daisy-chain down from the
+    base for the tail.
+
+    tail_crv: a NURBS curve drawn below/behind the spine base whose CVs
+    define the tail control positions and count. The curve is hidden and
+    parented into the rig after sampling.
+
+    Each CV becomes one tail CTL, daisy-chain parentConstrained (first GRP to
+    {prefix}Btm_CTL, each subsequent GRP to the previous CTL). Unlike addTip
+    -- which extends the spine's SKL chain in-place since it continues past
+    the last joint -- the tail SKL chain is parented as a new child branch
+    off the spine's first SKL joint, so the spine root itself is never
+    touched or reparented.
+    """
+    prefix = prefix.split('|')[-1].split(':')[-1]
+    btm_ctl = prefix + 'Btm_CTL'
+    no_xf_grp = prefix + '_NoTransform000_GRP'
+
+    if not cmds.objExists(btm_ctl):
+        raise RuntimeError('Spine Btm_CTL not found: ' + btm_ctl)
+    if not cmds.objExists(no_xf_grp):
+        raise RuntimeError('Spine NoTransform GRP not found: ' + no_xf_grp)
+    if not cmds.objExists(tail_crv):
+        raise RuntimeError('Tail curve not found: ' + tail_crv)
+
+    tail_grp = prefix + '_TailRig_GRP'
+    if cmds.objExists(tail_grp):
+        raise RuntimeError('Tail rig already exists: ' + tail_grp)
+
+    crv_shapes = cmds.listRelatives(tail_crv, shapes=True, noIntermediate=True) or []
+    if not crv_shapes or cmds.nodeType(crv_shapes[0]) != 'nurbsCurve':
+        raise RuntimeError(tail_crv + ' is not a NURBS curve')
+
+    # Sample CV positions — same pattern as addTip
+    degree = cmds.getAttr(tail_crv + '.degree')
+    spans = cmds.getAttr(tail_crv + '.spans')
+    tail_count = degree + spans
+    points = cmds.getAttr(tail_crv + '.cv[0:' + str(tail_count) + ']')
+
+    first_spine_skl = prefix + '_000_SKL'
+    if not cmds.objExists(first_spine_skl):
+        raise RuntimeError('First spine SKL not found: ' + first_spine_skl)
+    # Base new indices on the current total SKL count so a tail added after
+    # a tip (or vice versa) doesn't collide with the other's joint names.
+    next_skl_idx = len(cmds.ls(prefix + '_*_SKL', type='joint') or [])
+
+    # Container group for the tail CTL chain
+    cmds.group(em=True, name=tail_grp)
+    cmds.parent(tail_grp, no_xf_grp)
+    cog_ctl = prefix + 'COG_CTL'
+    for axis in ['scaleX', 'scaleY', 'scaleZ']:
+        cmds.connectAttr(cog_ctl + '.globalScale', tail_grp + '.' + axis)
+
+    # Hide and store the tail curve inside the rig
+    cmds.parent(tail_crv, tail_grp)
+    cmds.setAttr(tail_crv + '.visibility', 0)
+
+    # ── CTL daisy-chain at CV positions ───────────────────────────────────
+    # Skip CV[0] — it overlaps with the spine Btm_CTL/first SKL.
+    prev_driver = btm_ctl
+    ctl_names = []
+    for i in range(1, tail_count):
+        idx = str(i).zfill(3)
+        grp = prefix + '_Tail_' + idx + '_GRP'
+        ctl = prefix + '_Tail_' + idx + '_CTL'
+        cv_pos = (points[i][0], points[i][1], points[i][2])
+
+        cmds.group(em=True, name=grp)
+        cmds.parent(grp, tail_grp)
+        # Position at CV, match orientation to driver, then constrain with offset
+        cmds.xform(grp, ws=True, t=cv_pos)
+        oc = cmds.orientConstraint(prev_driver, grp, mo=False)[0]
+        cmds.delete(oc)
+        cmds.setAttr(grp + '.rotateOrder', 4)
+        cmds.addAttr(grp, longName='twist', at='double', keyable=False)
+        cmds.setAttr(grp + '.twist', lock=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(grp + attr, lock=True, keyable=False)
+        cmds.parentConstraint(prev_driver, grp, mo=True)
+
+        cmds.select(clear=True)
+        cmds.circle(radius=2, nr=(0, 1, 0), c=(0, 0, 0), name=ctl, ch=False)
+        cmds.parent(ctl, grp)
+        cmds.setAttr(ctl + '.translate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotate', 0, 0, 0)
+        cmds.setAttr(ctl + '.rotateOrder', 4)
+        cmds.addAttr(ctl, longName='twist', at='double', keyable=True)
+        for attr in ('.v', '.sx', '.sy', '.sz'):
+            cmds.setAttr(ctl + attr, lock=True, keyable=False)
+        ctl_shape = cmds.listRelatives(ctl, shapes=True)[0]
+        cmds.setAttr(ctl_shape + '.overrideEnabled', 1)
+        cmds.setAttr(ctl_shape + '.overrideColor', 22)
+
+        ctl_names.append(ctl)
+        prev_driver = ctl
+
+    # ── New tail SKL chain, hung as a child branch off the spine root ─────
+    new_skl_names = []
+    for i in range(tail_count - 1):
+        cmds.select(clear=True)
+        skl = prefix + '_' + str(next_skl_idx + i).zfill(3) + '_SKL'
+        cmds.joint(name=skl)
+        new_skl_names.append(skl)
+
+    cmds.parent(new_skl_names[0], first_spine_skl)
+    for i in range(1, len(new_skl_names)):
+        cmds.parent(new_skl_names[i], new_skl_names[i - 1])
+
+    # Constrain each new SKL to its matching tail CTL
+    for i, ctl in enumerate(ctl_names):
+        skl = new_skl_names[i]
+        pc = cmds.parentConstraint(ctl, skl)[0]
+        cmds.delete(pc)
+        cmds.setAttr(skl + '.rotate', 0, 0, 0)
+        cmds.parentConstraint(ctl, skl)
+
+    # ── If FK rig already exists, wire Tail_001_GRP into the FK_IK blend ──
+    _wireTailToFKRig(prefix)
+
+    cmds.select(clear=True)
+
+
+def _wireTailToFKRig(prefix):
+    """
+    Mirror of _wireTipToFKRig for the tail: add the first FK CTL as a second
+    parentConstraint target on _Tail_001_GRP and wire both weights through
+    the existing FKIK_MDN / FKIK_PMA nodes. Safe to call when either the
+    tail rig or the FK rig doesn't exist yet — returns silently in that
+    case. Called from both addTail and addFK so the wiring happens
+    regardless of which was run first.
+    """
+    tail_grp = prefix + '_Tail_001_GRP'
+    mdn = prefix + '_FKIK_MDN'
+    pma = prefix + '_FKIK_PMA'
+
+    if not cmds.objExists(tail_grp) or not cmds.objExists(mdn) or not cmds.objExists(pma):
+        return
+
+    fk_ctls = sorted(cmds.ls(prefix + '_FK_*_CTL', type='transform') or [])
+    if not fk_ctls:
+        return
+    first_fk_ctl = fk_ctls[0]
+
+    # Guard: don't add a second constraint if first_fk_ctl is already a target
+    existing_pc = (cmds.listRelatives(tail_grp, children=True,
+                                      type='parentConstraint') or [None])[0]
+    if existing_pc:
+        targets = cmds.parentConstraint(existing_pc, query=True,
+                                        targetList=True) or []
+        if first_fk_ctl in targets:
+            return
+
+    cmds.parentConstraint(first_fk_ctl, tail_grp, mo=True)
+    tail_pc = (cmds.listRelatives(tail_grp, children=True,
+                                  type='parentConstraint') or [None])[0]
+    if not tail_pc:
+        return
+    tail_weights = cmds.parentConstraint(tail_pc, query=True,
+                                         weightAliasList=True) or []
+    if len(tail_weights) < 2:
+        return
+    cmds.connectAttr(pma + '.output1D', tail_pc + '.' + tail_weights[0], force=True)
+    cmds.connectAttr(mdn + '.outputX',  tail_pc + '.' + tail_weights[1], force=True)
 
 
 def addFK(prefix):
@@ -899,8 +1168,9 @@ def addFK(prefix):
         if cmds.objExists(grp):
             cmds.connectAttr(pma + '.output1D', grp + '.visibility', force=True)
 
-    # ── Tip rig: wire Tip_001_GRP if tip was already added ────────────────
+    # ── Tip/tail rigs: wire their attach GRPs if already added ────────────
     _wireTipToFKRig(prefix)
+    _wireTailToFKRig(prefix)
 
     cmds.select(clear=True)
 
@@ -984,6 +1254,24 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
+        # Master control position — where COG_CTL (and its nested master
+        # controls) sits on the base spine: bottom, mid, or top control.
+        # Does not include the tip rig, only the spine's own 3 controls.
+        masterPos_box = QtWidgets.QGroupBox('Master Control Position')
+        masterPos_layout = QtWidgets.QHBoxLayout(masterPos_box)
+        masterPos_layout.setSpacing(10)
+        self._masterPos_group = QtWidgets.QButtonGroup(self)
+        for label, value in [('Top', 'top'), ('Mid', 'mid'), ('Bottom', 'bottom')]:
+            rb = QtWidgets.QRadioButton(label)
+            if value == 'bottom':
+                rb.setChecked(True)
+            self._masterPos_group.addButton(rb)
+            rb.setProperty('masterPosValue', value)
+            masterPos_layout.addWidget(rb)
+        layout.addWidget(masterPos_box)
+
+        layout.addWidget(_separator())
+
         # Build button
         build_btn = QtWidgets.QPushButton('Build Rig')
         build_btn.setMinimumHeight(36)
@@ -1022,6 +1310,19 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
+        # Add Tail section
+        tail_box = QtWidgets.QGroupBox('Add Tail')
+        tail_layout = QtWidgets.QVBoxLayout(tail_box)
+        tail_layout.setSpacing(6)
+
+        tail_btn = QtWidgets.QPushButton('Add Tail To Rig')
+        tail_btn.clicked.connect(self._add_tail)
+        tail_layout.addWidget(tail_btn)
+
+        layout.addWidget(tail_box)
+
+        layout.addWidget(_separator())
+
         # Log
         log_box = QtWidgets.QGroupBox('Log')
         log_layout = QtWidgets.QVBoxLayout(log_box)
@@ -1054,10 +1355,11 @@ class SpineRigUI(QtWidgets.QDialog):
             return
 
         spans = self._fidelity_group.checkedId()
-        self._log_msg(f'Building "{prefix}" ({spans} spans)...')
+        master_pos = self._masterPos_group.checkedButton().property('masterPosValue')
+        self._log_msg(f'Building "{prefix}" ({spans} spans, master at {master_pos})...')
 
         try:
-            buildSpine(prefix, surface_spans=spans)
+            buildSpine(prefix, surface_spans=spans, master_pos=master_pos)
             hideTorso(prefix)
             self._log_msg(f'Done — "{prefix}" spine rig built.')
             cmds.inViewMessage(
@@ -1084,6 +1386,28 @@ class SpineRigUI(QtWidgets.QDialog):
             self._log_msg(f'Done — tip rig added to "{prefix}".')
             cmds.inViewMessage(
                 amg=f'<b>{prefix}</b> tip rig added.',
+                pos='midCenter', fade=True
+            )
+        except Exception as e:
+            self._log_msg(f'ERROR: {e}')
+
+    def _add_tail(self):
+        sel = cmds.ls(sl=True)
+        if not sel:
+            self._log_msg('ERROR: Select the tail curve before adding.')
+            return
+        tail_crv = sel[0]
+        shapes = cmds.listRelatives(tail_crv, shapes=True, noIntermediate=True) or []
+        if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
+            self._log_msg(f'ERROR: "{tail_crv}" is not a NURBS curve.')
+            return
+        prefix = tail_crv
+        self._log_msg(f'Adding tail to "{prefix}" from "{tail_crv}"...')
+        try:
+            addTail(prefix, tail_crv)
+            self._log_msg(f'Done — tail rig added to "{prefix}".')
+            cmds.inViewMessage(
+                amg=f'<b>{prefix}</b> tail rig added.',
                 pos='midCenter', fade=True
             )
         except Exception as e:
