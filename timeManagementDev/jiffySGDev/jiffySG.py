@@ -884,10 +884,12 @@ STAGE_COLORS = {
 
 # Real sg_asset_type valid values on the site (confirmed via
 # schema_field_read, 2026-07-28) — populates the Asset Type dropdown in
-# ItemDialog and is written straight to Asset.sg_asset_type.
+# ItemDialog and is written straight to Asset.sg_asset_type. "Set Dressing"
+# added 2026-07-28 via setup_schema.py's setup_asset_type_values() — run
+# that after adding new values here so the site's schema stays in sync.
 ASSET_TYPE_VALUES = [
     "Character", "Environment", "Prop", "FX", "Graphic", "Matte Painting",
-    "Vehicle", "Weapon", "Model", "Theme", "Zone", "Part",
+    "Vehicle", "Weapon", "Model", "Theme", "Zone", "Part", "Set Dressing",
 ]
 
 # The Asset-type Pipeline Step Jiffy SG's single per-Asset Task lives under —

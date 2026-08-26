@@ -108,5 +108,25 @@ def setup_project_fields():
             display_name, field_name))
 
 
+def setup_asset_type_values():
+    """Ensures Asset.sg_asset_type's valid_values list on the site covers
+    everything jiffySG.ASSET_TYPE_VALUES needs. sg_asset_type is a standard
+    ShotGrid field, not created here (unlike the custom Project fields
+    above) — this only ever appends missing values, never removes existing
+    site values, since other projects' assets may already use them."""
+    sg = _admin_connection()
+    existing = sg.schema_field_read("Asset")
+    current_values = existing["sg_asset_type"]["properties"]["valid_values"]["value"]
+
+    missing = [v for v in jiffySG.ASSET_TYPE_VALUES if v not in current_values]
+    if not missing:
+        print("jiffySG setup_schema: sg_asset_type already has all required values — skipped")
+        return
+
+    sg.schema_field_update("Asset", "sg_asset_type", {"valid_values": current_values + missing})
+    print("jiffySG setup_schema: added {0} to sg_asset_type valid_values".format(missing))
+
+
 if __name__ == "__main__":
     setup_project_fields()
+    setup_asset_type_values()
