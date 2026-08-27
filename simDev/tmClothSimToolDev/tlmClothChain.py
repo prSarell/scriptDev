@@ -49,6 +49,14 @@ class SimClothRig():
 		self.presetsList = ['custom', 'airBag', 'beachBall', 'burlap', 'chainMail', 'chiffon', 'concrete', 'heavyDenim', 'honey', 'lava', 'looseThickKnit', 'plasticShell', 'putty', 'rubberSheet', 'silk', 'softSheetMetal', 'solidRubber', 'thickLeather', 'tshirt', 'waterBalloon', 'waterVolume']
 		self.nClothSettingsName = ['bounce', 'friction', 'damp', 'stickiness', 'pointMass', 'stretchResistance', 'compressionResistance', 'bendResistance', 'rigidity', 'stretchDamp']
 		self.customPreset = [0, 2, 0.25, 0, 1.5, 200, 200, 3, 0.01, 0.1]
+		# Named dynamicConstraint.strength distributions across a rig's segments,
+		# applied via _applyConstraintProfile -- separate from presetsList above,
+		# which is nCloth material presets (burlap, silk, etc), a different axis.
+		self.constraintProfiles = [
+			('baseToTip', 'Base to Tip'),
+			('bothEndsPinned', 'Both Ends Pinned'),
+			('uniform', 'Uniform'),
+		]
 
 	def _get_nucleus(self, clothRigName):
 		connections = cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or []
@@ -266,11 +274,17 @@ class SimClothRig():
 		cmds.text('clothRig_text', l='Cloth Rig: ' + clothRigName, h=16, bgc=(.22,.22,.22), al='center', fn="boldLabelFont", p='segmentOffset_frameLayout')
 
 		cmds.rowColumnLayout('segmentOffset_rowColumnLayout', numberOfColumns=3, p='segmentOffset_frameLayout')
-		cmds.rowLayout('options_rowLayout2', nc=4, p='segmentOffset_frameLayout')
+		cmds.rowLayout('options_rowLayout2', nc=6, p='segmentOffset_frameLayout')
 		cmds.text('Multiply by: ')
 		cmds.textField('multiply_textField', ec=self.multiplyStrength, alwaysInvokeEnterCommandOnReturn=True, w=33)
 		cmds.separator(style='in', w=10, h=20, hr=False)
 		cmds.iconTextButton('Invert', w=22, h=18, image1='invertSelection.png', ann='Invert values', c=self.invertSegmentOffset)
+		cmds.separator(style='in', w=10, h=20, hr=False)
+		cmds.button('constraintProfile_button', l='Profile*', w=60,
+		           ann='Apply a named constraint-strength distribution across all segments.')
+		cmds.popupMenu('constraintProfile_popupMenu', b=1)
+		for profileId, profileLabel in self.constraintProfiles:
+			cmds.menuItem(profileLabel, c=partial(self.applyConstraintProfilePreset, profileId))
 
 		cmds.showWindow("segmentOffset_window")
 		cmds.window('segmentOffset_window', e=True, w=40, h=40)
@@ -309,6 +323,57 @@ class SimClothRig():
 				cmds.parentConstraint(fol_order[i], master1, maintainOffset=False)
 				cmds.pointConstraint(fol_order[i + 1], target_grp, maintainOffset=False)
 			cmds.setAttr(aim_chain_grp + '.isInverted', not is_inverted)
+
+	def _constraintProfileStrength(self, profile, index, total):
+		"""Strength value for one dynamicConstraint node, by its 1-indexed
+		segment number and the total segment count, for a named profile.
+		'baseToTip' is the original build-time formula (base pinned at 0.9,
+		tip free at 0.01, a 1/index falloff between); 'bothEndsPinned'
+		mirrors that same curve about the chain's center -- both ends
+		pinned at 0.9, the middle free at 0.01 -- so it keeps the same
+		falloff character rather than inventing a new one.
+		"""
+		if profile == 'uniform':
+			return 0.5
+		if profile == 'baseToTip':
+			if index == 1:
+				return 0.9
+			if index == total:
+				return 0.01
+			return (1.0 / float(index)) * 0.1
+		if profile == 'bothEndsPinned':
+			dist = min(index, total + 1 - index)
+			distMax = (total + 1) // 2
+			if index == 1 or index == total:
+				return 0.9
+			if dist == distMax:
+				return 0.01
+			return (1.0 / float(dist)) * 0.1
+		raise ValueError('Unknown constraint profile: %r' % profile)
+
+	def _applyConstraintProfile(self, clothRigName, profile):
+		"""Set every dynamicConstraint.strength on clothRigName's cloth rig
+		per the named profile. Returns {index: strength} so callers can also
+		refresh an open Set Influence window's text fields.
+		"""
+		constraintNodesList = [i for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []
+		                       if 'dynamicConstraint' in i]
+		total = len(constraintNodesList)
+		result = {}
+		for node in constraintNodesList:
+			index = int(node.rpartition('dynamicConstraint')[2])
+			strength = self._constraintProfileStrength(profile, index, total)
+			cmds.setAttr(node + '.strength', strength)
+			result[index] = strength
+		return result
+
+	def applyConstraintProfilePreset(self, profile, *args):
+		clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
+		strengths = self._applyConstraintProfile(clothRigName, profile)
+		for index, strength in strengths.items():
+			textFieldName = 'segment_%d_textField' % index
+			if cmds.textField(textFieldName, exists=True):
+				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
 
 	def discreteDropoffUI(self, controlsList, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -780,18 +845,7 @@ class SimClothRig():
 
 		self.loadSettings()
 
-		constraintNodesList = []
-		for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []:
-			if 'dynamicConstraint' in i:
-				constraintNodesList.append(i)
-
-		for i in constraintNodesList:
-			if i == constraintNodesList[0]:
-				cmds.setAttr(i + '.strength', 0.9)
-			elif i == constraintNodesList[-1]:
-				cmds.setAttr(i + '.strength', 0.01)
-			else:
-				cmds.setAttr(i + '.strength', (1.0 / float(i.rpartition('dynamicConstraint')[2])) * .1)
+		self._applyConstraintProfile(clothRigName, 'baseToTip')
 
 		cmds.textScrollList('joints_scrollList', e=True, ra=True)
 		cmds.textScrollList('controls_scrollList', e=True, ra=True)
@@ -925,6 +979,13 @@ class SimClothRig():
 		# 1. Geo cache _bsGeo — Maya plays through and bakes the sim into the cache
 		cmds.select(clothRigName + '_bsGeo')
 		mel.eval('doCreateGeometryCache 6 {"0", "%s", "%s", "OneFile", "1", "", "0", "", "0", "add", "1", "1", "1", "0", "1", "mcx", "0"};' % (start_fr, end_fr))
+		# doCreateGeometryCache scrubs through the whole range while writing
+		# the cache and leaves the timeline sitting at end_fr -- without
+		# resetting here, every mo=True constraint below would bake its
+		# offset from the pose at end_fr instead of start_fr, corrupting
+		# every frame (including the start/default pose) with a fixed,
+		# wrong offset.
+		cmds.currentTime(start_fr)
 
 		# 2. Orient each aim_loc to match its control before constraining
 		for i in range(len(self.controlsList) - 1):
@@ -1024,6 +1085,34 @@ class SimClothRig():
 		cmds.setAttr(clothRigName + '_simGeo.visibility', 1)
 		cmds.setAttr(clothRigName + '_bsGeo.visibility', 0)
 
+	def _eulerFilterRotates(self, controlsList, layerName=None):
+		"""Straighten out 360-degree Euler wraps introduced by baking a live
+		constraint-driven rotation. cmds.bakeResults samples the constrained
+		rotation at each frame with no notion of "shortest path" between
+		keys -- e.g. 355 at one key and -5 at the next are the same
+		rotation, but bake as a full spin instead of a 10-degree move,
+		which is exactly what shows up as a pop/spin at frame 0. When
+		baking onto an override layer, the layer's own animCurve for each
+		plug has to be resolved explicitly (animLayer -findCurveForPlug) --
+		a plain object.attribute lookup can find the wrong layer's curve
+		once more than one exists on the same attribute.
+		"""
+		curves = []
+		for control in controlsList or []:
+			for axis in ('rotateX', 'rotateY', 'rotateZ'):
+				plug = control + '.' + axis
+				curve = None
+				if layerName and cmds.animLayer(layerName, query=True, exists=True):
+					found = cmds.animLayer(layerName, query=True, findCurveForPlug=plug)
+					curve = found[0] if found else None
+				if not curve:
+					conns = cmds.listConnections(plug, type='animCurve', source=True, destination=False) or []
+					curve = conns[0] if conns else None
+				if curve:
+					curves.append(curve)
+		if curves:
+			cmds.filterCurve(curves, filter='euler')
+
 	def bakeFinalSim(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
 		controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
@@ -1037,8 +1126,10 @@ class SimClothRig():
 			if animLayer:
 				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, bakeOnOverrideLayer=True, simulation=True)
 				cmds.rename('BakeResults', clothRigName + '_simLayer')
+				self._eulerFilterRotates(controlsList, layerName=clothRigName + '_simLayer')
 			else:
 				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, simulation=True)
+				self._eulerFilterRotates(controlsList)
 			cmds.refresh(su=False)
 
 			cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
