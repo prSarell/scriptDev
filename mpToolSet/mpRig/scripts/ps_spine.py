@@ -400,6 +400,13 @@ def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
         cmds.skinCluster(driverJoints, prefix, n=prefix + '_Crv000_SKN')
 
         cmds.rename(prefix, prefix + '_000_CRV')
+        # If the input curve was still at Maya's own default name (e.g. "curve1"
+        # matching its default shape "curveShape1"), the rename above makes Maya
+        # silently re-sync the shape's name too, invalidating the curve_shape
+        # string captured earlier -- refresh it before the master CTL alignment
+        # loop below reads it again.
+        curve_shape = cmds.listRelatives(prefix + '_000_CRV', shapes=True,
+                                         noIntermediate=True)[0]
 
         lengthOfCurve = cmds.getAttr(prefix + '_SquashStretch000_MDN.input2X')
         rotationAmount = 90
@@ -604,6 +611,11 @@ def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
             cmds.parent(prefix + '_' + str(i + 1).zfill(3) + '_SKL',
                         prefix + '_' + str(i).zfill(3) + '_SKL')
 
+        for i in range(0, totalSpineJoints):
+            skl = prefix + '_' + str(i).zfill(3) + '_SKL'
+            for axis in ['scaleX', 'scaleY', 'scaleZ']:
+                cmds.connectAttr(prefix + '_All000_CTL.globalScale', skl + '.' + axis)
+
         for i in range(0, totalSpineJoints - 2):
             cmds.setAttr(prefix + '_' + str(i).zfill(3) + '_SKL.jointOrient', 0, 0, 0)
             jX = cmds.getAttr(prefix + '_' + str(i).zfill(3) + '_SKL.rotateX')
@@ -746,8 +758,11 @@ def addTip(prefix, tip_crv):
     for axis in ['scaleX', 'scaleY', 'scaleZ']:
         cmds.connectAttr(cog_ctl + '.globalScale', tip_grp + '.' + axis)
 
-    # Hide and store the tip curve inside the rig
+    # Hide and store the tip curve inside the rig -- rename it into the rig's
+    # own convention so whatever Maya happened to call it (curve1, curve2...)
+    # doesn't linger; the user shouldn't need to name it correctly themselves.
     cmds.parent(tip_crv, tip_grp)
+    tip_crv = cmds.rename(tip_crv, prefix + '_TipGuide_CRV')
     cmds.setAttr(tip_crv + '.visibility', 0)
 
     # ── CTL daisy-chain at CV positions ───────────────────────────────────
@@ -915,8 +930,11 @@ def addTail(prefix, tail_crv):
     for axis in ['scaleX', 'scaleY', 'scaleZ']:
         cmds.connectAttr(cog_ctl + '.globalScale', tail_grp + '.' + axis)
 
-    # Hide and store the tail curve inside the rig
+    # Hide and store the tail curve inside the rig -- rename it into the rig's
+    # own convention so whatever Maya happened to call it (curve1, curve2...)
+    # doesn't linger; the user shouldn't need to name it correctly themselves.
     cmds.parent(tail_crv, tail_grp)
+    tail_crv = cmds.rename(tail_crv, prefix + '_TailGuide_CRV')
     cmds.setAttr(tail_crv + '.visibility', 0)
 
     # ── CTL daisy-chain at CV positions ───────────────────────────────────
@@ -1212,6 +1230,7 @@ class SpineRigUI(QtWidgets.QDialog):
             QtCore.Qt.WindowType.Window |
             QtCore.Qt.WindowType.WindowCloseButtonHint
         )
+        self._last_prefix = None
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(10)
@@ -1303,6 +1322,8 @@ class SpineRigUI(QtWidgets.QDialog):
         tip_layout.setSpacing(6)
 
         tip_btn = QtWidgets.QPushButton('Add Tip To Rig')
+        tip_btn.setToolTip('Select the tip curve and click — targets the rig you '
+                          'just built. To target a different rig, also select its COG_CTL.')
         tip_btn.clicked.connect(self._add_tip)
         tip_layout.addWidget(tip_btn)
 
@@ -1316,6 +1337,8 @@ class SpineRigUI(QtWidgets.QDialog):
         tail_layout.setSpacing(6)
 
         tail_btn = QtWidgets.QPushButton('Add Tail To Rig')
+        tail_btn.setToolTip('Select the tail curve and click — targets the rig you '
+                           'just built. To target a different rig, also select its COG_CTL.')
         tail_btn.clicked.connect(self._add_tail)
         tail_layout.addWidget(tail_btn)
 
@@ -1361,6 +1384,7 @@ class SpineRigUI(QtWidgets.QDialog):
         try:
             buildSpine(prefix, surface_spans=spans, master_pos=master_pos)
             hideTorso(prefix)
+            self._last_prefix = prefix
             self._log_msg(f'Done — "{prefix}" spine rig built.')
             cmds.inViewMessage(
                 amg=f'<b>{prefix}</b> spine rig built.',
@@ -1369,17 +1393,44 @@ class SpineRigUI(QtWidgets.QDialog):
         except Exception as e:
             self._log_msg(f'ERROR: {e}')
 
+    def _resolve_target_prefix(self, explicit_cog_ctl):
+        # Explicit selection (COG_CTL alongside the curve) always wins. Failing
+        # that, if there's exactly one spine rig in the scene there's nothing to
+        # disambiguate -- use it, so the common case (build, draw curve, click
+        # Add) needs no extra selection and doesn't depend on fragile session
+        # state like "whatever was last built in this UI instance".
+        if explicit_cog_ctl:
+            return explicit_cog_ctl[:-len('COG_CTL')]
+        all_cogs = sorted(set(cmds.ls('*COG_CTL') or []))
+        if len(all_cogs) == 1:
+            return all_cogs[0][:-len('COG_CTL')]
+        if len(all_cogs) > 1:
+            candidate = (self._last_prefix or '') + 'COG_CTL'
+            if candidate in all_cogs:
+                return self._last_prefix
+            self._log_msg('ERROR: Multiple spine rigs in the scene — also select '
+                          'the target rig\'s COG_CTL along with the curve.')
+            return None
+        self._log_msg('ERROR: No spine rig found in the scene — build one first.')
+        return None
+
     def _add_tip(self):
         sel = cmds.ls(sl=True)
         if not sel:
             self._log_msg('ERROR: Select the tip curve before adding.')
             return
-        tip_crv = sel[0]
+        cog_ctl = next((s for s in sel if s.endswith('COG_CTL')), None)
+        tip_crv = next((s for s in sel if s != cog_ctl), None)
+        if not tip_crv:
+            self._log_msg('ERROR: Select the tip curve before adding.')
+            return
         shapes = cmds.listRelatives(tip_crv, shapes=True, noIntermediate=True) or []
         if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
             self._log_msg(f'ERROR: "{tip_crv}" is not a NURBS curve.')
             return
-        prefix = tip_crv
+        prefix = self._resolve_target_prefix(cog_ctl)
+        if not prefix:
+            return
         self._log_msg(f'Adding tip to "{prefix}" from "{tip_crv}"...')
         try:
             addTip(prefix, tip_crv)
@@ -1396,12 +1447,18 @@ class SpineRigUI(QtWidgets.QDialog):
         if not sel:
             self._log_msg('ERROR: Select the tail curve before adding.')
             return
-        tail_crv = sel[0]
+        cog_ctl = next((s for s in sel if s.endswith('COG_CTL')), None)
+        tail_crv = next((s for s in sel if s != cog_ctl), None)
+        if not tail_crv:
+            self._log_msg('ERROR: Select the tail curve before adding.')
+            return
         shapes = cmds.listRelatives(tail_crv, shapes=True, noIntermediate=True) or []
         if not shapes or cmds.objectType(shapes[0]) != 'nurbsCurve':
             self._log_msg(f'ERROR: "{tail_crv}" is not a NURBS curve.')
             return
-        prefix = tail_crv
+        prefix = self._resolve_target_prefix(cog_ctl)
+        if not prefix:
+            return
         self._log_msg(f'Adding tail to "{prefix}" from "{tail_crv}"...')
         try:
             addTail(prefix, tail_crv)
