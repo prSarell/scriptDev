@@ -1,6 +1,8 @@
 # Maya 2025–ready version
 import maya.cmds as cmds
 import maya.mel as mel
+import maya.api.OpenMaya as om2
+import math
 import os
 from functools import partial
 import importlib
@@ -47,6 +49,14 @@ class SimClothRig():
 		self.presetsList = ['custom', 'airBag', 'beachBall', 'burlap', 'chainMail', 'chiffon', 'concrete', 'heavyDenim', 'honey', 'lava', 'looseThickKnit', 'plasticShell', 'putty', 'rubberSheet', 'silk', 'softSheetMetal', 'solidRubber', 'thickLeather', 'tshirt', 'waterBalloon', 'waterVolume']
 		self.nClothSettingsName = ['bounce', 'friction', 'damp', 'stickiness', 'pointMass', 'stretchResistance', 'compressionResistance', 'bendResistance', 'rigidity', 'stretchDamp']
 		self.customPreset = [0, 2, 0.25, 0, 1.5, 200, 200, 3, 0.01, 0.1]
+		# Named dynamicConstraint.strength distributions across a rig's segments,
+		# applied via _applyConstraintProfile -- separate from presetsList above,
+		# which is nCloth material presets (burlap, silk, etc), a different axis.
+		self.constraintProfiles = [
+			('baseToTip', 'Base to Tip'),
+			('bothEndsPinned', 'Both Ends Pinned'),
+			('uniform', 'Uniform'),
+		]
 
 	def _get_nucleus(self, clothRigName):
 		connections = cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or []
@@ -133,6 +143,8 @@ class SimClothRig():
 		cmds.textField('numSegments_textField', w=40, tx='3')
 
 		cmds.button(l='Create Proxy Geo', w=100, c=self.createBaseGeo, p='clothChain_frameLayout')
+		cmds.button(l='From Joints', w=100, c=self.buildProxyFromJoints, p='clothChain_frameLayout',
+		           ann='Select an ordered joint chain, then click to build proxy geo snapped to it.')
 		cmds.separator(st='none', h=10,  p='clothChain_frameLayout')
 
 		cmds.frameLayout('buildClothRig_frameLayout', lv=False, bv=False, p='clothChain_frameLayout')
@@ -262,11 +274,17 @@ class SimClothRig():
 		cmds.text('clothRig_text', l='Cloth Rig: ' + clothRigName, h=16, bgc=(.22,.22,.22), al='center', fn="boldLabelFont", p='segmentOffset_frameLayout')
 
 		cmds.rowColumnLayout('segmentOffset_rowColumnLayout', numberOfColumns=3, p='segmentOffset_frameLayout')
-		cmds.rowLayout('options_rowLayout2', nc=4, p='segmentOffset_frameLayout')
+		cmds.rowLayout('options_rowLayout2', nc=6, p='segmentOffset_frameLayout')
 		cmds.text('Multiply by: ')
 		cmds.textField('multiply_textField', ec=self.multiplyStrength, alwaysInvokeEnterCommandOnReturn=True, w=33)
 		cmds.separator(style='in', w=10, h=20, hr=False)
 		cmds.iconTextButton('Invert', w=22, h=18, image1='invertSelection.png', ann='Invert values', c=self.invertSegmentOffset)
+		cmds.separator(style='in', w=10, h=20, hr=False)
+		cmds.button('constraintProfile_button', l='Profile*', w=60,
+		           ann='Apply a named constraint-strength distribution across all segments.')
+		cmds.popupMenu('constraintProfile_popupMenu', b=1)
+		for profileId, profileLabel in self.constraintProfiles:
+			cmds.menuItem(profileLabel, c=partial(self.applyConstraintProfilePreset, profileId))
 
 		cmds.showWindow("segmentOffset_window")
 		cmds.window('segmentOffset_window', e=True, w=40, h=40)
@@ -305,6 +323,57 @@ class SimClothRig():
 				cmds.parentConstraint(fol_order[i], master1, maintainOffset=False)
 				cmds.pointConstraint(fol_order[i + 1], target_grp, maintainOffset=False)
 			cmds.setAttr(aim_chain_grp + '.isInverted', not is_inverted)
+
+	def _constraintProfileStrength(self, profile, index, total):
+		"""Strength value for one dynamicConstraint node, by its 1-indexed
+		segment number and the total segment count, for a named profile.
+		'baseToTip' is the original build-time formula (base pinned at 0.9,
+		tip free at 0.01, a 1/index falloff between); 'bothEndsPinned'
+		mirrors that same curve about the chain's center -- both ends
+		pinned at 0.9, the middle free at 0.01 -- so it keeps the same
+		falloff character rather than inventing a new one.
+		"""
+		if profile == 'uniform':
+			return 0.5
+		if profile == 'baseToTip':
+			if index == 1:
+				return 0.9
+			if index == total:
+				return 0.01
+			return (1.0 / float(index)) * 0.1
+		if profile == 'bothEndsPinned':
+			dist = min(index, total + 1 - index)
+			distMax = (total + 1) // 2
+			if index == 1 or index == total:
+				return 0.9
+			if dist == distMax:
+				return 0.01
+			return (1.0 / float(dist)) * 0.1
+		raise ValueError('Unknown constraint profile: %r' % profile)
+
+	def _applyConstraintProfile(self, clothRigName, profile):
+		"""Set every dynamicConstraint.strength on clothRigName's cloth rig
+		per the named profile. Returns {index: strength} so callers can also
+		refresh an open Set Influence window's text fields.
+		"""
+		constraintNodesList = [i for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []
+		                       if 'dynamicConstraint' in i]
+		total = len(constraintNodesList)
+		result = {}
+		for node in constraintNodesList:
+			index = int(node.rpartition('dynamicConstraint')[2])
+			strength = self._constraintProfileStrength(profile, index, total)
+			cmds.setAttr(node + '.strength', strength)
+			result[index] = strength
+		return result
+
+	def applyConstraintProfilePreset(self, profile, *args):
+		clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
+		strengths = self._applyConstraintProfile(clothRigName, profile)
+		for index, strength in strengths.items():
+			textFieldName = 'segment_%d_textField' % index
+			if cmds.textField(textFieldName, exists=True):
+				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
 
 	def discreteDropoffUI(self, controlsList, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -480,7 +549,117 @@ class SimClothRig():
 			value = "%.2f" % cmds.getAttr(clothRigName + '_nClothShape1.' + i)
 			cmds.textField(i + '_textField', e=True, tx=value)
 
-	def createBaseGeo(self, *args):
+	def _order_joint_chain(self, selection):
+		"""Order an unordered joint selection into a single root-to-tip chain.
+		Positions are trusted, click order is not -- this walks the actual
+		parent/child hierarchy among the selected joints so a marquee or
+		"select hierarchy" selection works the same as a careful shift-click.
+		"""
+		joints = cmds.ls(selection, type='joint', long=True) or []
+		if len(joints) < 2:
+			raise RuntimeError('Select at least 2 joints forming a single chain.')
+
+		selSet = set(joints)
+		roots = []
+		for j in joints:
+			ancestors = set()
+			parent = cmds.listRelatives(j, parent=True, fullPath=True)
+			while parent:
+				ancestors.add(parent[0])
+				parent = cmds.listRelatives(parent[0], parent=True, fullPath=True)
+			if not (ancestors & selSet):
+				roots.append(j)
+		if len(roots) != 1:
+			raise RuntimeError(
+				'Selected joints must form a single connected chain (found %d root(s)).' % len(roots))
+
+		ordered = [roots[0]]
+		current = roots[0]
+		while True:
+			children = cmds.listRelatives(current, children=True, type='joint', fullPath=True) or []
+			selectedChildren = [c for c in children if c in selSet]
+			if not selectedChildren:
+				break
+			if len(selectedChildren) > 1:
+				raise RuntimeError('Selected joints branch at "%s" -- select a single unbranched chain.' % current)
+			current = selectedChildren[0]
+			ordered.append(current)
+
+		if len(ordered) != len(joints):
+			raise RuntimeError('Selected joints do not all belong to the same connected chain.')
+		return ordered
+
+	def _joint_chain_row_matrices(self, orderedJoints):
+		"""Per-joint world matrices derived purely from joint POSITIONS, using
+		a rotation-minimizing (parallel-transport) frame -- jointOrient/rotate
+		are never read, so this is correct regardless of how the source rig's
+		joints were authored. Local +Y = down-the-chain tangent, +Z = up,
+		+X = right, so the flat shape_CTRL curve (authored in the XZ plane)
+		sits like a ring/cross-section around the chain at each joint.
+		"""
+		positions = [om2.MVector(*cmds.xform(j, q=True, ws=True, t=True)) for j in orderedJoints]
+		n = len(positions)
+
+		aims = []
+		for i in range(n):
+			if i < n - 1:
+				aims.append((positions[i + 1] - positions[i]).normal())
+			else:
+				aims.append(aims[-1])
+
+		seedUp = om2.MVector(0, 0, 1)
+		a0 = aims[0]
+		up0 = seedUp - a0 * (seedUp * a0)
+		if up0.length() < 1e-6:
+			alt = om2.MVector(1, 0, 0)
+			up0 = alt - a0 * (alt * a0)
+		ups = [up0.normal()]
+
+		for i in range(1, n):
+			aPrev, aCur = aims[i - 1], aims[i]
+			dot = max(-1.0, min(1.0, aPrev * aCur))
+			axis = aPrev ^ aCur
+			if axis.length() < 1e-8:
+				ups.append(ups[-1])
+				continue
+			axis = axis.normal()
+			angle = math.acos(dot)
+			ups.append(ups[-1].rotateBy(om2.MQuaternion(angle, axis)).normal())
+
+		matrices = []
+		for pos, aim, up in zip(positions, aims, ups):
+			right = (aim ^ up).normal()
+			upOrtho = (right ^ aim).normal()
+			matrices.append([
+				right.x, right.y, right.z, 0.0,
+				aim.x,   aim.y,   aim.z,   0.0,
+				upOrtho.x, upOrtho.y, upOrtho.z, 0.0,
+				pos.x,   pos.y,   pos.z,   1.0,
+			])
+		return matrices
+
+	def buildProxyFromJoints(self, *args):
+		selection = cmds.ls(sl=True) or []
+		try:
+			ordered = self._order_joint_chain(selection)
+		except RuntimeError as e:
+			cmds.warning(str(e))
+			return
+
+		nameFieldValue = (cmds.textField('clothRigName_textField', q=True, tx=True) or '').strip()
+		if not nameFieldValue:
+			rootShort = ordered[0].split('|')[-1].split(':')[-1]
+			cmds.textField('clothRigName_textField', e=True, tx=rootShort)
+
+		cmds.textField('numSegments_textField', e=True, tx=str(len(ordered) - 1))
+
+		rowFrames = self._joint_chain_row_matrices(ordered)
+		self.createBaseGeo(row_frames=rowFrames)
+
+		cmds.select(ordered, r=True)
+		self.addObjs('joints_scrollList')
+
+	def createBaseGeo(self, *args, row_frames=None):
 		raw = cmds.textField('clothRigName_textField', q=True, tx=True)
 		objName = (raw or '').replace(' ', '_')
 		try:
@@ -516,6 +695,10 @@ class SimClothRig():
 				cmds.parentConstraint(clusterObj, curveObj, n='cluster%s_parentConstraint1' % str(i))
 			cmds.delete('cluster*_parentConstraint1')
 
+			if row_frames is not None:
+				for i, rowMatrix in enumerate(row_frames):
+					cmds.xform(objName + '_shape_%s_CTRL' % str(i), ws=True, m=rowMatrix)
+
 			for i in range(segmentsNumber + 1):
 				cmds.select(objName + '_shape_%s_CTRL' % str(i), r=True)
 				mel.eval("channelBoxCommand -freezeTranslate;")
@@ -528,49 +711,31 @@ class SimClothRig():
 				cmds.setAttr(bottom_shapes[0] + '.overrideEnabled', 1)
 				cmds.setAttr(bottom_shapes[0] + '.overrideColor', 12)
 
-			# Proxy aim rig — spans bottom to top shape ctrl, parented under baseGeo_grp
+			# Proxy aim rig — spans bottom to top shape ctrl, parented under baseGeo_grp.
+			# m1 and tgt_grp are LIVE-constrained to the bottom/top shape ctrls (not a
+			# one-time snapshot) so the chain keeps tracking as the user shapes the geo.
+			# main_CTRL stays parented directly under baseGeo_grp — it must NOT be
+			# reparented under aim_loc, which nests the shape sub-controllers inside a
+			# rotated, aim-constrained frame and breaks predictable shaping (regression
+			# introduced in d5116e6, reverted here).
+			top_ctrl = objName + '_shape_%s_CTRL' % str(segmentsNumber)
 			pfx = objName + '_aimRig_00'
-
-			# Master control — snapped to bottom shape ctrl, drives the whole aim rig
-			master_ctrl = cmds.circle(n=pfx + '_master_CTRL', nr=[0, 1, 0], r=2)[0]
-			cmds.parent(master_ctrl, objName + '_baseGeo_grp')
-			bot_pos = cmds.xform(objName + '_shape_0_CTRL', q=True, ws=True, t=True)
-			bot_rot = cmds.xform(objName + '_shape_0_CTRL', q=True, ws=True, ro=True)
-			cmds.xform(master_ctrl, ws=True, t=bot_pos, ro=bot_rot)
-
-			m1 = cmds.group(em=True, name=pfx + '_master_grp_01', p=master_ctrl)
+			m1 = cmds.group(em=True, name=pfx + '_master_grp_01', p=objName + '_baseGeo_grp')
 			m2 = cmds.group(em=True, name=pfx + '_master_grp_02', p=m1)
 			cmds.setAttr(m2 + '.rotateX', -90)
 			m3 = cmds.group(em=True, name=pfx + '_master_grp_03', p=m2)
-
-			# Up group: arrow curve pointing +Y (up vector direction)
 			up_grp = cmds.group(em=True, name=pfx + '_up_grp', p=m3)
-			cmds.setAttr(up_grp + '.ty', 6.3436406353103205)
-			up_loc = cmds.curve(n=pfx + '_up_loc', d=1, p=[
-				(-0.2, 0, 0), (-0.2, 0.6, 0), (-0.5, 0.6, 0), (0, 1.2, 0),
-				(0.5, 0.6, 0), (0.2, 0.6, 0), (0.2, 0, 0), (-0.2, 0, 0)
-			])
+			up_loc = cmds.spaceLocator(name=pfx + '_up_loc')[0]
 			cmds.parent(up_loc, up_grp)
-
-			# Aim group and locator — rx=90 aligns aim_loc local Y to world +Y so
-			# main_CTRL ty=7.5 re-centres it at the chain midpoint after re-parenting
+			cmds.setAttr(up_grp + '.ty', 5)
 			aim_grp = cmds.group(em=True, name=pfx + '_aim_grp', p=m3)
 			aim_loc = cmds.spaceLocator(name=pfx + '_aim_loc')[0]
 			cmds.parent(aim_loc, aim_grp)
-			cmds.setAttr(aim_loc + '.rotateX', 90)
-
-			# Target group: local tz=plane height puts it at the top of the chain in
-			# m3's frame (local Z = world +Y); rx=-90/+90 pair cancels the frame twist
 			tgt_grp = cmds.group(em=True, name=pfx + '_target_grp', p=m3)
-			tgt_loc = cmds.curve(n=pfx + '_target_loc', d=1, p=[
-				(-0.2, 0, 0), (-0.2, 0, 0.6), (-0.5, 0, 0.6), (0, 0, 1.2),
-				(0.5, 0, 0.6), (0.2, 0, 0.6), (0.2, 0, 0), (-0.2, 0, 0)
-			])
+			tgt_loc = cmds.spaceLocator(name=pfx + '_target_loc')[0]
 			cmds.parent(tgt_loc, tgt_grp)
-			cmds.setAttr(tgt_grp + '.translateZ', 15)
-			cmds.setAttr(tgt_grp + '.rotateX', -90)
-			cmds.setAttr(tgt_loc + '.rotateX', 90)
-
+			cmds.parentConstraint(objName + '_shape_0_CTRL', m1, maintainOffset=False)
+			cmds.pointConstraint(top_ctrl, tgt_grp, maintainOffset=False)
 			cmds.aimConstraint(
 				tgt_loc, aim_grp,
 				aimVector=(0, 0, 1),
@@ -579,8 +744,6 @@ class SimClothRig():
 				worldUpObject=up_loc,
 				maintainOffset=False,
 			)
-			cmds.parent(objName + '_main_CTRL', aim_loc)
-			cmds.setAttr(objName + '_main_CTRL.translateY', 7.5)
 
 			self.feedOptionMenu('baseGeo')
 			cmds.parent(objName + '_baseGeo_grp', 'allBaseGeo_grp')
@@ -682,18 +845,7 @@ class SimClothRig():
 
 		self.loadSettings()
 
-		constraintNodesList = []
-		for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []:
-			if 'dynamicConstraint' in i:
-				constraintNodesList.append(i)
-
-		for i in constraintNodesList:
-			if i == constraintNodesList[0]:
-				cmds.setAttr(i + '.strength', 0.9)
-			elif i == constraintNodesList[-1]:
-				cmds.setAttr(i + '.strength', 0.01)
-			else:
-				cmds.setAttr(i + '.strength', (1.0 / float(i.rpartition('dynamicConstraint')[2])) * .1)
+		self._applyConstraintProfile(clothRigName, 'baseToTip')
 
 		cmds.textScrollList('joints_scrollList', e=True, ra=True)
 		cmds.textScrollList('controls_scrollList', e=True, ra=True)
@@ -827,6 +979,13 @@ class SimClothRig():
 		# 1. Geo cache _bsGeo — Maya plays through and bakes the sim into the cache
 		cmds.select(clothRigName + '_bsGeo')
 		mel.eval('doCreateGeometryCache 6 {"0", "%s", "%s", "OneFile", "1", "", "0", "", "0", "add", "1", "1", "1", "0", "1", "mcx", "0"};' % (start_fr, end_fr))
+		# doCreateGeometryCache scrubs through the whole range while writing
+		# the cache and leaves the timeline sitting at end_fr -- without
+		# resetting here, every mo=True constraint below would bake its
+		# offset from the pose at end_fr instead of start_fr, corrupting
+		# every frame (including the start/default pose) with a fixed,
+		# wrong offset.
+		cmds.currentTime(start_fr)
 
 		# 2. Orient each aim_loc to match its control before constraining
 		for i in range(len(self.controlsList) - 1):
@@ -926,6 +1085,34 @@ class SimClothRig():
 		cmds.setAttr(clothRigName + '_simGeo.visibility', 1)
 		cmds.setAttr(clothRigName + '_bsGeo.visibility', 0)
 
+	def _eulerFilterRotates(self, controlsList, layerName=None):
+		"""Straighten out 360-degree Euler wraps introduced by baking a live
+		constraint-driven rotation. cmds.bakeResults samples the constrained
+		rotation at each frame with no notion of "shortest path" between
+		keys -- e.g. 355 at one key and -5 at the next are the same
+		rotation, but bake as a full spin instead of a 10-degree move,
+		which is exactly what shows up as a pop/spin at frame 0. When
+		baking onto an override layer, the layer's own animCurve for each
+		plug has to be resolved explicitly (animLayer -findCurveForPlug) --
+		a plain object.attribute lookup can find the wrong layer's curve
+		once more than one exists on the same attribute.
+		"""
+		curves = []
+		for control in controlsList or []:
+			for axis in ('rotateX', 'rotateY', 'rotateZ'):
+				plug = control + '.' + axis
+				curve = None
+				if layerName and cmds.animLayer(layerName, query=True, exists=True):
+					found = cmds.animLayer(layerName, query=True, findCurveForPlug=plug)
+					curve = found[0] if found else None
+				if not curve:
+					conns = cmds.listConnections(plug, type='animCurve', source=True, destination=False) or []
+					curve = conns[0] if conns else None
+				if curve:
+					curves.append(curve)
+		if curves:
+			cmds.filterCurve(curves, filter='euler')
+
 	def bakeFinalSim(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
 		controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
@@ -939,8 +1126,10 @@ class SimClothRig():
 			if animLayer:
 				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, bakeOnOverrideLayer=True, simulation=True)
 				cmds.rename('BakeResults', clothRigName + '_simLayer')
+				self._eulerFilterRotates(controlsList, layerName=clothRigName + '_simLayer')
 			else:
 				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, simulation=True)
+				self._eulerFilterRotates(controlsList)
 			cmds.refresh(su=False)
 
 			cache_nodes = cmds.listConnections(clothRigName + '_bsGeoShape', type='cacheFile') or []
