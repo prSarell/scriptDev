@@ -1,6 +1,8 @@
 # Maya 2025–ready version
 import maya.cmds as cmds
 import maya.mel as mel
+import maya.api.OpenMaya as om2
+import math
 import os
 from functools import partial
 import importlib
@@ -133,6 +135,8 @@ class SimClothRig():
 		cmds.textField('numSegments_textField', w=40, tx='3')
 
 		cmds.button(l='Create Proxy Geo', w=100, c=self.createBaseGeo, p='clothChain_frameLayout')
+		cmds.button(l='From Joints', w=100, c=self.buildProxyFromJoints, p='clothChain_frameLayout',
+		           ann='Select an ordered joint chain, then click to build proxy geo snapped to it.')
 		cmds.separator(st='none', h=10,  p='clothChain_frameLayout')
 
 		cmds.frameLayout('buildClothRig_frameLayout', lv=False, bv=False, p='clothChain_frameLayout')
@@ -480,7 +484,117 @@ class SimClothRig():
 			value = "%.2f" % cmds.getAttr(clothRigName + '_nClothShape1.' + i)
 			cmds.textField(i + '_textField', e=True, tx=value)
 
-	def createBaseGeo(self, *args):
+	def _order_joint_chain(self, selection):
+		"""Order an unordered joint selection into a single root-to-tip chain.
+		Positions are trusted, click order is not -- this walks the actual
+		parent/child hierarchy among the selected joints so a marquee or
+		"select hierarchy" selection works the same as a careful shift-click.
+		"""
+		joints = cmds.ls(selection, type='joint', long=True) or []
+		if len(joints) < 2:
+			raise RuntimeError('Select at least 2 joints forming a single chain.')
+
+		selSet = set(joints)
+		roots = []
+		for j in joints:
+			ancestors = set()
+			parent = cmds.listRelatives(j, parent=True, fullPath=True)
+			while parent:
+				ancestors.add(parent[0])
+				parent = cmds.listRelatives(parent[0], parent=True, fullPath=True)
+			if not (ancestors & selSet):
+				roots.append(j)
+		if len(roots) != 1:
+			raise RuntimeError(
+				'Selected joints must form a single connected chain (found %d root(s)).' % len(roots))
+
+		ordered = [roots[0]]
+		current = roots[0]
+		while True:
+			children = cmds.listRelatives(current, children=True, type='joint', fullPath=True) or []
+			selectedChildren = [c for c in children if c in selSet]
+			if not selectedChildren:
+				break
+			if len(selectedChildren) > 1:
+				raise RuntimeError('Selected joints branch at "%s" -- select a single unbranched chain.' % current)
+			current = selectedChildren[0]
+			ordered.append(current)
+
+		if len(ordered) != len(joints):
+			raise RuntimeError('Selected joints do not all belong to the same connected chain.')
+		return ordered
+
+	def _joint_chain_row_matrices(self, orderedJoints):
+		"""Per-joint world matrices derived purely from joint POSITIONS, using
+		a rotation-minimizing (parallel-transport) frame -- jointOrient/rotate
+		are never read, so this is correct regardless of how the source rig's
+		joints were authored. Local +Y = down-the-chain tangent, +Z = up,
+		+X = right, so the flat shape_CTRL curve (authored in the XZ plane)
+		sits like a ring/cross-section around the chain at each joint.
+		"""
+		positions = [om2.MVector(*cmds.xform(j, q=True, ws=True, t=True)) for j in orderedJoints]
+		n = len(positions)
+
+		aims = []
+		for i in range(n):
+			if i < n - 1:
+				aims.append((positions[i + 1] - positions[i]).normal())
+			else:
+				aims.append(aims[-1])
+
+		seedUp = om2.MVector(0, 0, 1)
+		a0 = aims[0]
+		up0 = seedUp - a0 * (seedUp * a0)
+		if up0.length() < 1e-6:
+			alt = om2.MVector(1, 0, 0)
+			up0 = alt - a0 * (alt * a0)
+		ups = [up0.normal()]
+
+		for i in range(1, n):
+			aPrev, aCur = aims[i - 1], aims[i]
+			dot = max(-1.0, min(1.0, aPrev * aCur))
+			axis = aPrev ^ aCur
+			if axis.length() < 1e-8:
+				ups.append(ups[-1])
+				continue
+			axis = axis.normal()
+			angle = math.acos(dot)
+			ups.append(ups[-1].rotateBy(om2.MQuaternion(angle, axis)).normal())
+
+		matrices = []
+		for pos, aim, up in zip(positions, aims, ups):
+			right = (aim ^ up).normal()
+			upOrtho = (right ^ aim).normal()
+			matrices.append([
+				right.x, right.y, right.z, 0.0,
+				aim.x,   aim.y,   aim.z,   0.0,
+				upOrtho.x, upOrtho.y, upOrtho.z, 0.0,
+				pos.x,   pos.y,   pos.z,   1.0,
+			])
+		return matrices
+
+	def buildProxyFromJoints(self, *args):
+		selection = cmds.ls(sl=True) or []
+		try:
+			ordered = self._order_joint_chain(selection)
+		except RuntimeError as e:
+			cmds.warning(str(e))
+			return
+
+		nameFieldValue = (cmds.textField('clothRigName_textField', q=True, tx=True) or '').strip()
+		if not nameFieldValue:
+			rootShort = ordered[0].split('|')[-1].split(':')[-1]
+			cmds.textField('clothRigName_textField', e=True, tx=rootShort)
+
+		cmds.textField('numSegments_textField', e=True, tx=str(len(ordered) - 1))
+
+		rowFrames = self._joint_chain_row_matrices(ordered)
+		self.createBaseGeo(row_frames=rowFrames)
+
+		cmds.select(ordered, r=True)
+		self.addObjs('joints_scrollList')
+
+	def createBaseGeo(self, *args, row_frames=None):
 		raw = cmds.textField('clothRigName_textField', q=True, tx=True)
 		objName = (raw or '').replace(' ', '_')
 		try:
@@ -515,6 +629,10 @@ class SimClothRig():
 				cmds.parent(objName + '_shape_%s_CTRL' % str(i), objName + '_main_CTRL')
 				cmds.parentConstraint(clusterObj, curveObj, n='cluster%s_parentConstraint1' % str(i))
 			cmds.delete('cluster*_parentConstraint1')
+
+			if row_frames is not None:
+				for i, rowMatrix in enumerate(row_frames):
+					cmds.xform(objName + '_shape_%s_CTRL' % str(i), ws=True, m=rowMatrix)
 
 			for i in range(segmentsNumber + 1):
 				cmds.select(objName + '_shape_%s_CTRL' % str(i), r=True)
