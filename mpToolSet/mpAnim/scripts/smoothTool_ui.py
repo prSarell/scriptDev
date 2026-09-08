@@ -119,7 +119,8 @@ class SmoothToolUI(QtWidgets.QDialog):
         source_lay.addLayout(r)
 
         self._vert_mode = QtWidgets.QComboBox()
-        self._vert_mode.addItems(['Auto-pick vertices', 'Use selected vertices'])
+        self._vert_mode.addItems(['Auto-pick vertices', 'Use selected vertices',
+                                   'Control only (no mesh)'])
         vert_row = QtWidgets.QHBoxLayout()
         lbl = QtWidgets.QLabel('Vertex Mode')
         lbl.setFixedWidth(85)
@@ -246,21 +247,32 @@ class SmoothToolUI(QtWidgets.QDialog):
                 target, ', '.join(locked)))
             return
 
-        if self._vert_mode.currentIndex() == 1:
-            try:
-                sel_mesh, indices = api.SmoothToolCore.indices_from_selection()
-                if sel_mesh != mesh:
-                    cmds.warning(
-                        'Selected vertices are not on the source mesh.')
+        vert_mode = self._vert_mode.currentIndex()
+        control_only = vert_mode == 2
+
+        if not control_only:
+            if vert_mode == 1:
+                try:
+                    sel_mesh, indices = api.SmoothToolCore.indices_from_selection()
+                    if sel_mesh != mesh:
+                        cmds.warning(
+                            'Selected vertices are not on the source mesh.')
+                        return
+                except RuntimeError as e:
+                    cmds.warning(str(e))
                     return
-            except RuntimeError as e:
-                cmds.warning(str(e))
-                return
-        else:
-            indices = api.SmoothToolCore.find_spread_vertices(mesh)
+            else:
+                try:
+                    indices = api.SmoothToolCore.find_spread_vertices(mesh)
+                except RuntimeError as e:
+                    cmds.warning(str(e))
+                    return
 
         start, end = api.SmoothToolCore.get_frame_range()
-        self._core.sample(mesh, indices, target, start, end, parent=parent)
+        if control_only:
+            self._core.sample_control(target, start, end, parent=parent)
+        else:
+            self._core.sample(mesh, indices, target, start, end, parent=parent)
         self._core.create_curves()
 
         strength = self._slider_value(self._strength_slider, 'strength')

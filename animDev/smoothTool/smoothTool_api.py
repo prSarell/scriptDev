@@ -183,8 +183,23 @@ def _mmatrix_to_list(m):
     return [m.getElement(r, c) for r in range(4) for c in range(4)]
 
 
-def _decompose_mmatrix(m, rotate_order=0):
-    """Decompose an MMatrix into (translate, rotate_degrees)."""
+def _unwrap(angle, ref):
+    """Shift *angle* by a multiple of 2*pi so it lands closest to *ref*."""
+    return angle + 2.0 * math.pi * round((ref - angle) / (2.0 * math.pi))
+
+
+def _decompose_mmatrix(m, rotate_order=0, prev_euler=None):
+    """Decompose an MMatrix into (translate, rotate_degrees, euler).
+
+    Matrix-to-Euler decomposition has more than one valid solution (and
+    each axis wraps at +/-180), so decoding every frame in isolation lets
+    the picked solution/branch flip frame to frame -- most visibly right
+    where a control's baseline rotation sits on the wrap boundary (e.g.
+    a constant -180 to flip a character's facing). When *prev_euler* is
+    given, pick whichever of the two matrix solutions (see
+    MEulerRotation.alternateSolution) unwraps closest to it, keeping the
+    baked rotation curve continuous instead of snapping across the seam.
+    """
     tm = om.MTransformationMatrix(m)
     t = tm.translation(om.MSpace.kWorld)
     ro_map = {
@@ -195,10 +210,27 @@ def _decompose_mmatrix(m, rotate_order=0):
         4: om.MTransformationMatrix.kYXZ,
         5: om.MTransformationMatrix.kZYX,
     }
+    order = ro_map.get(rotate_order, om.MTransformationMatrix.kXYZ)
     euler = tm.rotation()
-    euler.reorderIt(ro_map.get(rotate_order, om.MTransformationMatrix.kXYZ))
+    euler.reorderIt(order)
+
+    if prev_euler is not None:
+        candidates = [euler, euler.alternateSolution()]
+        unwrapped = [
+            (_unwrap(c.x, prev_euler.x),
+             _unwrap(c.y, prev_euler.y),
+             _unwrap(c.z, prev_euler.z))
+            for c in candidates
+        ]
+        best = min(
+            unwrapped,
+            key=lambda e: (e[0] - prev_euler.x) ** 2
+                        + (e[1] - prev_euler.y) ** 2
+                        + (e[2] - prev_euler.z) ** 2)
+        euler = om.MEulerRotation(best[0], best[1], best[2], order)
+
     rx, ry, rz = math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z)
-    return (t.x, t.y, t.z), (rx, ry, rz)
+    return (t.x, t.y, t.z), (rx, ry, rz), euler
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +355,52 @@ class SmoothToolCore:
                 self.vert_positions[vi].append(tuple(pos))
 
             m = cmds.xform(bake_target, q=True, matrix=True, ws=True)
+            self.ctrl_matrices.append(m)
+
+            if parent:
+                pm = cmds.xform(parent, q=True, matrix=True, ws=True)
+                self.parent_matrices.append(pm)
+
+        self._smoothed = [list(vp) for vp in self.vert_positions]
+        self._blended = [list(vp) for vp in self.vert_positions]
+
+    _VIRTUAL_LOCAL_POINTS = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+
+    def sample_control(self, target, start, end, parent=None, size=10.0):
+        """Sample a bare control with no mesh to track.
+
+        Builds 3 virtual points rigidly attached to *target* (offset along
+        its own local axes) instead of tracking mesh vertices, so a
+        control with no geometry can still be run through the same
+        triangle-basis reconstruction as the vertex-based path. The point
+        spacing (*size*) is arbitrary -- it only needs to be non-zero and
+        non-degenerate, since it cancels out in the basis math.
+        """
+        self.source_mesh = None
+        self.bake_target = target
+        self.parent_space_obj = parent
+        self.vert_indices = []
+        self.frames = list(range(start, end + 1))
+
+        self.vert_positions = [[], [], []]
+        self.ctrl_matrices = []
+        self.parent_matrices = []
+
+        local_pts = [_v_scale(p, size) for p in self._VIRTUAL_LOCAL_POINTS]
+
+        for frame in self.frames:
+            cmds.currentTime(frame)
+
+            m = cmds.xform(target, q=True, matrix=True, ws=True)
+            wm = om.MMatrix(m)
+            for vi in range(3):
+                lp = om.MPoint(*local_pts[vi])
+                wp = lp * wm
+                pos = (wp.x, wp.y, wp.z)
+                if parent:
+                    pos = self._to_parent_space(pos, parent)
+                self.vert_positions[vi].append(pos)
+
             self.ctrl_matrices.append(m)
 
             if parent:
@@ -514,6 +592,7 @@ class SmoothToolCore:
                         layer_name, e=True,
                         attribute='{}.{}'.format(self.bake_target, attr))
 
+            prev_euler = None
             for i, frame in enumerate(self.frames):
                 smooth_world = smoothed_matrices[i]
 
@@ -523,7 +602,8 @@ class SmoothToolCore:
                 else:
                     smooth_local = smooth_world
 
-                smooth_t, smooth_r = _decompose_mmatrix(smooth_local, rot_order)
+                smooth_t, smooth_r, prev_euler = _decompose_mmatrix(
+                    smooth_local, rot_order, prev_euler)
                 # setKeyframe's animLayer flag wants the absolute combined
                 # result, not a pre-computed delta — Maya derives the
                 # layer-local (additive) contribution itself.
