@@ -111,7 +111,7 @@ class SmoothToolUI(QtWidgets.QDialog):
         source_lay = QtWidgets.QVBoxLayout(source_box)
         source_lay.setSpacing(4)
 
-        r, self._mesh_field, self._mesh_btn = _make_field_row('Source Mesh')
+        r, self._mesh_field, self._mesh_btn = _make_field_row('Source Geo')
         source_lay.addLayout(r)
         r, self._target_field, self._target_btn = _make_field_row('Bake Target')
         source_lay.addLayout(r)
@@ -119,7 +119,7 @@ class SmoothToolUI(QtWidgets.QDialog):
         source_lay.addLayout(r)
 
         self._vert_mode = QtWidgets.QComboBox()
-        self._vert_mode.addItems(['Auto-pick vertices', 'Use selected vertices',
+        self._vert_mode.addItems(['Auto-pick verts/CVs', 'Use selected verts/CVs',
                                    'Control only (no mesh)'])
         vert_row = QtWidgets.QHBoxLayout()
         lbl = QtWidgets.QLabel('Vertex Mode')
@@ -228,7 +228,7 @@ class SmoothToolUI(QtWidgets.QDialog):
         if not mesh:
             sel = cmds.ls(selection=True, type='transform')
             if not sel:
-                cmds.warning('Select an object or fill in Source Mesh.')
+                cmds.warning('Select an object or fill in Source Geo.')
                 return
             mesh = sel[0]
             self._mesh_field.setText(mesh)
@@ -256,7 +256,7 @@ class SmoothToolUI(QtWidgets.QDialog):
                     sel_mesh, indices = api.SmoothToolCore.indices_from_selection()
                     if sel_mesh != mesh:
                         cmds.warning(
-                            'Selected vertices are not on the source mesh.')
+                            'Selected verts/CVs are not on the source geo.')
                         return
                 except RuntimeError as e:
                     cmds.warning(str(e))

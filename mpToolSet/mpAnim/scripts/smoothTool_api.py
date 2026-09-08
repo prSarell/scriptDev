@@ -1,8 +1,9 @@
 """
 Smooth Tool — API
 Reconstructs and smooths a transform's world-space motion by tracking three
-mesh vertices, filtering their paths with a zero-phase Butterworth low-pass,
-and baking the corrected transform back onto the rig control.
+points (mesh vertices, NURBS curve CVs, or synthesized control-space points),
+filtering their paths with a zero-phase Butterworth low-pass, and baking the
+corrected transform back onto the rig control.
 """
 
 import math
@@ -202,15 +203,22 @@ def _decompose_mmatrix(m, rotate_order=0, prev_euler=None):
     """
     tm = om.MTransformationMatrix(m)
     t = tm.translation(om.MSpace.kWorld)
+    # Maya's .rotateOrder attribute values (0-5) map to these named orders,
+    # but reorderIt()/the MEulerRotation constructor below take
+    # MEulerRotation's own kXYZ..kZYX constants (0-5) -- a *different*
+    # enum from MTransformationMatrix's (1-6). Mixing them silently
+    # reorders to the wrong axis order (and kZYX=6 from the wrong enum is
+    # out of range for MEulerRotation entirely), corrupting every
+    # decomposed frame -- not just an edge case.
     ro_map = {
-        0: om.MTransformationMatrix.kXYZ,
-        1: om.MTransformationMatrix.kYZX,
-        2: om.MTransformationMatrix.kZXY,
-        3: om.MTransformationMatrix.kXZY,
-        4: om.MTransformationMatrix.kYXZ,
-        5: om.MTransformationMatrix.kZYX,
+        0: om.MEulerRotation.kXYZ,
+        1: om.MEulerRotation.kYZX,
+        2: om.MEulerRotation.kZXY,
+        3: om.MEulerRotation.kXZY,
+        4: om.MEulerRotation.kYXZ,
+        5: om.MEulerRotation.kZYX,
     }
-    order = ro_map.get(rotate_order, om.MTransformationMatrix.kXYZ)
+    order = ro_map.get(rotate_order, om.MEulerRotation.kXYZ)
     euler = tm.rotation()
     euler.reorderIt(order)
 
@@ -251,7 +259,19 @@ class SmoothToolCore:
         self.ctrl_matrices = []             # list of 16-float lists
         self.parent_matrices = []           # list of 16-float lists
 
-        # Smoothed / blended channel data  (3 verts × 3 axes)
+        # Original tracked-triangle transform, decomposed once into
+        # continuous translate/euler channels (see _compute_orig_channels).
+        self._orig_translate = []           # list of (x,y,z)
+        self._orig_euler = []               # list of (rx,ry,rz) degrees
+        self._local_offsets = [(0, 0, 0)] * 3
+
+        # Smoothed / blended channel data, in the same (translate, euler)
+        # representation, plus the tracked-point positions reconstructed
+        # from them for the viewport preview curves.
+        self._smoothed_translate = []
+        self._smoothed_euler = []
+        self._blended_translate = []
+        self._blended_euler = []
         self._smoothed = [[], [], []]       # 3 × list of (x,y,z)
         self._blended = [[], [], []]        # 3 × list of (x,y,z)
 
@@ -288,11 +308,30 @@ class SmoothToolCore:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _find_component_shape(mesh):
+        """Return (shape, comp_type) for *mesh* -- a poly mesh ('vtx') or a
+        NURBS curve ('cv'). Mesh shapes are preferred if both exist."""
+        shapes = cmds.listRelatives(mesh, shapes=True, fullPath=True) or []
+        shape, comp_type = None, None
+        for s in shapes:
+            t = cmds.objectType(s)
+            if t == 'mesh':
+                return s, 'vtx'
+            if t == 'nurbsCurve' and shape is None:
+                shape, comp_type = s, 'cv'
+        return shape, comp_type
+
+    @staticmethod
     def find_spread_vertices(mesh, count=3):
-        """Pick *count* maximally-spread vertices on *mesh*."""
-        verts = cmds.ls('{}.vtx[*]'.format(mesh), flatten=True)
+        """Pick *count* maximally-spread vertices/CVs on *mesh*."""
+        shape, comp_type = SmoothToolCore._find_component_shape(mesh)
+        if shape is None:
+            raise RuntimeError(
+                '{} has no mesh or NURBS curve shape.'.format(mesh))
+        verts = cmds.ls('{}.{}[*]'.format(shape, comp_type), flatten=True)
         if not verts:
-            raise RuntimeError('{} has no vertices.'.format(mesh))
+            raise RuntimeError('{} has no {}.'.format(
+                mesh, 'vertices' if comp_type == 'vtx' else 'CVs'))
         positions = [cmds.xform(v, q=True, t=True, ws=True) for v in verts]
         p0 = positions[0]
         i1 = max(range(len(positions)),
@@ -305,15 +344,33 @@ class SmoothToolCore:
         return indices[:count]
 
     @staticmethod
+    def _transform_of(node):
+        """Return *node*'s transform if it's a shape, else *node* itself.
+
+        Component selection reports the shape as the owning node for
+        NURBS curve CVs but the transform for poly vertices, so this
+        normalises both back to the transform the UI fields track.
+        """
+        if cmds.objectType(node, isAType='shape'):
+            parents = cmds.listRelatives(node, parent=True)
+            return parents[0] if parents else node
+        return node
+
+    @staticmethod
     def indices_from_selection():
-        """Read three selected vertices and return (mesh_transform, [idx, idx, idx])."""
+        """Read three selected vertices or CVs (not mixed) and return
+        (transform, [idx, idx, idx])."""
         sel = cmds.ls(selection=True, flatten=True)
-        vert_sel = [s for s in sel if '.vtx[' in s]
-        if len(vert_sel) != 3:
-            raise RuntimeError('Select exactly 3 vertices.')
-        mesh = vert_sel[0].split('.')[0]
+        comp_sel = [s for s in sel if '.vtx[' in s or '.cv[' in s]
+        if len(comp_sel) != 3:
+            raise RuntimeError('Select exactly 3 vertices or CVs.')
+        kinds = set('cv' if '.cv[' in s else 'vtx' for s in comp_sel)
+        if len(kinds) != 1:
+            raise RuntimeError(
+                'Selection mixes vertices and CVs -- pick one type.')
+        mesh = SmoothToolCore._transform_of(comp_sel[0].split('.')[0])
         indices = []
-        for v in vert_sel:
+        for v in comp_sel:
             idx = int(v.split('[')[1].rstrip(']'))
             indices.append(idx)
         return mesh, indices
@@ -335,20 +392,15 @@ class SmoothToolCore:
         self.ctrl_matrices = []
         self.parent_matrices = []
 
-        shape = None
-        shapes = cmds.listRelatives(mesh, shapes=True, fullPath=True) or []
-        for s in shapes:
-            if cmds.objectType(s) == 'mesh':
-                shape = s
-                break
+        shape, comp_type = self._find_component_shape(mesh)
         if shape is None:
-            shape = mesh
+            shape, comp_type = mesh, 'vtx'
 
         for frame in self.frames:
             cmds.currentTime(frame)
 
             for vi in range(3):
-                vtx = '{}.vtx[{}]'.format(shape, vert_indices[vi])
+                vtx = '{}.{}[{}]'.format(shape, comp_type, vert_indices[vi])
                 pos = cmds.xform(vtx, q=True, t=True, ws=True)
                 if parent:
                     pos = self._to_parent_space(pos, parent)
@@ -361,8 +413,7 @@ class SmoothToolCore:
                 pm = cmds.xform(parent, q=True, matrix=True, ws=True)
                 self.parent_matrices.append(pm)
 
-        self._smoothed = [list(vp) for vp in self.vert_positions]
-        self._blended = [list(vp) for vp in self.vert_positions]
+        self._compute_orig_channels()
 
     _VIRTUAL_LOCAL_POINTS = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
 
@@ -407,8 +458,7 @@ class SmoothToolCore:
                 pm = cmds.xform(parent, q=True, matrix=True, ws=True)
                 self.parent_matrices.append(pm)
 
-        self._smoothed = [list(vp) for vp in self.vert_positions]
-        self._blended = [list(vp) for vp in self.vert_positions]
+        self._compute_orig_channels()
 
     @staticmethod
     def _to_parent_space(world_pos, parent):
@@ -418,6 +468,80 @@ class SmoothToolCore:
         pt = om.MPoint(world_pos[0], world_pos[1], world_pos[2])
         local = pt * inv
         return (local.x, local.y, local.z)
+
+    # ------------------------------------------------------------------
+    # Rigid transform channels
+    #
+    # The tracked triangle's per-frame basis is decomposed once into a
+    # continuous (translate, euler) pair rather than smoothing each
+    # tracked point's raw x/y/z independently. Filtering a rotating
+    # rigid body's Cartesian point coordinates per-axis doesn't preserve
+    # rigidity -- the triangle silently distorts as smoothing strength
+    # rises, and re-deriving a basis from a distorted triangle can yield
+    # a rotation far off from the original, worst of all near a Euler
+    # singularity. Filtering the continuous Euler channels themselves
+    # (same technique already used for translate) is the mathematically
+    # sound way to smooth rotation and keeps the delta exactly identity
+    # wherever blend/smoothing has no effect.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compose_mmatrix(translate, euler_deg):
+        """Build a world matrix from a translate + XYZ-euler-degrees pair."""
+        ex, ey, ez = (math.radians(a) for a in euler_deg)
+        tm = om.MTransformationMatrix()
+        tm.setRotation(om.MEulerRotation(ex, ey, ez, om.MEulerRotation.kXYZ))
+        tm.setTranslation(om.MVector(*translate), om.MSpace.kWorld)
+        return tm.asMatrix()
+
+    def _compute_orig_channels(self):
+        """Decompose the tracked triangle into continuous translate/euler
+        channels, and the tracked points' average offset in that frame's
+        local space (assumed rigid -- exact for a control, an approximation
+        for a deforming mesh)."""
+        n = len(self.frames)
+        self._orig_translate = []
+        self._orig_euler = []
+        local_accum = [[0.0, 0.0, 0.0] for _ in range(3)]
+        prev_euler = None
+        for i in range(n):
+            x, y, z, c = _triangle_to_basis(
+                self.vert_positions[0][i], self.vert_positions[1][i],
+                self.vert_positions[2][i])
+            m = _basis_to_mmatrix(x, y, z, c)
+            t, r, prev_euler = _decompose_mmatrix(m, 0, prev_euler)
+            self._orig_translate.append(t)
+            self._orig_euler.append(r)
+
+            inv = m.inverse()
+            for k in range(3):
+                lp = om.MPoint(*self.vert_positions[k][i]) * inv
+                local_accum[k][0] += lp.x
+                local_accum[k][1] += lp.y
+                local_accum[k][2] += lp.z
+
+        if n > 0:
+            self._local_offsets = [
+                (local_accum[k][0] / n, local_accum[k][1] / n,
+                 local_accum[k][2] / n) for k in range(3)]
+
+        self._smoothed_translate = list(self._orig_translate)
+        self._smoothed_euler = list(self._orig_euler)
+        self._blended_translate = list(self._orig_translate)
+        self._blended_euler = list(self._orig_euler)
+        self._smoothed = [list(vp) for vp in self.vert_positions]
+        self._blended = [list(vp) for vp in self.vert_positions]
+
+    def _positions_from_channels(self, translates, eulers):
+        """Reconstruct the 3 tracked-point positions implied by a
+        (translate, euler) sequence, for viewport preview curves."""
+        out = [[], [], []]
+        for t, e in zip(translates, eulers):
+            m = self._compose_mmatrix(t, e)
+            for k in range(3):
+                wp = om.MPoint(*self._local_offsets[k]) * m
+                out[k].append((wp.x, wp.y, wp.z))
+        return out
 
     # ------------------------------------------------------------------
     # Viewport curves
@@ -478,17 +602,28 @@ class SmoothToolCore:
     # ------------------------------------------------------------------
 
     def update_smooth(self, strength):
-        """Recompute the smoothed vertex paths."""
+        """Recompute the smoothed translate/euler channels."""
         self.strength = strength
+
+        txs = [t[0] for t in self._orig_translate]
+        tys = [t[1] for t in self._orig_translate]
+        tzs = [t[2] for t in self._orig_translate]
+        self._smoothed_translate = list(zip(
+            smooth_channel(txs, strength),
+            smooth_channel(tys, strength),
+            smooth_channel(tzs, strength)))
+
+        exs = [e[0] for e in self._orig_euler]
+        eys = [e[1] for e in self._orig_euler]
+        ezs = [e[2] for e in self._orig_euler]
+        self._smoothed_euler = list(zip(
+            smooth_channel(exs, strength),
+            smooth_channel(eys, strength),
+            smooth_channel(ezs, strength)))
+
+        self._smoothed = self._positions_from_channels(
+            self._smoothed_translate, self._smoothed_euler)
         for vi in range(3):
-            raw = self.vert_positions[vi]
-            xs = [p[0] for p in raw]
-            ys = [p[1] for p in raw]
-            zs = [p[2] for p in raw]
-            sx = smooth_channel(xs, strength)
-            sy = smooth_channel(ys, strength)
-            sz = smooth_channel(zs, strength)
-            self._smoothed[vi] = list(zip(sx, sy, sz))
             self._write_curve_positions(
                 self.smooth_curves[vi], self._smoothed[vi])
         self.update_blend(self.blend)
@@ -499,19 +634,23 @@ class SmoothToolCore:
         n = len(self.frames)
         weights = compute_falloff_weights(n, self.falloff)
 
+        blended_t = []
+        blended_e = []
+        for i in range(n):
+            w = weights[i] * blend
+            ot, st = self._orig_translate[i], self._smoothed_translate[i]
+            blended_t.append(tuple(
+                ot[k] + w * (st[k] - ot[k]) for k in range(3)))
+            oe, se = self._orig_euler[i], self._smoothed_euler[i]
+            blended_e.append(tuple(
+                oe[k] + w * (se[k] - oe[k]) for k in range(3)))
+        self._blended_translate = blended_t
+        self._blended_euler = blended_e
+
+        self._blended = self._positions_from_channels(blended_t, blended_e)
         for vi in range(3):
-            orig = self.vert_positions[vi]
-            smth = self._smoothed[vi]
-            blended = []
-            for i in range(n):
-                w = weights[i] * blend
-                bx = orig[i][0] + w * (smth[i][0] - orig[i][0])
-                by = orig[i][1] + w * (smth[i][1] - orig[i][1])
-                bz = orig[i][2] + w * (smth[i][2] - orig[i][2])
-                blended.append((bx, by, bz))
-            self._blended[vi] = blended
             self._write_curve_positions(
-                self.blend_curves[vi], blended)
+                self.blend_curves[vi], self._blended[vi])
 
     def update_falloff(self, falloff):
         """Re-apply blend with new falloff ratio."""
@@ -523,15 +662,13 @@ class SmoothToolCore:
     # ------------------------------------------------------------------
 
     def _reconstruct_delta(self, frame_idx):
-        """Return the MMatrix delta between original and blended triangles."""
-        op = self.vert_positions
-        bp = self._blended
-        ox, oy, oz, oc = _triangle_to_basis(
-            op[0][frame_idx], op[1][frame_idx], op[2][frame_idx])
-        bx, by, bz, bc = _triangle_to_basis(
-            bp[0][frame_idx], bp[1][frame_idx], bp[2][frame_idx])
-        orig_m = _basis_to_mmatrix(ox, oy, oz, oc)
-        blend_m = _basis_to_mmatrix(bx, by, bz, bc)
+        """Return the MMatrix delta between the original and blended
+        (translate, euler) channels -- identity wherever blend has no
+        effect, by construction."""
+        orig_m = self._compose_mmatrix(
+            self._orig_translate[frame_idx], self._orig_euler[frame_idx])
+        blend_m = self._compose_mmatrix(
+            self._blended_translate[frame_idx], self._blended_euler[frame_idx])
         return orig_m.inverse() * blend_m
 
     # ------------------------------------------------------------------
@@ -572,6 +709,32 @@ class SmoothToolCore:
 
         bake_attrs = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']
 
+        # Decompose the *original* local matrices first, chaining continuity
+        # frame-to-frame, to get a clean reference Euler branch per frame.
+        # The smoothed decomposition below is anchored to this per-frame
+        # reference rather than to its own previous output: anchoring to
+        # itself would let the branch drift away from the original curve's
+        # representation wherever smoothing is heavy, so that even at a
+        # zero-blend edge frame (where the smoothed matrix is numerically
+        # identical to the original) the wrong branch could get picked --
+        # e.g. (rx, ry, rz) vs the equivalent (rx+/-180, 180-ry, rz+/-180).
+        # Both represent the same rotation, but an additive anim layer that
+        # blends rotation component-wise needs the *matching* branch or the
+        # combined result is a real, visibly wrong pose, not just a
+        # differently-labelled equivalent one -- which is what produced the
+        # "weird angle" snap at the last frame that this anchoring fixes.
+        orig_eulers = []
+        prev_orig_euler = None
+        for i in range(n):
+            orig_world = _mmatrix_from_list(self.ctrl_matrices[i])
+            if bake_parent_matrices:
+                orig_local = orig_world * bake_parent_matrices[i].inverse()
+            else:
+                orig_local = orig_world
+            _, _, prev_orig_euler = _decompose_mmatrix(
+                orig_local, rot_order, prev_orig_euler)
+            orig_eulers.append(prev_orig_euler)
+
         cmds.undoInfo(openChunk=True, chunkName='SmoothTool_Bake')
         layer_name = None
         try:
@@ -592,7 +755,6 @@ class SmoothToolCore:
                         layer_name, e=True,
                         attribute='{}.{}'.format(self.bake_target, attr))
 
-            prev_euler = None
             for i, frame in enumerate(self.frames):
                 smooth_world = smoothed_matrices[i]
 
@@ -602,8 +764,8 @@ class SmoothToolCore:
                 else:
                     smooth_local = smooth_world
 
-                smooth_t, smooth_r, prev_euler = _decompose_mmatrix(
-                    smooth_local, rot_order, prev_euler)
+                smooth_t, smooth_r, _ = _decompose_mmatrix(
+                    smooth_local, rot_order, orig_eulers[i])
                 # setKeyframe's animLayer flag wants the absolute combined
                 # result, not a pre-computed delta — Maya derives the
                 # layer-local (additive) contribution itself.
@@ -639,5 +801,12 @@ class SmoothToolCore:
         self.vert_positions = [[], [], []]
         self.ctrl_matrices = []
         self.parent_matrices = []
+        self._orig_translate = []
+        self._orig_euler = []
+        self._local_offsets = [(0, 0, 0)] * 3
+        self._smoothed_translate = []
+        self._smoothed_euler = []
+        self._blended_translate = []
+        self._blended_euler = []
         self._smoothed = [[], [], []]
         self._blended = [[], [], []]
