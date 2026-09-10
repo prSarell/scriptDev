@@ -24,13 +24,6 @@ def scriptJobFunction(*args):
 				cmds.textField('segment_' + i.partition('dynamicConstraint')[2] + '_textField', e=True, bgc=(.15,.15,.15))
 				cmds.iconTextButton('keyframe_button' + i.partition('dynamicConstraint')[2], e=True, image1='autoKeyframeOff.png')
 
-def scriptJobFunction2(controlsList, *args):
-	clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
-	for i in controlsList or []:
-		if cmds.keyframe(i, q=True, kc=True) != 0:
-			newValue = "%.2f" % cmds.getAttr(i + '.blendParent1')
-			cmds.textField(i + '_textField', e=True, tx=newValue)
-
 def refreshTool(*args):
 	# Reload this tool’s module (update "tlmClothChain" below if your file/module is named differently)
 	import sys
@@ -46,9 +39,28 @@ def refreshTool(*args):
 
 class SimClothRig():
 	def __init__(self):
-		self.presetsList = ['custom', 'airBag', 'beachBall', 'burlap', 'chainMail', 'chiffon', 'concrete', 'heavyDenim', 'honey', 'lava', 'looseThickKnit', 'plasticShell', 'putty', 'rubberSheet', 'silk', 'softSheetMetal', 'solidRubber', 'thickLeather', 'tshirt', 'waterBalloon', 'waterVolume']
-		self.nClothSettingsName = ['bounce', 'friction', 'damp', 'stickiness', 'pointMass', 'stretchResistance', 'compressionResistance', 'bendResistance', 'rigidity', 'stretchDamp']
-		self.customPreset = [0, 2, 0.25, 0, 1.5, 200, 200, 3, 0.01, 0.1]
+		self.presetsList = ['custom', 'tentacle', 'airBag', 'beachBall', 'burlap', 'chainMail', 'chiffon', 'concrete', 'heavyDenim', 'honey', 'lava', 'looseThickKnit', 'plasticShell', 'putty', 'rubberSheet', 'silk', 'softSheetMetal', 'solidRubber', 'thickLeather', 'tshirt', 'waterBalloon', 'waterVolume']
+		# maxIterations is nCloth's structural-solve convergence count -- appended
+		# here (rather than left at Maya's node default) because under-converged
+		# constraints/springs read as springy/bouncy rather than a firm hold, the
+		# same issue substeps addresses at the nucleus level.
+		self.nClothSettingsName = ['bounce', 'friction', 'damp', 'stickiness', 'pointMass', 'stretchResistance', 'compressionResistance', 'bendResistance', 'rigidity', 'stretchDamp', 'maxIterations']
+		self.customPreset = [0, 2, 0.25, 0, 1.5, 200, 200, 3, 0.01, 0.1, 50]
+		# Named presets stored inline (not shipped Maya .mel attrPresets like the rest
+		# of presetsList) so they don't depend on MAYA_LOCATION. Tuned starting point
+		# for a ~180cm/30cm-thick tentacle: heavier pointMass and higher bendResistance
+		# than customPreset so it reads as muscular rather than a floppy flag edge.
+		# stretch/compressionResistance are raised well above customPreset (not just
+		# slightly) because they have to scale with pointMass -- heavier points pull
+		# harder against the same springs each frame, so an under-scaled resistance
+		# lets the chain sag/lose length a little every frame, which compounds into
+		# visible crumpling over time even though the first few frames look fine.
+		# maxIterations raised well above customPreset for the same reason substeps
+		# was raised at the nucleus level -- confirmed by hand to fix the springy/
+		# bouncy constraint feel far more than any strength value could.
+		self.namedPresets = {
+			'tentacle': [0.1, 3, 0.4, 0, 200, 450, 450, 50, 0.05, 0.15, 300],
+		}
 		# Named dynamicConstraint.strength distributions across a rig's segments,
 		# applied via _applyConstraintProfile -- separate from presetsList above,
 		# which is nCloth material presets (burlap, silk, etc), a different axis.
@@ -56,11 +68,29 @@ class SimClothRig():
 			('baseToTip', 'Base to Tip'),
 			('bothEndsPinned', 'Both Ends Pinned'),
 			('uniform', 'Uniform'),
+			('closeFollow', 'Close Follow'),
+			('baseOnly', 'Base Only'),
 		]
 
 	def _get_nucleus(self, clothRigName):
 		connections = cmds.listConnections(clothRigName + '_nClothShape1', type='nucleus') or []
 		return connections[0] if connections else None
+
+	def _nucleus_space_scale(self):
+		"""Nucleus solvers do their internal physics (gravity, mass, etc.) as if
+		1 Maya unit = 1 meter, regardless of the scene's actual linear working
+		unit. Space Scale is the documented way to correct for that -- it should
+		be set to (meters per 1 scene unit), so a rig built at centimeter scale
+		reads to the solver as its real ~1.8m size instead of ~180m. Without this,
+		a cm-scale rig behaves as if it's building-sized, which is what was
+		forcing stretch/compressionResistance to unnaturally high values earlier.
+		"""
+		metersPerUnit = {
+			'mm': 0.001, 'cm': 0.01, 'm': 1.0,
+			'in': 0.0254, 'ft': 0.3048, 'yd': 0.9144,
+		}
+		unit = cmds.currentUnit(q=True, linear=True)
+		return metersPerUnit.get(unit, 1.0)
 
 	def _locked_axes(self, ctrl):
 		st, sr = [], []
@@ -170,7 +200,7 @@ class SimClothRig():
 		cmds.frameLayout('settings_frameLayout', lv=False, bv=False, p='clothChain_frameLayout')
 		cmds.text('Settings', h=16, bgc=(.22,.22,.22), al='center', fn="boldLabelFont", p='settings_frameLayout')
 
-		cmds.rowLayout('buildClothRig_rowLayout3', nc=8, p='settings_frameLayout')
+		cmds.rowLayout('buildClothRig_rowLayout3', nc=10, p='settings_frameLayout')
 		cmds.text('Gravity:')
 		cmds.textField('gravity_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'gravity'))
 		cmds.text(' Start Frame:', al='left',)
@@ -179,6 +209,8 @@ class SimClothRig():
 		cmds.textField('timeScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'timeScale'))
 		cmds.text(' Space Scale:')
 		cmds.textField('spaceScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'spaceScale'))
+		cmds.text(' Substeps:')
+		cmds.textField('subSteps_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'subSteps'))
 
 		cmds.rowLayout('collider_rowLayout', adj=1, nc=4, p='settings_frameLayout')
 		cmds.optionMenu('colliders_list', label='Colliders:', w=190, cc=self.loadSettings)
@@ -210,7 +242,7 @@ class SimClothRig():
 			cmds.text(label)
 
 		cmds.columnLayout('clothRigSettings_columnLayout2', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('stretchResistance','Stretch Resistance'),('compressionResistance','Compression Resistance'),('bendResistance','Bend Resistance'),('rigidity','Rigidity'),('stretchDamp','Stretch Damp')]:
+		for nm, label in [('stretchResistance','Stretch Resistance'),('compressionResistance','Compression Resistance'),('bendResistance','Bend Resistance'),('rigidity','Rigidity'),('stretchDamp','Stretch Damp'),('maxIterations','Max Iterations')]:
 			row = 'row_'+nm
 			cmds.rowLayout(row, h=19, nc=2, p='clothRigSettings_columnLayout2')
 			cmds.textField(nm+'_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyClothSettings, nm))
@@ -331,7 +363,15 @@ class SimClothRig():
 		tip free at 0.01, a 1/index falloff between); 'bothEndsPinned'
 		mirrors that same curve about the chain's center -- both ends
 		pinned at 0.9, the middle free at 0.01 -- so it keeps the same
-		falloff character rather than inventing a new one.
+		falloff character rather than inventing a new one. 'closeFollow' is
+		for rigs that need to track the underlying joint animation closely
+		everywhere (not just at the base) -- baseToTip's 1/index falloff
+		collapses to near-zero by segment 3 or so, which is too little pull
+		to keep up with the rig even multiplied several times over; this
+		profile linearly ramps from 0.9 at the base down to a 0.3 floor at
+		the tip instead, so every segment keeps a meaningful tether. 'baseOnly'
+		is the opposite extreme -- segment 1 held fully at 1.0, everything
+		past it at 0, pure free simulation off a single pinned root.
 		"""
 		if profile == 'uniform':
 			return 0.5
@@ -349,6 +389,13 @@ class SimClothRig():
 			if dist == distMax:
 				return 0.01
 			return (1.0 / float(dist)) * 0.1
+		if profile == 'closeFollow':
+			if total <= 1:
+				return 0.9
+			base, floor = 0.9, 0.3
+			return base - (base - floor) * (index - 1) / float(total - 1)
+		if profile == 'baseOnly':
+			return 1.0 if index == 1 else 0.0
 		raise ValueError('Unknown constraint profile: %r' % profile)
 
 	def _applyConstraintProfile(self, clothRigName, profile):
@@ -375,21 +422,6 @@ class SimClothRig():
 			if cmds.textField(textFieldName, exists=True):
 				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
 
-	def discreteDropoffUI(self, controlsList, *args):
-		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
-		if cmds.window("discreteDropoff_window", exists=True):
-			cmds.deleteUI("discreteDropoff_window")
-		cmds.window("discreteDropoff_window", tlb=1, sizeable=True, mxb=False, title="Discrete Falloff")
-		cmds.frameLayout('discreteDropoff_frameLayout', bv=False, lv=False, mw=7, mh=7)
-		cmds.rowLayout('clothRigName_rowLayout', nc=2, p='discreteDropoff_frameLayout')
-		cmds.text('Cloth Rig: ')
-		cmds.text('clothRig', l=clothRigName, fn="boldLabelFont")
-		cmds.rowColumnLayout('discreteDropoff_rowColumnLayout', numberOfColumns=2, p='discreteDropoff_frameLayout')
-		cmds.showWindow("discreteDropoff_window")
-		cmds.window('discreteDropoff_window', e=True, w=40, h=40)
-		self.loadDiscreteList(controlsList)
-		cmds.scriptJob(e=["timeChanged", partial(scriptJobFunction2, controlsList)], p='discreteDropoff_window')
-
 	def loadSegmentsList(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
 		for i in cmds.listRelatives(clothRigName + '_nCloth_grp') or []:
@@ -412,20 +444,6 @@ class SimClothRig():
 						cmds.textField('segment_' + i.rpartition('dynamicConstraint')[2] + '_textField', e=True, bgc=(.85, .4, .4))
 				except TypeError:
 					pass
-
-	def loadDiscreteList(self, controlsList, *args):
-		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
-		for i in controlsList or []:
-			cmds.rowLayout(i + 'previewSettings_rowLayout', nc=2, adjustableColumn=2, p='discreteDropoff_rowColumnLayout')
-			value = "%.2f" % cmds.getAttr(i + '.blendParent1')
-			cmds.textField(i + '_textField', w=50, tx=value, ec=partial(self.applyBlendparent, i))
-			cmds.text(i, al='left')
-			if cmds.keyframe(i + '.blendParent1', q=True, kc=True) == 0:
-			  	cmds.iconTextButton('keyframe_button' + i, w=20, h=20,style='iconOnly', image1='autoKeyframeOff.png', c=partial(self.blenParentKey, i), p='discreteDropoff_rowColumnLayout')
-			else:
-				cmds.iconTextButton('keyframe_button' + i, w=20, h=20,style='iconOnly', image1='autoKeyframeOn.png', c=partial(self.blenParentKey, i), p='discreteDropoff_rowColumnLayout')
-			cmds.popupMenu('fallOffSettings_popupMenu')
-			cmds.menuItem('Select', c='cmds.select(%s, r=True)' % i)
 
 	def addObjs(self, scrollListName, *args):
 		allObjects = cmds.ls(sl=True) or []
@@ -505,18 +523,9 @@ class SimClothRig():
 			for i in cmds.listAttr(clothRigName + '_controlNames') or []:
 				if len(i) <= 3:
 					controlsList.append(cmds.getAttr(clothRigName + '_controlNames.' + i))
-			if not cmds.columnLayout('previewSettings_columnLayout', exists=True):
-				cmds.columnLayout('previewSettings_columnLayout', adjustableColumn=1, p='settings_frameLayout')
-				cmds.text('Dropoff Settings:', fn="boldLabelFont")
-				cmds.rowLayout('previewSettings_rowLayout', nc=3, adjustableColumn=2)
-				cmds.text('Overall Dropoff:')
-				cmds.floatSliderGrp('dropoff_slider', f=True, w=100, min=0, max=1, value=1, step=.1, dc=self.overAllDropoff)
-				cmds.button('singleDropoff_button', l='Discrete Dropoff', c=partial(self.discreteDropoffUI, controlsList))
-				self.cacheCheckUI(clothRigName)
-				cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
-
 			if cmds.textScrollList('controls_scrollList', q=True, ai=True) is None:
 				cmds.textScrollList('controls_scrollList', e=True, append=controlsList)
+			cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
 			cmds.button('undo_button', l='Undo Preview', e=True, en=True)
 			cmds.button('segmentStregth_button', e=True, en=False)
 			cmds.button('presets_list', e=True, en=False)
@@ -524,8 +533,6 @@ class SimClothRig():
 			cmds.paneLayout('pane_layout2', e=True, en=False)
 			cmds.rowLayout('buildClothRig_rowLayout2', e=True, en=False)
 		else:
-			if cmds.columnLayout('previewSettings_columnLayout', exists=True):
-				cmds.deleteUI('previewSettings_columnLayout')
 			cmds.button('undo_button', l='Undo Preview', e=True, en=False)
 			cmds.button('segmentStregth_button', e=True, en=True)
 			cmds.button('presets_list', e=True, en=True)
@@ -840,8 +847,17 @@ class SimClothRig():
 		cmds.optionMenu('clothRig_list', e=True, v=clothRigName)
 
 		cmds.setAttr(nucleus_node + '.startFrame', start_fr)
-		cmds.setAttr(nucleus_node + '.timeScale', 1.5)
-		cmds.setAttr(nucleus_node + '.spaceScale', 1.5)
+		# timeScale is left neutral (pure playback-speed/weight dial, tune by eye
+		# from here) now that spaceScale does the actual real-world-scale
+		# correction -- previously both were a flat 1.5/1.5 regardless of scene
+		# unit or rig size, which fought a cm-scale rig's physics rather than
+		# correcting for it.
+		cmds.setAttr(nucleus_node + '.timeScale', 1.0)
+		cmds.setAttr(nucleus_node + '.spaceScale', self._nucleus_space_scale())
+		# Default substeps (4) under-converges the point-to-point dynamicConstraint
+		# pulls each frame, which reads as springy/bouncy rather than a firm hold --
+		# raising this fixed it in testing far more than any constraint.strength value.
+		cmds.setAttr(nucleus_node + '.subSteps', 10)
 
 		self.loadSettings()
 
@@ -868,7 +884,13 @@ class SimClothRig():
 	def loadPreset(self, presetOption, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
 		location = os.environ.get("MAYA_LOCATION", "")
-		if presetOption != 'custom':
+		if presetOption in self.namedPresets:
+			values = self.namedPresets[presetOption]
+			for idx in range(len(self.nClothSettingsName)):
+				cmds.setAttr(clothRigName + '_nClothShape1.' + self.nClothSettingsName[idx], values[idx])
+			cmds.setAttr(clothRigName + '_nClothShape1.solverDisplay', 1)
+			self.loadNclothSettings()
+		elif presetOption != 'custom':
 			mel.eval('''applyPresetToNode "%s_nClothShape1" "" "" "%s/presets/attrPresets/nCloth/%s.mel" 1;''' % (clothRigName, location, presetOption))
 			cmds.setAttr(clothRigName + '_nClothShape1.solverDisplay', 1)
 			self.loadNclothSettings()
@@ -885,14 +907,16 @@ class SimClothRig():
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
 		nucleus = self._get_nucleus(clothRigName)
 		if nucleus:
-			gravity =  "%.2f" % cmds.getAttr(nucleus + '.gravity')
-			startFrame = cmds.getAttr(nucleus + '.startFrame')
-			timeScale = "%.2f" % cmds.getAttr(nucleus + '.timeScale')
-			spaceScale = "%.2f" % cmds.getAttr(nucleus + '.spaceScale')
-			cmds.textField('gravity_textField', e=True, tx=gravity)
-			cmds.textField('startFrame_textField', e=True, tx=str(startFrame))
-			cmds.textField('timeScale_textField', e=True, tx=timeScale)
-			cmds.textField('spaceScale_textField', e=True, tx=spaceScale)
+			# Each field is fetched and written immediately rather than batched,
+			# so one bad attribute name can't throw before the others get set
+			# (a substeps/subSteps typo here previously blanked every field,
+			# not just substeps, since the exception hit before any textField
+			# write ran).
+			cmds.textField('gravity_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.gravity'))
+			cmds.textField('startFrame_textField', e=True, tx=str(cmds.getAttr(nucleus + '.startFrame')))
+			cmds.textField('timeScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.timeScale'))
+			cmds.textField('spaceScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.spaceScale'))
+			cmds.textField('subSteps_textField', e=True, tx=str(cmds.getAttr(nucleus + '.subSteps')))
 
 		if cmds.objExists(clothRigName + '_nClothShape1'):
 			colThickness = cmds.getAttr(clothRigName + '_nClothShape1.thickness')
@@ -961,7 +985,7 @@ class SimClothRig():
 		cmds.currentTime(start_fr)
 
 		if cmds.objExists(clothRigName + '_preview_grp'):
-			cmds.warning("Cloth Rig '%s' already in preview mode. Right click to load Dropoff Settings." % clothRigName)
+			cmds.warning("Cloth Rig '%s' already in preview mode." % clothRigName)
 			return
 
 		self.controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
@@ -999,8 +1023,12 @@ class SimClothRig():
 			prefix = '%s_aimRig_%02d' % (clothRigName, i + 1)
 			st, sr = self._locked_axes(ctrl)
 			cmds.parentConstraint(prefix + '_aim_loc', ctrl, sr=sr, st=st, mo=True)
-			cmds.setKeyframe(ctrl)
-			cmds.setAttr(ctrl + '.blendParent1', 1)
+			# Maya auto-creates blendParent1 only if ctrl already had incoming
+			# animation on translate/rotate before this constraint was added;
+			# when it exists, force it fully onto the sim so preview always
+			# shows the simulation rather than the pre-existing animation.
+			if cmds.attributeQuery('blendParent1', node=ctrl, exists=True):
+				cmds.setAttr(ctrl + '.blendParent1', 1)
 
 		# Last control parent-constrained to the anchor follicle (respects inversion)
 		aim_chain_grp = clothRigName + '_aimChain_grp'
@@ -1011,8 +1039,8 @@ class SimClothRig():
 		last_ctrl = self.controlsList[-1]
 		st, sr = self._locked_axes(last_ctrl)
 		cmds.parentConstraint(anchor_fol, last_ctrl, sr=sr, st=st, mo=True)
-		cmds.setKeyframe(last_ctrl)
-		cmds.setAttr(last_ctrl + '.blendParent1', 1)
+		if cmds.attributeQuery('blendParent1', node=last_ctrl, exists=True):
+			cmds.setAttr(last_ctrl + '.blendParent1', 1)
 
 		cmds.checkBox('clothRig_checkBox', e=True, bgc=(.4,.2,.2), v=False, l='Off ')
 		cmds.setAttr(clothRigName + '_nClothShape1.isDynamic', 0)
@@ -1027,27 +1055,11 @@ class SimClothRig():
 
 		cmds.select(clear=True)
 
-		cmds.columnLayout('previewSettings_columnLayout', adjustableColumn=1, p='settings_frameLayout')
-		cmds.text('Dropoff Settings:', fn="boldLabelFont")
-		cmds.rowLayout('previewSettings_rowLayout', nc=3, adjustableColumn=2)
-		cmds.text('Overall Dropoff:')
-		cmds.floatSliderGrp('dropoff_slider', f=True, w=100, min=0, max=1, value=1, step=.1, dc=self.overAllDropoff)
-		cmds.button('singleDropoff_button', l='Discrete Dropoff', c=partial(self.discreteDropoffUI, self.controlsList))
 		self.cacheCheckUI(clothRigName)
 		cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
 		cmds.setAttr(clothRigName + '_skinGeo.visibility', 0)
 		cmds.setAttr(clothRigName + '_simGeo.visibility', 0)
 		cmds.setAttr(clothRigName + '_bsGeo.visibility', 1)
-
-	def overAllDropoff(self, *args):
-		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
-		controlsList = []
-		for i in cmds.listAttr(clothRigName + '_controlNames') or []:
-			if len(i) <= 3:
-				controlsList.append(cmds.getAttr(clothRigName + '_controlNames.' + i))
-		value = float(cmds.floatSliderGrp('dropoff_slider', q=True, v=True))
-		for i in controlsList:
-			cmds.setAttr(i + '.blendParent1', value)
 
 	def undoPreview(self, *args):
 		clothRigName = cmds.optionMenu('clothRig_list', q=True, v=True)
@@ -1074,8 +1086,6 @@ class SimClothRig():
 		cmds.checkBox('clothRig_checkBox', e=True, bgc=(.2,.4,.2), v=True, l='On ')
 		cmds.setAttr(clothRigName + '_nClothShape1.isDynamic', 1)
 
-		if cmds.columnLayout('previewSettings_columnLayout', exists=True):
-			cmds.deleteUI('previewSettings_columnLayout')
 		if cmds.window('clothChain_mainWindow', exists=True):
 			cmds.window('clothChain_mainWindow', e=True, h=40)
 
@@ -1142,8 +1152,6 @@ class SimClothRig():
 			cmds.delete(clothRigName + '_preview_grp')
 			cmds.delete(clothRigName + '_controlNames')
 
-			if cmds.columnLayout('previewSettings_columnLayout', exists=True):
-				cmds.deleteUI('previewSettings_columnLayout')
 			self.cacheCheckUI(clothRigName)
 			cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 1)
 
@@ -1188,10 +1196,6 @@ class SimClothRig():
 		except TypeError:
 			pass
 
-	def applyBlendparent(self, control, *args):
-		value = float(cmds.textField(control + '_textField', q=True, tx=True))
-		cmds.setAttr(control + '.blendParent1', value)
-
 	def multiplyStrength(self, *args):
 		clothRigName = cmds.text('clothRig_text', q=True, l=True).partition(': ')[2]
 		factor = float(cmds.textField('multiply_textField', q=True, tx=True))
@@ -1230,7 +1234,3 @@ class SimClothRig():
 		keys = cmds.keyframe(clothRigName + '_dynamicConstraintShape' + segmentNumber, q=True) or []
 		if currTime in keys:
 			cmds.textField('segment_' + segmentNumber + '_textField', e=True, bgc=(.85, .4, .4))
-
-	def blenParentKey(self, control, *args):
-		cmds.iconTextButton('keyframe_button' + control, e=True, image1='autoKeyframeOn.png')
-		cmds.setKeyframe(control + '.blendParent1')
