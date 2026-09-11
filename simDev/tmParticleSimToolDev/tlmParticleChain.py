@@ -3,6 +3,8 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om2
 import math
+import os
+import json
 from functools import partial
 import importlib
 
@@ -28,16 +30,26 @@ class SimParticleRig():
 		# defaults (verified via a headless probe against a fresh
 		# hairSystem node), matching how the old nParticle customPreset was
 		# also just nParticle's own defaults.
-		self.hairSettingsName = ['stiffness', 'drag', 'damp', 'stretchResistance', 'stretchDamp']
-		self.customPreset = [0.15, 0.05, 0.0, 10.0, 0.10]
+		self.hairSettingsName = ['stiffness', 'drag', 'damp', 'mass', 'stretchResistance', 'stretchDamp', 'dynamicsWeight']
+		self.customPreset = [0.15, 0.05, 0.0, 1.0, 10.0, 0.10, 1.0]
 		# 'tentacle' mirrors tlmClothChain.py's own named preset in spirit --
 		# a tuned starting point for a muscular chain rather than a floppy one:
 		# higher stiffness/stretchResistance so it holds its shape and resists
-		# elongating, moderate drag/damp so it doesn't whip forever.
+		# elongating, moderate drag/damp so it doesn't whip forever, and a
+		# bit more mass for a weightier feel. dynamicsWeight stays at full
+		# (1.0) -- this preset tunes how the sim behaves, not how much of it
+		# is in effect.
 		self.namedPresets = {
-			'tentacle': {'stiffness': 0.6, 'drag': 0.15, 'damp': 0.3, 'stretchResistance': 40.0, 'stretchDamp': 0.2},
+			'tentacle': {'stiffness': 0.6, 'drag': 0.15, 'damp': 0.3, 'mass': 1.5,
+			             'stretchResistance': 40.0, 'stretchDamp': 0.2, 'dynamicsWeight': 1.0},
 		}
 		self.presetsList = ['custom', 'tentacle']
+		# User-saved presets: version-agnostic per-user Maya app dir, not
+		# the repo -- this tool ends up in the shared student toolset, and
+		# presets are personal tuning, not something to ship or git-track.
+		# Same file works across Maya 2025/2026 (userAppDir is the
+		# top-level maya/ folder, not a per-version prefs subfolder).
+		self.userPresets = self._load_user_presets()
 		# Same 5 named falloff curves as tlmClothChain.py's dynamicConstraint
 		# strength profiles -- reused verbatim (same math). Unlike the old
 		# nParticle version (which wrote straight to each particle's
@@ -896,12 +908,109 @@ class SimParticleRig():
 			return
 		if presetOption in self.namedPresets:
 			vals = self.namedPresets[presetOption]
-			for nm in self.hairSettingsName:
-				cmds.setAttr(hairSystem + '.' + nm, vals[nm])
+		elif presetOption in self.userPresets:
+			vals = self.userPresets[presetOption]
 		else:
-			for idx, nm in enumerate(self.hairSettingsName):
-				cmds.setAttr(hairSystem + '.' + nm, self.customPreset[idx])
+			vals = dict(zip(self.hairSettingsName, self.customPreset))
+		for nm in self.hairSettingsName:
+			# .get, not [nm]: a user preset saved before mass/dynamicsWeight
+			# were added won't have those keys -- leave whatever the
+			# hairSystem already has for them rather than KeyError or
+			# silently forcing an unrelated value onto an older preset.
+			if nm in vals:
+				cmds.setAttr(hairSystem + '.' + nm, vals[nm])
 		self.loadHairSettings()
+
+	# ------------------------------------------------------------------
+	# User-saved presets -- persisted to a JSON file in Maya's per-user,
+	# version-agnostic app dir (see __init__), independent of any scene.
+	# ------------------------------------------------------------------
+
+	def _user_presets_path(self):
+		return os.path.join(cmds.internalVar(userAppDir=True), 'tlmParticleChain_presets.json')
+
+	def _load_user_presets(self):
+		path = self._user_presets_path()
+		if os.path.exists(path):
+			try:
+				with open(path, 'r') as f:
+					return json.load(f)
+			except Exception as e:
+				cmds.warning('Could not read saved presets (%s) -- starting empty.' % e)
+		return {}
+
+	def _save_user_presets_to_disk(self):
+		try:
+			with open(self._user_presets_path(), 'w') as f:
+				json.dump(self.userPresets, f, indent=2, sort_keys=True)
+		except Exception as e:
+			cmds.warning('Could not save presets to disk (%s).' % e)
+
+	def _rebuildPresetsMenu(self, *args):
+		if not cmds.popupMenu('presets_popupMenu', exists=True):
+			return
+		cmds.popupMenu('presets_popupMenu', e=True, deleteAllItems=True)
+		for i in self.presetsList:
+			cmds.menuItem(i + '_preset', label=i, p='presets_popupMenu', c=partial(self.loadPreset, i))
+		if self.userPresets:
+			cmds.menuItem(divider=True, p='presets_popupMenu')
+			# menuItem's own name (not its label) has to be a valid Maya UI
+			# identifier -- a user-typed preset name can contain spaces or
+			# other characters that aren't, so index into a fixed prefix
+			# instead of deriving the identifier from the name itself.
+			for idx, name in enumerate(sorted(self.userPresets)):
+				cmds.menuItem('userPreset_%d' % idx, label=name, p='presets_popupMenu', c=partial(self.loadPreset, name))
+		cmds.menuItem(divider=True, p='presets_popupMenu')
+		cmds.menuItem('savePreset_menuItem', label='Save Current as Preset...', p='presets_popupMenu', c=self.savePresetPrompt)
+		cmds.menuItem('deletePreset_menuItem', label='Delete Preset...', p='presets_popupMenu',
+		              c=self.deletePresetsUI, en=bool(self.userPresets))
+
+	def savePresetPrompt(self, *args):
+		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		hairSystem = self._get_hairSystem(rigName)
+		if not hairSystem:
+			cmds.warning('Create a Particle Rig first.')
+			return
+		result = cmds.promptDialog(
+			title='Save Preset', message='Preset name:', button=['Save', 'Cancel'],
+			defaultButton='Save', cancelButton='Cancel', dismissString='Cancel')
+		if result != 'Save':
+			return
+		name = (cmds.promptDialog(q=True, text=True) or '').strip()
+		if not name:
+			cmds.warning('Preset name cannot be empty.')
+			return
+		if name in self.presetsList:
+			cmds.warning('"%s" is a built-in preset name -- choose another.' % name)
+			return
+		self.userPresets[name] = {nm: cmds.getAttr(hairSystem + '.' + nm) for nm in self.hairSettingsName}
+		self._save_user_presets_to_disk()
+		self._rebuildPresetsMenu()
+
+	def deletePresetsUI(self, *args):
+		if cmds.window('particleDeletePreset_window', exists=True):
+			cmds.deleteUI('particleDeletePreset_window')
+		if not self.userPresets:
+			cmds.warning('No saved presets to delete.')
+			return
+		cmds.window('particleDeletePreset_window', tlb=1, sizeable=True, mxb=False, title='Delete Preset')
+		cmds.columnLayout(adj=1, rs=5, cat=('both', 8))
+		cmds.text(l='Select presets to delete:')
+		cmds.textScrollList('deletePreset_scrollList', allowMultiSelection=True, h=100,
+		                     append=sorted(self.userPresets.keys()))
+		cmds.rowLayout(nc=2, adj=1)
+		cmds.button(l='Delete Selected', c=self._deleteSelectedPresets)
+		cmds.button(l='Close', c=lambda *a: cmds.deleteUI('particleDeletePreset_window'))
+		cmds.showWindow('particleDeletePreset_window')
+
+	def _deleteSelectedPresets(self, *args):
+		selected = cmds.textScrollList('deletePreset_scrollList', q=True, si=True) or []
+		for name in selected:
+			self.userPresets.pop(name, None)
+		self._save_user_presets_to_disk()
+		self._rebuildPresetsMenu()
+		if cmds.window('particleDeletePreset_window', exists=True):
+			cmds.deleteUI('particleDeletePreset_window')
 
 	def loadSettings(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
@@ -1348,8 +1457,7 @@ class SimParticleRig():
 		cmds.button('segmentStregth_button', l='Set Influence', w=100, p='particleRigSettings_rowLayout', c=self.segmentOffsetUI)
 		cmds.button('presets_list', label='Presets*', w=70, p='particleRigSettings_rowLayout')
 		cmds.popupMenu('presets_popupMenu', b=1)
-		for i in self.presetsList:
-			cmds.menuItem(i + '_preset', label=i, c=partial(self.loadPreset, i))
+		self._rebuildPresetsMenu()
 
 		cmds.button('refreshGoal_button', l='Refresh Goal', h=20, bgc=(.6, .6, .4), p='settings_frameLayout', c=self.refreshGoalAnimation,
 		            ann='Re-bake the goal curve from the joints\' CURRENT animation -- use this after adding or changing keys on the joints post-Build.')
@@ -1357,14 +1465,14 @@ class SimParticleRig():
 
 		cmds.paneLayout('pane_layout2', cn='vertical2', p='settings_frameLayout')
 		cmds.columnLayout('particleRigSettings_columnLayout', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('stiffness', 'Stiffness'), ('drag', 'Drag'), ('damp', 'Damp')]:
+		for nm, label in [('stiffness', 'Stiffness'), ('drag', 'Drag'), ('damp', 'Damp'), ('mass', 'Mass')]:
 			row = 'row_' + nm
 			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout')
 			cmds.textField(nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
 			cmds.text(label)
 
 		cmds.columnLayout('particleRigSettings_columnLayout2', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('stretchResistance', 'Stretch Resistance'), ('stretchDamp', 'Stretch Damp')]:
+		for nm, label in [('stretchResistance', 'Stretch Resistance'), ('stretchDamp', 'Stretch Damp'), ('dynamicsWeight', 'Dynamics Weight')]:
 			row = 'row_' + nm
 			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout2')
 			cmds.textField(nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
