@@ -1153,7 +1153,10 @@ class SimClothRig():
 			cmds.delete(clothRigName + '_controlNames')
 
 			self.cacheCheckUI(clothRigName)
-			cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 1)
+			cmds.setAttr(clothRigName + '_nCloth_grp.visibility', 0)
+			cmds.setAttr(clothRigName + '_skinGeo.visibility', 0)
+			cmds.setAttr(clothRigName + '_simGeo.visibility', 0)
+			cmds.setAttr(clothRigName + '_bsGeo.visibility', 0)
 
 			for control in controlsList or []:
 				for i in cmds.listRelatives(control) or []:
