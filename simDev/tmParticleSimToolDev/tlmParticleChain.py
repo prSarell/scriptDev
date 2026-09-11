@@ -728,21 +728,38 @@ class SimParticleRig():
 		"""Aim chain: flat one-group-per-segment, translate connected
 		directly from its sim point, aimed at the next segment's sim point.
 
-		The up vector is computed live per segment rather than read from a
-		fixed-offset locator (the first version of this): aimVec = live
-		vector between the two sim points, then two chained cross products
-		(aimVec x restUp, then that x aimVec) project the segment's
-		REST-pose up direction onto the plane perpendicular to whatever the
-		LIVE aim direction currently is. A fixed offset locator instead
-		(tracking the live point but pointing in a constant world-space
-		direction) degenerates the moment the simulated curve swings far
-		enough from rest that the aim direction rotates toward that fixed
-		direction -- aim and up vectors going near-parallel is a classic
-		aimConstraint singularity, and reads as the rig exploding
-		(confirmed live -- reported after Preview once the sim was actually
-		animation-reactive enough to swing the chain around). This only
-		degenerates in the much narrower case where the LIVE aim direction
-		itself rotates to exactly match the original REST up reference.
+		The up vector is a live rotation-minimizing frame chained along the
+		segments, not each segment independently re-anchored to its own
+		fixed rest-pose reference (the previous version of this). Segment 0
+		seeds from its static rest-pose up (restUps[0] -- a chain has to
+		start somewhere); every segment after that takes its reference up
+		from the PREVIOUS segment's already-computed live up output
+		(upLive_(i-1)) instead of restUps[i]. The same double-cross-product
+		(aimVec x refUp, then that x aimVec) that re-orthogonalizes against
+		the current aim direction now also propagates whatever twist the
+		chain has actually accumulated, live, segment to segment -- true
+		parallel transport, redone every frame -- instead of independently
+		snapping each segment back toward a stale rest-pose snapshot every
+		frame regardless of what its neighbors are doing. Two real benefits
+		over the old independent-fixed-rest version: (1) twist stays
+		continuous along the chain by construction, since a rotation-
+		minimizing frame doesn't accumulate torsion; (2) it changes the
+		actual final orientation trajectory fed into each control's Euler
+		decomposition (aim direction is unchanged -- purely geometric -- but
+		twist/roll is a free choice, and singularity proximity depends on
+		the combined aim+twist orientation), which is what was landing
+		several controls' rotate order right on the +-90 gimbal pole in the
+		'actualGimbal' test case.
+
+		Old version still degenerated for the same reason noted before: a
+		fixed reference can rotate to become parallel with the live aim
+		direction on a big enough swing (classic aimConstraint singularity,
+		confirmed live). Chaining doesn't reintroduce that -- each segment's
+		reference is always freshly re-orthogonalized against ITS OWN aim
+		direction before being handed to the next segment, so the only way
+		to degenerate is two ADJACENT segments' aim directions themselves
+		going parallel, a much narrower case than any segment's aim
+		rotating to match a single fixed world-space vector.
 		"""
 		segCount = len(simPointLocs)
 		aimGrp_grp = rigName + '_aimChain_grp'
@@ -759,7 +776,10 @@ class SimParticleRig():
 			cmds.setAttr(side + '.operation', 2)  # cross product
 			cmds.setAttr(side + '.normalizeOutput', 1)
 			cmds.connectAttr(aimVecNode + '.output3D', side + '.input1')
-			cmds.setAttr(side + '.input2', *restUps[i])
+			if i == 0:
+				cmds.setAttr(side + '.input2', *restUps[i])
+			else:
+				cmds.connectAttr(rigName + '_upLive_%02d.output' % (i - 1), side + '.input2')
 
 			liveUp = cmds.createNode('vectorProduct', name=rigName + '_upLive_%02d' % i)
 			cmds.setAttr(liveUp + '.operation', 2)
