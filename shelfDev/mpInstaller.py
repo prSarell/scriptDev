@@ -175,17 +175,27 @@ def _install():
 
     # --- userSetup.py ---
     usersetup = os.path.join(scripts_dir, "userSetup.py")
-    existing = ""
+    original = ""
     if os.path.exists(usersetup):
         with open(usersetup, "r", encoding="utf-8") as fh:
-            existing = fh.read()
-    for old in [
-        "# animMultiTool auto-load (mpAnim installer)",
-        "import animMultiTool; animMultiTool.show()",
-        "import maya.utils; maya.utils.executeDeferred('import animMultiTool; animMultiTool.show()')",
-    ]:
-        existing = existing.replace(old, "")
-    existing = "\n".join(line for line in existing.splitlines() if line.strip())
+            original = fh.read()
+
+    # Drop any line mentioning the old pre-multiTool "animMultiTool" auto-load
+    # (comment or executeDeferred call) by content, not by exact string match --
+    # a stale one can get wrapped in extra executeDeferred('...') nesting by
+    # hand over time, which an exact-match replace() silently stops catching.
+    # An uncaught one is a real SyntaxError at the top of the file that blocks
+    # the *whole* userSetup.py (multiTool/shortCuts auto-load included) from
+    # ever running, not just the broken line itself -- worth being defensive.
+    existing = "\n".join(
+        line for line in original.splitlines()
+        if "animMultiTool" not in line and line.strip()
+    )
+    if existing != original.strip():
+        with open(usersetup, "w", encoding="utf-8") as fh:
+            fh.write(existing + ("\n" if existing else ""))
+        print("[mpInstaller] cleaned stale animMultiTool auto-load from userSetup.py")
+
     if _USERSETUP_MARKER not in existing:
         with open(usersetup, "a", encoding="utf-8") as fh:
             fh.write("\n" + _USERSETUP_MARKER + "\n" + _USERSETUP_LINE + "\n")
