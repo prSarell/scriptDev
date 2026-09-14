@@ -75,6 +75,19 @@ def _install():
     for name in anim_scripts:
         _copy(os.path.join(ANIM_TOOLS, name), scripts_dir)
 
+    # shotgun_api3/ — vendored ShotGrid API package shotSub's shotgridConnect.py
+    # depends on. A whole package dir, not a single file, so EXTRA_SCRIPTS/_copy()
+    # can't carry it — merge-copy like Studio Library below for the same reason
+    # (avoid rmtree on a package that may still be imported in a running session).
+    shotgun_api3_src = os.path.join(ANIM_TOOLS, "shotgun_api3")
+    if os.path.isdir(shotgun_api3_src):
+        try:
+            shutil.copytree(shotgun_api3_src, os.path.join(scripts_dir, "shotgun_api3"), dirs_exist_ok=True)
+        except Exception as e:
+            print("[mpInstaller] WARNING: could not update shotgun_api3 — {}".format(e))
+    else:
+        print("[mpInstaller] WARNING: not found — {}".format(shotgun_api3_src))
+
     # mpAnim staff_shortcuts/ (per-set JSON configs read by shortCuts.py)
     if os.path.isdir(STAFF_SHORTCUTS_DIR):
         dst_staff_dir = os.path.join(scripts_dir, "staff_shortcuts")

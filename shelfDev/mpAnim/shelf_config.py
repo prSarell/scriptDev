@@ -12,6 +12,7 @@ METAHUMAN_SCRIPTS = [
 EXTRA_SCRIPTS = [
     "mpAnimConfig.py",
     "shortCuts.py",
+    "shotgridConnect.py",
 ]
 
 # Scripts from timeManagementDev/jiffyScheduleDev/ — deployed flat to ~/maya/scripts/.
@@ -35,6 +36,7 @@ JIFFYPOMO_SCRIPTS = [
 # Scripts from simDev/ — deployed flat to ~/maya/scripts/.
 SIMTOOL_SCRIPTS = [
     "tmClothSimToolDev/tlmClothChain.py",
+    "tmParticleSimToolDev/tlmParticleChain.py",
 ]
 
 # Scripts from animDev/ root — deployed flat to ~/maya/scripts/.
@@ -127,6 +129,19 @@ BUTTONS = [
             "importlib.reload(tlmClothChain)\n"
             "import maya.cmds as cmds\n"
             "run = tlmClothChain.SimClothRig()\n"
+            "cmds.evalDeferred(run.UI)"
+        ),
+    },
+    {
+        "label": "ParticleChain",
+        "tooltip": "Open the Particle Chain Sim tool — build and control nHair/nucleus dynamics chains",
+        "icon": "iconParticleChain.png",
+        "command": (
+            "import importlib\n"
+            "import tlmParticleChain\n"
+            "importlib.reload(tlmParticleChain)\n"
+            "import maya.cmds as cmds\n"
+            "run = tlmParticleChain.SimParticleRig()\n"
             "cmds.evalDeferred(run.UI)"
         ),
     },
