@@ -18,48 +18,57 @@ def bake_to_object():
     sel = cmds.ls(sl=True, long=True)
     if len(sel) < 2:
         cmds.inViewMessage(
-            amg='<b>OS Bake:</b> Select driven first, then driver last.',
-            pos='midCenter', fade=True)
-        return
-    if len(sel) > 2:
-        cmds.inViewMessage(
-            amg='<b>OS Bake:</b> Select two objects only.',
+            amg='<b>OS Bake:</b> Select driven object(s) first, then driver last.',
             pos='midCenter', fade=True)
         return
 
-    driven = sel[0]
-    driver = sel[1]
-    driven_short = driven.split('|')[-1].split(':')[-1]
-    driver_short  = driver.split('|')[-1].split(':')[-1]
+    driven_objs = sel[:-1]
+    driver      = sel[-1]
+    driver_short = driver.split('|')[-1].split(':')[-1]
     start, end = _get_timeslider_range()
 
-    # Carrier group parented under driver, constrained to driven, baked, freed
-    grp = cmds.group(empty=True, name=driven_short + '_osBakeGrp')
-    cmds.parent(grp, driver)
+    # Single top group under the driver everything lands under. It sits at
+    # the driver's local origin (identity offset), so parenting the
+    # per-driven carriers under it doesn't affect the values baked onto them.
+    top_grp = cmds.group(empty=True, name='objectBake_grp')
+    cmds.parent(top_grp, driver)
     for attr in ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']:
-        cmds.setAttr(grp + '.' + attr, 0)
+        cmds.setAttr(top_grp + '.' + attr, 0)
 
-    tmp_con = cmds.parentConstraint(driven, grp, maintainOffset=False)[0]
+    # Carrier groups: constrain each to its driven object first, then bake
+    # all groups in a single bakeResults call (one scene evaluation per
+    # frame instead of one per object per frame).
+    carriers = []
+    for driven in driven_objs:
+        short   = driven.split('|')[-1].split(':')[-1]
+        grp     = cmds.group(empty=True, name=short + '_osBakeGrp', parent=top_grp)
+        tmp_con = cmds.parentConstraint(driven, grp, maintainOffset=False)[0]
+        carriers.append((driven, short, grp, tmp_con))
+
     cmds.bakeResults(
-        grp,
+        [c[2] for c in carriers],
         time=(start, end),
         simulation=False,
         sampleBy=1,
         attribute=['tx', 'ty', 'tz', 'rx', 'ry', 'rz'],
     )
-    cmds.delete(tmp_con)
+    cmds.delete([c[3] for c in carriers])
 
-    # Locator under group, zeroed
-    loc = cmds.spaceLocator(name=driven_short + '_osBakeLoc')[0]
-    cmds.parent(loc, grp)
-    for attr in ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']:
-        cmds.setAttr(loc + '.' + attr, 0)
+    for driven, short, grp, _ in carriers:
+        # Locator under group, zeroed
+        loc = cmds.spaceLocator(name=short + '_osBakeLoc')[0]
+        cmds.parent(loc, grp)
+        for attr in ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']:
+            cmds.setAttr(loc + '.' + attr, 0)
 
-    # Drive the original object from the locator
-    cmds.parentConstraint(loc, driven, maintainOffset=False)
+        # Drive the original object from the locator
+        cmds.parentConstraint(loc, driven, maintainOffset=False)
 
-    cmds.select(grp)
-    cmds.inViewMessage(
-        amg='<b>OS Bake:</b> <hl>{}</hl> → <hl>{}</hl>  ({}–{})'.format(
-            driven_short, driver_short, start, end),
-        pos='midCenter', fade=True)
+    cmds.select(top_grp)
+    if len(carriers) == 1:
+        msg = '<b>OS Bake:</b> <hl>{}</hl> → <hl>{}</hl>  ({}–{})'.format(
+            carriers[0][1], driver_short, start, end)
+    else:
+        msg = '<b>OS Bake:</b> <hl>{}</hl> objects → <hl>{}</hl>  ({}–{})'.format(
+            len(carriers), driver_short, start, end)
+    cmds.inViewMessage(amg=msg, pos='midCenter', fade=True)
