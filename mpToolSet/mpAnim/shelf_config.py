@@ -50,6 +50,19 @@ BUTTONS = [
         ),
     },
     {
+        "label": "ParticleChain",
+        "tooltip": "Open the Particle Chain Sim tool — build and control nHair/nucleus dynamics chains",
+        "icon": "iconParticleChain.png",
+        "command": (
+            "import importlib\n"
+            "import tlmParticleChain\n"
+            "importlib.reload(tlmParticleChain)\n"
+            "import maya.cmds as cmds\n"
+            "run = tlmParticleChain.SimParticleRig()\n"
+            "cmds.evalDeferred(run.UI)"
+        ),
+    },
+    {
         "label": "StudioLib",
         "tooltip": "Open Studio Library — animation pose and clip manager",
         "icon": "iconStudioLib.png",

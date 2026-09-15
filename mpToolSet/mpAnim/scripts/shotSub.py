@@ -93,6 +93,11 @@ class ShotSub(object):
         self.widgets = {}
         self.last_created_version_folder = ""
         self.last_created_files = []
+        # Populated by populate_project_menu()/populate_shot_menu() -- backs
+        # the Project/Shot dropdowns (see show()) since optionMenu only
+        # stores the selected label, not the id link_to_shotgrid() needs.
+        self._sg_projects = []
+        self._sg_shots = []
         # Tracks the RV process we launched directly for audio review (bypasses
         # rvpush -- see open_in_rv_with_audio) so the previous one can be closed
         # before opening a new one, instead of piling up windows.
@@ -149,7 +154,33 @@ class ShotSub(object):
         inner = cmds.columnLayout(adj=True)
         self.widgets["link_status_field"] = self._readonly_field("Linked Shot")
         cmds.separator(h=6, style="none")
-        cmds.button(label="Link to ShotGrid", h=30, c=lambda *_: self.link_to_shotgrid())
+
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(100, 380))
+        cmds.text(label="Student # / Staff Email")
+        self.widgets["identity_id_field"] = cmds.textField(
+            text=(self.read_student_identity() or {}).get("student_id", ""),
+            annotation="Student number (e.g. S4177501) or your full ShotGrid/staff "
+                       "email — used to log in and to pick out your own Shots.",
+        )
+        cmds.setParent("..")
+        cmds.separator(h=6, style="none")
+
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(100, 380))
+        cmds.text(label="Project")
+        self.widgets["project_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.populate_shot_menu())
+        cmds.setParent("..")
+
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(100, 380))
+        cmds.text(label="Shot")
+        self.widgets["shot_menu"] = cmds.optionMenu(changeCommand=lambda *_: self.link_to_shotgrid())
+        cmds.setParent("..")
+
+        cmds.separator(h=6, style="none")
+        cmds.button(
+            label="Refresh Projects", h=26, c=lambda *_: self.populate_project_menu(),
+            annotation="Loads your visible Projects/Shots -- picking one links "
+                       "automatically, no separate link step needed.",
+        )
         cmds.setParent("..")
         cmds.setParent("..")
 
@@ -213,6 +244,8 @@ class ShotSub(object):
         )
         inner = cmds.columnLayout(adj=True)
         self.widgets["version_list"] = cmds.textScrollList(numberOfRows=6, allowMultiSelection=False)
+        cmds.separator(h=6, style="none")
+        cmds.button(label="Play Selected in RV", h=26, c=lambda *_: self.play_selected_version_in_rv())
         cmds.separator(h=6, style="none")
         cmds.text(label="Notes (sent with this publish)", align="left")
         self.widgets["publish_notes"] = cmds.scrollField(
@@ -640,6 +673,18 @@ class ShotSub(object):
             if version["name"] == version_name:
                 return version["path"]
         return None
+
+    def get_version_folder_prefix(self, version_folder):
+        """Derives the rvpush sequence prefix for an arbitrary local version
+        folder by inspecting its files (mirrors shotgridConnect's own
+        _frame_sequence_prefix()) -- unlike get_playblast_prefix() (which
+        assumes the *current* scene name), this works for any version on
+        disk, including one left over from a since-renamed scene."""
+        files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+        if not files:
+            return None
+        match = re.search(r"^(.*)\.\d+\.jpg$", os.path.basename(files[0]), flags=re.IGNORECASE)
+        return os.path.join(version_folder, match.group(1)) if match else None
 
     # --------------------------------------------------------
     # Camera / viewport helpers
@@ -1293,58 +1338,89 @@ class ShotSub(object):
     # --------------------------------------------------------
     # ShotGrid hand-off
     # --------------------------------------------------------
-    def link_to_shotgrid(self):
-        """
-        Attach the current scene's own scenes/<sequence>/<shot> subfolder
-        (see get_scene_folder_path()) to an EXISTING ShotGrid Shot -- never
-        creates one, that's done directly in ShotGrid's web UI by the
-        lecturer/TD (see shotgridConnect.list_project_shots()'s docstring).
-        Two QInputDialog.getItem pickers (Project, then Shot within it),
-        run synchronously on Maya's main thread -- a brief pause during an
-        occasional, deliberate "link" action is fine.
-        """
+    def _import_shotgridConnect(self):
         try:
             import shotgridConnect
+            return shotgridConnect
         except ImportError:
             cmds.warning(
                 "shotSub: shotgridConnect.py (and its bundled shotgun_api3) "
                 "must sit alongside shotSub.py — check pipeDev/shotSubDev."
             )
+            return None
+
+    def set_student_id(self, student_id):
+        """Overwrites just the student_id half of shotSub_student.json,
+        keeping whatever name (if any) is already on file -- lets the
+        inline "Student # / Staff Email" field (see show()) update identity
+        without needing the separate one-time name prompt (ensure_student_
+        identity()) to run first."""
+        existing = self.read_student_identity() or {}
+        return self.write_student_identity(existing.get("student_name", ""), student_id)
+
+    @staticmethod
+    def _clear_option_menu(menu_name):
+        for item in cmds.optionMenu(menu_name, q=True, itemListLong=True) or []:
+            cmds.deleteUI(item)
+
+    def populate_project_menu(self):
+        """"Refresh Projects" button -- (re)connects to ShotGrid using
+        whatever's currently typed in the "Student # / Staff Email" field
+        and fills the Project dropdown, then cascades into
+        populate_shot_menu() for whichever Project ends up selected first.
+        Replaces the old pair of QInputDialog.getItem pickers link_to_
+        shotgrid() used to pop up -- the Project/Shot dropdowns now live
+        in the main window instead."""
+        shotgridConnect = self._import_shotgridConnect()
+        if not shotgridConnect:
             return
 
-        # A brand-new install has no sudo_as_login and no student-identity
-        # file yet, so the very first connection attempt would fall
-        # through to getpass.getuser() (looks like a student ID on RMIT
-        # lab machines, but isn't a real ShotGrid login) and fail with
-        # AuthenticationFault -- before the student ever gets a chance to
-        # supply the info that would fix it. Ask for identity up front
-        # whenever it isn't already resolvable, so the very first attempt
-        # can actually succeed instead of requiring a working connection
-        # to unlock the thing that establishes one.
+        student_id = cmds.textField(self.widgets["identity_id_field"], q=True, text=True).strip()
+        if student_id:
+            self.set_student_id(student_id)
+
         if not shotgridConnect.has_known_identity():
-            if not self.ensure_student_identity():
-                cmds.warning(
-                    "shotSub needs your name and student ID before it can connect "
-                    "to ShotGrid — click 'Link to ShotGrid' again when ready."
-                )
-                return
+            cmds.warning("Enter your student number or staff email above first.")
+            return
 
         try:
-            projects = shotgridConnect.list_visible_projects()
+            self._sg_projects = shotgridConnect.list_visible_projects()
         except Exception as exc:
             cmds.warning("Could not reach ShotGrid to list Projects: {0}".format(exc))
             return
-        if not projects:
+
+        self._clear_option_menu(self.widgets["project_menu"])
+        self._sg_shots = []
+        self._clear_option_menu(self.widgets["shot_menu"])
+
+        if not self._sg_projects:
             cmds.warning("No ShotGrid Projects are visible to your account.")
             return
 
-        project_name, ok = QtWidgets.QInputDialog.getItem(
-            None, "Link to ShotGrid", "ShotGrid Project:",
-            [p["name"] for p in projects], 0, False
-        )
-        if not ok or not project_name:
+        for project in self._sg_projects:
+            cmds.menuItem(label=project["name"], parent=self.widgets["project_menu"])
+
+        self.populate_shot_menu()
+
+    def populate_shot_menu(self):
+        """Fills the Shot dropdown for whichever Project is currently
+        selected -- called both from the Project dropdown's changeCommand
+        and once up front by populate_project_menu(). Filters down to
+        Shots matching the entered student ID, same
+        "<prefix>_<type>_<studentID>" convention provision_shotgrid_
+        class.py uses, so a student doesn't have to pick their own Shot
+        out of the whole class's list; skipped for a staff email (no
+        digits-only match expected) or if nothing matches, falling back to
+        the unfiltered list with a warning either way."""
+        shotgridConnect = self._import_shotgridConnect()
+        if not shotgridConnect:
             return
-        project = next(p for p in projects if p["name"] == project_name)
+
+        project_name = cmds.optionMenu(self.widgets["project_menu"], q=True, value=True)
+        self._clear_option_menu(self.widgets["shot_menu"])
+        self._sg_shots = []
+        if not project_name:
+            return
 
         try:
             shots = shotgridConnect.list_project_shots(project_name)
@@ -1358,34 +1434,49 @@ class ShotSub(object):
             )
             return
 
-        # Filter the picker down to this student's own Shots, matching
-        # provision_shotgrid_class.py's "<prefix>_<type>_<studentID>"
-        # naming convention -- avoids a student mis-picking a classmate's
-        # identically-structured Shot out of a long list. Falls back to
-        # the full unfiltered list (with a warning) if identity is
-        # unknown (student cancelled the one-time prompt) or nothing
-        # matches their ID (typo, or genuinely not on this assignment).
-        identity = self.ensure_student_identity()
-        if identity:
-            student_id = identity["student_id"].lower()
+        student_id = cmds.textField(self.widgets["identity_id_field"], q=True, text=True).strip().lower()
+        if student_id and "@" not in student_id:
             matching_shots = [s for s in shots if student_id in s["code"].lower()]
             if matching_shots:
                 shots = matching_shots
             else:
                 cmds.warning(
-                    "No Shots matching student ID '{0}' found — showing all Shots "
-                    "in '{1}' instead.".format(identity["student_id"], project_name)
+                    "No Shots matching '{0}' found — showing all Shots in '{1}' "
+                    "instead.".format(student_id, project_name)
                 )
-        else:
-            cmds.warning("No student ID on file — showing all Shots in '{0}'.".format(project_name))
 
-        shot_code, ok = QtWidgets.QInputDialog.getItem(
-            None, "Link to ShotGrid", "ShotGrid Shot:",
-            [s["code"] for s in shots], 0, False
-        )
-        if not ok or not shot_code:
+        self._sg_shots = shots
+        for shot in shots:
+            cmds.menuItem(label=shot["code"], parent=self.widgets["shot_menu"])
+
+        # Maya's optionMenu auto-selects the first item it's given, but that
+        # doesn't fire its own changeCommand -- link explicitly to whichever
+        # Shot ends up selected so switching Project alone (with no separate
+        # Shot pick) still updates the link.
+        self.link_to_shotgrid()
+
+    def link_to_shotgrid(self):
+        """
+        Attach the current scene's own scenes/<sequence>/<shot> subfolder
+        (see get_scene_folder_path()) to an EXISTING ShotGrid Shot -- never
+        creates one, that's done directly in ShotGrid's web UI by the
+        lecturer/TD (see shotgridConnect.list_project_shots()'s docstring).
+        Reads whatever Project/Shot are currently selected in the inline
+        dropdowns (see populate_project_menu()/populate_shot_menu()) rather
+        than popping up pickers -- click "Refresh Projects" first if
+        they're still empty.
+        """
+        project_name = cmds.optionMenu(self.widgets["project_menu"], q=True, value=True)
+        shot_code = cmds.optionMenu(self.widgets["shot_menu"], q=True, value=True)
+        if not project_name or not shot_code:
+            cmds.warning("Click 'Refresh Projects' and pick a Project/Shot first.")
             return
-        shot = next(s for s in shots if s["code"] == shot_code)
+
+        project = next((p for p in getattr(self, "_sg_projects", []) if p["name"] == project_name), None)
+        shot = next((s for s in getattr(self, "_sg_shots", []) if s["code"] == shot_code), None)
+        if not project or not shot:
+            cmds.warning("Selected Project/Shot is stale — click 'Refresh Projects' again.")
+            return
 
         try:
             self.write_shotgrid_link(project["id"], project["name"], "Shot", shot["id"], shot["code"])
@@ -1446,16 +1537,11 @@ class ShotSub(object):
 
         link = self.read_shotgrid_link()
         if not link:
-            cmds.warning("This shot isn't linked to ShotGrid yet — use 'Link to ShotGrid' first.")
+            cmds.warning("This shot isn't linked to ShotGrid yet — pick a Project/Shot above first.")
             return
 
-        try:
-            import shotgridConnect
-        except ImportError:
-            cmds.warning(
-                "shotSub: shotgridConnect.py (and its bundled shotgun_api3) "
-                "must sit alongside shotSub.py — check pipeDev/shotSubDev."
-            )
+        shotgridConnect = self._import_shotgridConnect()
+        if not shotgridConnect:
             return
 
         files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
@@ -1506,6 +1592,17 @@ class ShotSub(object):
             cmds.warning("Select a local version to publish first.")
             return
         self.publish_version(version_folder)
+
+    def play_selected_version_in_rv(self):
+        version_folder = self.get_selected_version_folder()
+        if not version_folder:
+            cmds.warning("Select a local version to play first.")
+            return
+        prefix = self.get_version_folder_prefix(version_folder)
+        if not prefix:
+            cmds.warning("No frames found in {0} to play.".format(version_folder))
+            return
+        self.open_in_rv(prefix)
 
 
 def show_shotSub():
