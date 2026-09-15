@@ -67,8 +67,20 @@ def bake_to_origin():
             cmds.delete(constraints)
 
         for grp in bake_rigs:
-            if cmds.objExists(grp):
-                cmds.delete(grp)
+            if not cmds.objExists(grp):
+                continue
+            # The carrier group may itself sit inside the shared
+            # worldBake_grp/objectBake_grp wrapper WS/OS Bake nest all their
+            # carriers under -- once the last carrier is gone that wrapper is
+            # just an empty husk, so clean it up too.
+            parents = cmds.listRelatives(grp, parent=True, fullPath=True) or []
+            cmds.delete(grp)
+            for parent in parents:
+                short = parent.split('|')[-1].split(':')[-1]
+                if not (short.startswith('worldBake_grp') or short.startswith('objectBake_grp')):
+                    continue
+                if cmds.objExists(parent) and not cmds.listRelatives(parent, children=True):
+                    cmds.delete(parent)
 
     msg = '<b>Bake Down:</b> {} object(s) baked'.format(len(sel))
     if layer:

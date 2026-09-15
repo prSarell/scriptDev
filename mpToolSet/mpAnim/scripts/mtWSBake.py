@@ -22,38 +22,48 @@ def bake_to_world():
             amg='<b>WS Bake:</b> Select an object first.',
             pos='midCenter', fade=True)
         return
-    if len(sel) > 1:
-        cmds.inViewMessage(
-            amg='<b>WS Bake:</b> Select one object only.',
-            pos='midCenter', fade=True)
-        return
 
-    obj   = sel[0]
-    short = obj.split('|')[-1].split(':')[-1]
     start, end = _get_timeslider_range()
 
-    # Carrier group: constrain to object, bake, free
-    grp     = cmds.group(empty=True, name=short + '_bakeGrp')
-    tmp_con = cmds.parentConstraint(obj, grp, maintainOffset=False)[0]
+    # Single top group everything lands under. It never moves (identity
+    # transform), so parenting the per-object carriers under it doesn't
+    # affect the world-space values baked onto them.
+    top_grp = cmds.group(empty=True, name='worldBake_grp')
+
+    # Carrier groups: constrain each to its object first, then bake all
+    # groups in a single bakeResults call (one scene evaluation per frame
+    # instead of one per object per frame).
+    carriers = []
+    for obj in sel:
+        short   = obj.split('|')[-1].split(':')[-1]
+        grp     = cmds.group(empty=True, name=short + '_bakeGrp', parent=top_grp)
+        tmp_con = cmds.parentConstraint(obj, grp, maintainOffset=False)[0]
+        carriers.append((obj, short, grp, tmp_con))
+
     cmds.bakeResults(
-        grp,
+        [c[2] for c in carriers],
         time=(start, end),
         simulation=False,
         sampleBy=1,
         attribute=['tx', 'ty', 'tz', 'rx', 'ry', 'rz'],
     )
-    cmds.delete(tmp_con)
+    cmds.delete([c[3] for c in carriers])
 
-    # Locator parented under group, zeroed (sits at object world pos)
-    loc = cmds.spaceLocator(name=short + '_bakeLoc')[0]
-    cmds.parent(loc, grp)
-    for attr in ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']:
-        cmds.setAttr(loc + '.' + attr, 0)
+    for obj, short, grp, _ in carriers:
+        # Locator parented under group, zeroed (sits at object world pos)
+        loc = cmds.spaceLocator(name=short + '_bakeLoc')[0]
+        cmds.parent(loc, grp)
+        for attr in ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']:
+            cmds.setAttr(loc + '.' + attr, 0)
 
-    # Drive the original object from the locator
-    cmds.parentConstraint(loc, obj, maintainOffset=False)
+        # Drive the original object from the locator
+        cmds.parentConstraint(loc, obj, maintainOffset=False)
 
-    cmds.select(grp)
-    cmds.inViewMessage(
-        amg='<b>WS Bake:</b> <hl>{}</hl> baked  ({}–{})'.format(short, start, end),
-        pos='midCenter', fade=True)
+    cmds.select(top_grp)
+    if len(carriers) == 1:
+        msg = '<b>WS Bake:</b> <hl>{}</hl> baked  ({}–{})'.format(
+            carriers[0][1], start, end)
+    else:
+        msg = '<b>WS Bake:</b> <hl>{}</hl> objects baked  ({}–{})'.format(
+            len(carriers), start, end)
+    cmds.inViewMessage(amg=msg, pos='midCenter', fade=True)
