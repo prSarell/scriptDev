@@ -66,11 +66,6 @@ class SimParticleRig():
 			('closeFollow', 'Close Follow'),
 			('baseOnly', 'Base Only'),
 		]
-		# Set after a successful Build (see buildParticleRig) -- lets the
-		# Nucleus dropdown default to sharing THIS session's last-built rig
-		# rather than "New" on the next build, so back-to-back chains
-		# collide with each other unless "New" is deliberately picked.
-		self._last_built_rig = None
 	# ------------------------------------------------------------------
 	# Copied verbatim from tlmClothChain.py -- sim-backend-agnostic.
 	# ------------------------------------------------------------------
@@ -666,14 +661,12 @@ class SimParticleRig():
 		cmds.optionMenu('particleRig_list', e=True, v=rigName)
 
 		# Register this rig as a nucleus-sharing target for the NEXT build,
-		# and default the choice TO it rather than "New" -- multiple chains
-		# built back-to-back should collide with each other by default;
-		# picking "New" is now the deliberate opt-out for a genuinely
-		# separate/non-colliding chain, not the other way around.
+		# and reset the choice back to "New" -- otherwise building rig #2
+		# right after rig #1 would default to silently sharing rig #1's
+		# nucleus instead of it being a deliberate choice each time.
 		if cmds.optionMenu('nucleusChoice_list', exists=True):
 			cmds.menuItem(rigName + '_nucleusChoice', label=rigName, p='nucleusChoice_list')
-			cmds.optionMenu('nucleusChoice_list', e=True, v=rigName + '_nucleusChoice')
-		self._last_built_rig = rigName
+			cmds.optionMenu('nucleusChoice_list', e=True, v='New')
 
 		self.loadSettings()
 		self._applyConstraintProfile(rigName, 'baseToTip')
@@ -1420,21 +1413,11 @@ class SimParticleRig():
 		cmds.textField('particleRigName_textField', w=150)
 
 		cmds.rowLayout('nucleusChoice_rowLayout', nc=2, adjustableColumn=2, p='particleChain_frameLayout')
-		cmds.text('Nucleus:', ann='Defaults to sharing an existing rig\'s nucleus so chains collide with each other -- hairSystems on the SAME nucleus can collide; separate nuclei never see each other. Pick "New" to deliberately keep this chain non-colliding/separate.')
+		cmds.text('Nucleus:', ann='Share an existing rig\'s nucleus instead of creating a new one -- hairSystems on the SAME nucleus can collide with each other; separate nuclei never see each other.')
 		cmds.optionMenu('nucleusChoice_list', w=150)
 		cmds.menuItem('New', p='nucleusChoice_list')
-		existingRigs = self._get_existing_rig_names()
-		for existingRig in existingRigs:
+		for existingRig in self._get_existing_rig_names():
 			cmds.menuItem(existingRig + '_nucleusChoice', label=existingRig, p='nucleusChoice_list')
-		# Default to sharing an existing rig's nucleus rather than "New" when
-		# one is available -- chains should collide with each other unless
-		# "New" is deliberately chosen. Prefers this instance's own last
-		# build (self._last_built_rig); a fresh UI open/refresh creates a new
-		# SimParticleRig() with no build history yet, so falls back to
-		# whichever existing rig turns up last in the scene.
-		defaultRig = self._last_built_rig if self._last_built_rig in existingRigs else (existingRigs[-1] if existingRigs else None)
-		if defaultRig:
-			cmds.optionMenu('nucleusChoice_list', e=True, v=defaultRig + '_nucleusChoice')
 		cmds.separator(st='none', h=10, p='particleChain_frameLayout')
 
 		cmds.frameLayout('buildParticleRig_frameLayout', lv=False, bv=False, p='particleChain_frameLayout')
