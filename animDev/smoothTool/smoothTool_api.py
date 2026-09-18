@@ -810,3 +810,225 @@ class SmoothToolCore:
         self._blended_euler = []
         self._smoothed = [[], [], []]
         self._blended = [[], [], []]
+
+
+# ---------------------------------------------------------------------------
+# Face control core (channel-based, no rotation/basis reconstruction)
+# ---------------------------------------------------------------------------
+
+class FaceSmoothCore:
+    """Per-control translate-channel smoothing for rigid, non-deforming
+    face board controls (e.g. MetaHuman-style 2-axis sliders driven by
+    iPhone/Live Link facial mocap).
+
+    Unlike SmoothToolCore, there's no tracked triangle or rotation
+    reconstruction -- these controls have no meaningful rotation to
+    preserve, so each free translate channel (tx/ty, sometimes tz) is
+    sampled and Butterworth-filtered directly. Any number of controls can
+    be tracked and baked together under one shared set of sliders.
+    """
+
+    _AXES = ('tx', 'ty', 'tz')
+    _COLORS = SmoothToolCore._COLORS
+
+    def __init__(self):
+        self.targets = []
+        self.frames = []
+        self.channels = {}      # target -> free subset of _AXES
+        self._static = {}       # target -> {locked axis: constant value}
+        self.orig = {}          # target -> {attr: [values]}
+        self.smoothed = {}      # target -> {attr: [values]}
+        self.blended = {}       # target -> {attr: [values]}
+
+        self.orig_curves = {}
+        self.smooth_curves = {}
+        self.blend_curves = {}
+
+        self.strength = 1.0
+        self.blend = 1.0
+        self.falloff = 0.15
+
+    # ------------------------------------------------------------------
+    # Channel discovery / sampling
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def free_channels(target):
+        """Keyable, unlocked subset of tx/ty/tz -- typically 2 of the 3
+        for a MetaHuman-style board control."""
+        return [a for a in FaceSmoothCore._AXES
+                if cmds.getAttr('{}.{}'.format(target, a), keyable=True)
+                and not cmds.getAttr('{}.{}'.format(target, a), lock=True)]
+
+    def sample(self, targets, start, end):
+        """Sample every free translate channel on each target. Returns the
+        subset of targets skipped for having no free channel at all."""
+        skipped = []
+        self.targets = []
+        self.channels = {}
+        for t in targets:
+            free = self.free_channels(t)
+            if not free:
+                skipped.append(t)
+                continue
+            self.targets.append(t)
+            self.channels[t] = free
+
+        self.frames = list(range(start, end + 1))
+        # Locked/non-keyable axes still need a constant value so the
+        # preview curve plots at the control's real local depth, not 0.
+        self._static = {
+            t: {a: cmds.getAttr('{}.{}'.format(t, a))
+                for a in self._AXES if a not in self.channels[t]}
+            for t in self.targets}
+
+        self.orig = {t: {a: [] for a in self.channels[t]}
+                    for t in self.targets}
+        for frame in self.frames:
+            cmds.currentTime(frame)
+            for t in self.targets:
+                for a in self.channels[t]:
+                    self.orig[t][a].append(
+                        cmds.getAttr('{}.{}'.format(t, a)))
+
+        self.smoothed = {t: {a: list(v) for a, v in ch.items()}
+                         for t, ch in self.orig.items()}
+        self.blended = {t: {a: list(v) for a, v in ch.items()}
+                        for t, ch in self.orig.items()}
+        return skipped
+
+    # ------------------------------------------------------------------
+    # Viewport curves
+    # ------------------------------------------------------------------
+
+    def _points_for(self, target, channel_dict):
+        n = len(self.frames)
+        static = self._static[target]
+        return [tuple(channel_dict[a][i] if a in channel_dict else static[a]
+                      for a in self._AXES)
+                for i in range(n)]
+
+    @staticmethod
+    def _write_curve_positions(curve, positions):
+        for j, pos in enumerate(positions):
+            cmds.setAttr('{}.cp[{}]'.format(curve, j), *pos)
+
+    def create_curves(self):
+        """Build one orig/smooth/blend trajectory curve per control, in
+        the control's own parent space, so their shape shows the same
+        local motion its tx/ty/tz values represent."""
+        self.delete_curves()
+        for t in self.targets:
+            parent = (cmds.listRelatives(t, parent=True, fullPath=True)
+                     or [None])[0]
+            pts = self._points_for(t, self.orig[t])
+            base = t.rsplit('|', 1)[-1]
+
+            orig = cmds.curve(p=pts, d=3, name='{}_faceOrig'.format(base))
+            smth = cmds.curve(p=pts, d=3, name='{}_faceSmooth'.format(base))
+            blnd = cmds.curve(p=pts, d=3, name='{}_faceBlend'.format(base))
+
+            if parent:
+                cmds.parent(orig, smth, blnd, parent, relative=True)
+
+            self.orig_curves[t] = orig
+            self.smooth_curves[t] = smth
+            self.blend_curves[t] = blnd
+
+            for crv, tag in [(orig, 'orig'), (smth, 'smooth'), (blnd, 'blend')]:
+                cmds.setAttr('{}.overrideEnabled'.format(crv), 1)
+                cmds.setAttr('{}.overrideRGBColors'.format(crv), 1)
+                r, g, b = self._COLORS[tag]
+                cmds.setAttr('{}.overrideColorRGB'.format(crv), r, g, b)
+
+    def delete_curves(self):
+        for d in (self.orig_curves, self.smooth_curves, self.blend_curves):
+            for crv in d.values():
+                if cmds.objExists(crv):
+                    cmds.delete(crv)
+        self.orig_curves = {}
+        self.smooth_curves = {}
+        self.blend_curves = {}
+
+    # ------------------------------------------------------------------
+    # Smooth / blend
+    # ------------------------------------------------------------------
+
+    def update_smooth(self, strength):
+        self.strength = strength
+        for t in self.targets:
+            for a in self.channels[t]:
+                self.smoothed[t][a] = smooth_channel(self.orig[t][a], strength)
+            if t in self.smooth_curves:
+                self._write_curve_positions(
+                    self.smooth_curves[t], self._points_for(t, self.smoothed[t]))
+        self.update_blend(self.blend)
+
+    def update_blend(self, blend):
+        self.blend = blend
+        n = len(self.frames)
+        weights = compute_falloff_weights(n, self.falloff)
+        for t in self.targets:
+            for a in self.channels[t]:
+                o, s = self.orig[t][a], self.smoothed[t][a]
+                self.blended[t][a] = [
+                    o[i] + weights[i] * blend * (s[i] - o[i]) for i in range(n)]
+            if t in self.blend_curves:
+                self._write_curve_positions(
+                    self.blend_curves[t], self._points_for(t, self.blended[t]))
+
+    def update_falloff(self, falloff):
+        self.falloff = falloff
+        self.update_blend(self.blend)
+
+    # ------------------------------------------------------------------
+    # Baking
+    # ------------------------------------------------------------------
+
+    def bake(self, to_layer=True, additive=True):
+        """Bake the smoothed/blended channels onto each target, each
+        getting its own uniquely-named anim layer (if enabled) since
+        different controls need independent layers for their own subset
+        of channels."""
+        cmds.undoInfo(openChunk=True, chunkName='FaceSmooth_Bake')
+        try:
+            for t in self.targets:
+                layer_name = None
+                if to_layer:
+                    layer_name = '{}_smooth'.format(t)
+                    idx = 1
+                    while cmds.animLayer(layer_name, q=True, exists=True):
+                        layer_name = '{}_smooth_{}'.format(t, idx)
+                        idx += 1
+                    layer_name = cmds.animLayer(layer_name, override=not additive)
+                    for a in self.channels[t]:
+                        cmds.animLayer(layer_name, e=True,
+                                       attribute='{}.{}'.format(t, a))
+
+                for i, frame in enumerate(self.frames):
+                    for a in self.channels[t]:
+                        val = self.blended[t][a][i]
+                        if layer_name:
+                            cmds.setKeyframe(t, at=a, t=frame, v=val,
+                                            animLayer=layer_name)
+                        else:
+                            cmds.setKeyframe(t, at=a, t=frame, v=val)
+
+            self.delete_curves()
+        finally:
+            cmds.undoInfo(closeChunk=True)
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def reset(self):
+        """Remove all helper objects and clear internal state."""
+        self.delete_curves()
+        self.targets = []
+        self.frames = []
+        self.channels = {}
+        self._static = {}
+        self.orig = {}
+        self.smoothed = {}
+        self.blended = {}

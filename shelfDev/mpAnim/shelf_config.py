@@ -58,6 +58,7 @@ MULTITOOL_SCRIPTS = [
     "mtRefPlane.py",
     "mtWSBake.py",
     "mtOSBake.py",
+    "mtFromToBake.py",
     "mtBakeDown.py",
     "mtTips.py",
     "mtPanic.py",

@@ -95,6 +95,9 @@ class SmoothToolUI(QtWidgets.QDialog):
         self._core = api.SmoothToolCore()
         self._curves_live = False
 
+        self._face_core = api.FaceSmoothCore()
+        self._face_curves_live = False
+
         self._build_ui()
         self._connect_signals()
 
@@ -104,6 +107,16 @@ class SmoothToolUI(QtWidgets.QDialog):
 
     def _build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
+        root.setSpacing(8)
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.addTab(self._build_rig_tab(), 'Rig Smooth')
+        tabs.addTab(self._build_face_tab(), 'Face Smooth')
+        root.addWidget(tabs)
+
+    def _build_rig_tab(self):
+        tab = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(tab)
         root.setSpacing(8)
 
         # --- Source / Target ---
@@ -180,6 +193,85 @@ class SmoothToolUI(QtWidgets.QDialog):
         bake_lay.addLayout(btn_row)
 
         root.addWidget(bake_box)
+        return tab
+
+    def _build_face_tab(self):
+        tab = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(tab)
+        root.setSpacing(8)
+
+        # --- Controls ---
+        ctrl_box = QtWidgets.QGroupBox('Controls')
+        ctrl_lay = QtWidgets.QVBoxLayout(ctrl_box)
+        ctrl_lay.setSpacing(4)
+
+        self._face_list = QtWidgets.QListWidget()
+        self._face_list.setSelectionMode(
+            QtWidgets.QAbstractItemView.ExtendedSelection)
+        ctrl_lay.addWidget(self._face_list)
+
+        list_btn_row = QtWidgets.QHBoxLayout()
+        self._face_add_btn = QtWidgets.QPushButton('Add Selected')
+        self._face_remove_btn = QtWidgets.QPushButton('Remove Selected')
+        self._face_clear_btn = QtWidgets.QPushButton('Clear')
+        list_btn_row.addWidget(self._face_add_btn)
+        list_btn_row.addWidget(self._face_remove_btn)
+        list_btn_row.addWidget(self._face_clear_btn)
+        ctrl_lay.addLayout(list_btn_row)
+
+        root.addWidget(ctrl_box)
+
+        # --- Create ---
+        self._face_create_btn = QtWidgets.QPushButton('Create Curves')
+        self._face_create_btn.setStyleSheet(
+            'background-color: #993333; color: white; padding: 6px;')
+        root.addWidget(self._face_create_btn)
+
+        # --- Sliders ---
+        slider_box = QtWidgets.QGroupBox('Smooth Controls')
+        slider_lay = QtWidgets.QVBoxLayout(slider_box)
+        slider_lay.setSpacing(4)
+
+        r, self._face_strength_slider, self._face_strength_val = _make_slider_row(
+            'Strength', *self._SLIDER_RANGES['strength'],
+            self._SLIDER_DEFAULTS['strength'])
+        slider_lay.addLayout(r)
+        r, self._face_blend_slider, self._face_blend_val = _make_slider_row(
+            'Blend', *self._SLIDER_RANGES['blend'],
+            self._SLIDER_DEFAULTS['blend'])
+        slider_lay.addLayout(r)
+        r, self._face_falloff_slider, self._face_falloff_val = _make_slider_row(
+            'Falloff', *self._SLIDER_RANGES['falloff'],
+            self._SLIDER_DEFAULTS['falloff'])
+        slider_lay.addLayout(r)
+
+        root.addWidget(slider_box)
+
+        # --- Bake ---
+        bake_box = QtWidgets.QGroupBox('Bake')
+        bake_lay = QtWidgets.QVBoxLayout(bake_box)
+        bake_lay.setSpacing(4)
+
+        self._face_layer_check = QtWidgets.QCheckBox('Bake to Layer')
+        self._face_layer_check.setChecked(True)
+        bake_lay.addWidget(self._face_layer_check)
+
+        self._face_additive_check = QtWidgets.QCheckBox('Additive Layer')
+        self._face_additive_check.setChecked(True)
+        bake_lay.addWidget(self._face_additive_check)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self._face_bake_btn = QtWidgets.QPushButton('Bake')
+        self._face_bake_btn.setStyleSheet(
+            'background-color: #339933; color: white; padding: 6px;')
+        self._face_reset_btn = QtWidgets.QPushButton('Reset')
+        self._face_reset_btn.setStyleSheet('padding: 6px;')
+        btn_row.addWidget(self._face_bake_btn)
+        btn_row.addWidget(self._face_reset_btn)
+        bake_lay.addLayout(btn_row)
+
+        root.addWidget(bake_box)
+        return tab
 
     # ------------------------------------------------------------------
     # Signals
@@ -200,6 +292,17 @@ class SmoothToolUI(QtWidgets.QDialog):
         self._strength_slider.valueChanged.connect(self._on_strength)
         self._blend_slider.valueChanged.connect(self._on_blend)
         self._falloff_slider.valueChanged.connect(self._on_falloff)
+
+        self._face_add_btn.clicked.connect(self._on_face_add)
+        self._face_remove_btn.clicked.connect(self._on_face_remove)
+        self._face_clear_btn.clicked.connect(self._face_list.clear)
+        self._face_create_btn.clicked.connect(self._on_face_create)
+        self._face_bake_btn.clicked.connect(self._on_face_bake)
+        self._face_reset_btn.clicked.connect(self._on_face_reset)
+
+        self._face_strength_slider.valueChanged.connect(self._on_face_strength)
+        self._face_blend_slider.valueChanged.connect(self._on_face_blend)
+        self._face_falloff_slider.valueChanged.connect(self._on_face_falloff)
 
     # ------------------------------------------------------------------
     # Slider value helpers
@@ -340,9 +443,109 @@ class SmoothToolUI(QtWidgets.QDialog):
         cmds.inViewMessage(amg='Smooth tool reset.', pos='topCenter',
                            fade=True)
 
+    def _on_face_add(self):
+        sel = cmds.ls(selection=True, type='transform')
+        if not sel:
+            cmds.warning('Select one or more controls first.')
+            return
+        existing = {self._face_list.item(i).text()
+                   for i in range(self._face_list.count())}
+        for s in sel:
+            if s not in existing:
+                self._face_list.addItem(s)
+                existing.add(s)
+
+    def _on_face_remove(self):
+        for item in self._face_list.selectedItems():
+            self._face_list.takeItem(self._face_list.row(item))
+
+    def _on_face_create(self):
+        targets = [self._face_list.item(i).text()
+                  for i in range(self._face_list.count())]
+        if not targets:
+            cmds.warning('Add one or more controls first.')
+            return
+
+        start, end = api.SmoothToolCore.get_frame_range()
+        skipped = self._face_core.sample(targets, start, end)
+        if skipped:
+            cmds.warning('No free translate channel, skipped: {}'.format(
+                ', '.join(skipped)))
+        if not self._face_core.targets:
+            return
+
+        self._face_core.create_curves()
+
+        strength = self._slider_value(self._face_strength_slider, 'strength')
+        self._face_core.falloff = self._slider_value(
+            self._face_falloff_slider, 'falloff')
+        self._face_core.blend = self._slider_value(
+            self._face_blend_slider, 'blend')
+        self._face_core.update_smooth(strength)
+
+        self._face_curves_live = True
+        cmds.inViewMessage(amg='Face smooth curves created.',
+                           pos='topCenter', fade=True)
+
+    def _on_face_strength(self, _):
+        if not self._face_curves_live:
+            return
+        val = self._slider_value(self._face_strength_slider, 'strength')
+        self._face_strength_val.setText('{:.2f}'.format(val))
+        self._face_core.update_smooth(val)
+
+    def _on_face_blend(self, _):
+        if not self._face_curves_live:
+            return
+        val = self._slider_value(self._face_blend_slider, 'blend')
+        self._face_blend_val.setText('{:.2f}'.format(val))
+        self._face_core.update_blend(val)
+
+    def _on_face_falloff(self, _):
+        if not self._face_curves_live:
+            return
+        val = self._slider_value(self._face_falloff_slider, 'falloff')
+        self._face_falloff_val.setText('{:.2f}'.format(val))
+        self._face_core.update_falloff(val)
+
+    def _on_face_bake(self):
+        if not self._face_curves_live:
+            cmds.warning('Create curves first.')
+            return
+        to_layer = self._face_layer_check.isChecked()
+        additive = self._face_additive_check.isChecked()
+        try:
+            self._face_core.bake(to_layer=to_layer, additive=additive)
+            self._face_curves_live = False
+            cmds.inViewMessage(amg='<hl>Face smooth bake complete.</hl>',
+                               pos='topCenter', fade=True)
+        except Exception as e:
+            cmds.warning('Bake failed: {}'.format(e))
+            raise
+
+    def _on_face_reset(self):
+        self._face_core.reset()
+        self._face_curves_live = False
+        self._face_list.clear()
+
+        self._reset_slider(
+            self._face_strength_slider, self._face_strength_val, 'strength')
+        self._reset_slider(
+            self._face_blend_slider, self._face_blend_val, 'blend')
+        self._reset_slider(
+            self._face_falloff_slider, self._face_falloff_val, 'falloff')
+
+        self._face_layer_check.setChecked(True)
+        self._face_additive_check.setChecked(True)
+
+        cmds.inViewMessage(amg='Face smooth tool reset.', pos='topCenter',
+                           fade=True)
+
     def closeEvent(self, event):
         if self._curves_live:
             self._core.delete_curves()
+        if self._face_curves_live:
+            self._face_core.delete_curves()
         super().closeEvent(event)
 
 

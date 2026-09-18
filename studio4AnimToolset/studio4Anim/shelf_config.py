@@ -95,4 +95,38 @@ BUTTONS = [
             "shortCuts.show()"
         ),
     },
+    {
+        "label": "SmoothTool",
+        "tooltip": "Open Smooth Tool — smooth animation curves on NURBS controls with blend and aim-rig baking, plus a Face Smooth tab for MetaHuman-style board controls",
+        "icon": "iconSmoothTool.png",
+        "command": (
+            "import importlib\n"
+            "import smoothTool_api, smoothTool_ui\n"
+            "importlib.reload(smoothTool_api)\n"
+            "importlib.reload(smoothTool_ui)\n"
+            "smoothTool_ui.show()"
+        ),
+    },
+    {
+        "label": "MH DNA Repair",
+        "tooltip": "Repair a broken Metahuman DNA file path — finds the dnaFileNode, shows the current path, and lets you browse to the correct .dna file",
+        "icon": "iconMhDnaRepair.png",
+        "command": (
+            "import importlib\n"
+            "import mh_dna_repair\n"
+            "importlib.reload(mh_dna_repair)\n"
+            "mh_dna_repair.show()"
+        ),
+    },
+    {
+        "label": "MHTransfer",
+        "tooltip": "Open Metahuman Facial Transfer — retarget Unreal facial animation to Maya",
+        "icon": "iconMetahuman.png",
+        "command": (
+            "import importlib\n"
+            "import metahuman_facial_transfer_25 as mh\n"
+            "importlib.reload(mh)\n"
+            "mh.UI()"
+        ),
+    },
 ]
