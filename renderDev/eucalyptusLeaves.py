@@ -56,6 +56,12 @@ LEAF_PARAMS = {
 STEM_LENGTH_RATIO = 0.12
 STEM_RADIUS_RATIO = 0.06
 
+# Alpha cards stand in for a whole clump of foliage at background/distant
+# read, not one leaf blade -- sized at the same LEAF_PARAMS length as a
+# poly leaf, a card is realistically leaf-sized (10-20cm) and reads as
+# next to nothing at the range this mode is meant for.
+CARD_CLUSTER_MULT = 4.0
+
 
 # ---------------------------------------------------------------------------
 # Curve / CV selection helpers
@@ -346,6 +352,8 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
     """
     if mode not in ('poly', 'card'):
         raise ValueError('mode must be "poly" or "card"')
+    if mode == 'card':
+        stems = False  # flat billboard quads don't need a separate strand
     lo, hi = sorted((min_count, max_count))
 
     by_curve = get_selected_cvs()
@@ -370,7 +378,6 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
             continue
 
         params = LEAF_PARAMS[species]
-        min_fork_r = eucalyptusGen.SPECIES[species]['min_fork_radius']
 
         # Prefer the tree's actual build scale (stamped on the curve at
         # generation time) over the UI's manual override, so leaves always
@@ -379,6 +386,18 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
             curve_scale = cmds.getAttr(curve + '.treeScale')
         else:
             curve_scale = scale
+
+        # Likewise prefer the tree's actual (scale/density/age-adjusted)
+        # termination radius over the raw per-species constant -- tip
+        # leaves sit right at this threshold, so using the unadjusted
+        # constant here silently drifted leaf size with scale/density/age.
+        # Falls back to the constant scaled by curve_scale alone for
+        # curves built before this was recorded.
+        if cmds.attributeQuery('minForkRadius', node=curve, exists=True):
+            min_fork_r = cmds.getAttr(curve + '.minForkRadius')
+        else:
+            min_fork_r = (eucalyptusGen.SPECIES[species]['min_fork_radius']
+                         * curve_scale)
 
         # Leaves live in the tree's geo folder alongside trunk/branch preview
         # meshes rather than parented onto the curve itself. Falls back to
@@ -424,6 +443,8 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
                     tangent, azimuth, tilt)
 
                 length = random.uniform(*params['length']) * size_mult * curve_scale
+                if mode == 'card':
+                    length *= CARD_CLUSTER_MULT
                 width = length * params['width_ratio']
                 curl = params['curl'] * random.uniform(0.7, 1.3)
 

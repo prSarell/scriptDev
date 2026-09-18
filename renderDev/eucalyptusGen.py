@@ -1469,6 +1469,14 @@ class EucalyptusGenerator:
             cmds.addAttr(crv, longName='treeScale', attributeType='double')
             cmds.setAttr('{}.treeScale'.format(crv), self.scale)
 
+            # The actual (scale/density/age-adjusted) termination radius
+            # used to decide where this tree stopped forking -- not the
+            # raw per-species constant. eucalyptusLeaves sizes tip leaves
+            # relative to this, so it needs the adjusted value or leaf
+            # size silently drifts with scale/density/age.
+            cmds.addAttr(crv, longName='minForkRadius', attributeType='double')
+            cmds.setAttr('{}.minForkRadius'.format(crv), self._min_fork_radius())
+
             r, g, b = colors[min(cd['order'], 4)]
             cmds.setAttr('{}.overrideEnabled'.format(crv), 1)
             cmds.setAttr('{}.overrideRGBColors'.format(crv), 1)

@@ -131,6 +131,16 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
         self._select_spray_btn.clicked.connect(self._on_select_spray)
         self._cv_slider.valueChanged.connect(self._on_slider_changed)
         self._generate_btn.clicked.connect(self._on_generate)
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+
+    def _on_mode_changed(self, _):
+        is_card = self._mode_combo.currentData() == 'card'
+        self._stems_check.setEnabled(not is_card)
+        if is_card:
+            self._stems_check.setToolTip(
+                'Alpha cards are flat billboards -- no stem is generated.')
+        else:
+            self._stems_check.setToolTip('')
 
     def _log_msg(self, msg):
         self._log.appendPlainText(msg)
