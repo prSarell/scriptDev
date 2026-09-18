@@ -54,7 +54,7 @@ The end goal is two drag-and-drop files: one to install/update, one to uninstall
 
 ### Two student toolsets
 
-Both toolsets now ship the same way — install package, backup/rollback, and automated GitHub Release. Keep both in mind when updating shared tools (e.g. `shortCuts.py`, `ps_spine.py`) since each has its own hand-synced copy under its respective folder.
+Both toolsets now ship the same way — install package, backup/rollback, and automated GitHub Release. Keep both in mind when updating shared tools (e.g. `shortCuts.py`, `ps_spine.py`) since each has its own hand-synced copy under its respective folder. **multiTool must always be kept 1:1 across every class** — whenever `animDev/multiTool/` changes (including adding/removing an `mt*.py` submodule), resync the full set to both `mpToolSet/mpAnim/scripts/` and `studio4AnimToolset/studio4Anim/scripts/` in the same pass, not as a separate/optional step.
 
 - **mpToolSet** (`mpToolSet/`) — full toolset: both mpAnim and mpRig shelves, MetaHuman pipeline tools, cloth sim, corrective blendshapes, ngSkinTools2, etc.
 - **studio4AnimToolset** (`studio4AnimToolset/`) — cut-down, single `studio4Anim` shelf for the second-year class: multiTool, ps_spine, Playblast, CamPreset, Studio Library, the Jiffy tools, shortCuts, Smooth Tool, MH DNA Repair, and Metahuman Facial Transfer. No rigging/sim tools beyond those two MetaHuman exceptions.
