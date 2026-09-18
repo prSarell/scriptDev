@@ -244,6 +244,10 @@ def _build_poly_leaf(attach, x_axis, y_axis, z_axis, length, width, curl, name):
     f3 = cmds.polyCreateFacet(p=[w['row2'], w['tip'], w['row2b']], ch=False)[0]
     mesh = cmds.polyUnite(f1, f2, f3, ch=False, mergeUVSets=True)[0]
     cmds.polyMergeVertex(mesh + '.vtx[*]', distance=0.01, ch=False)
+    # polyCreateFacet/polyUnite leave the transform's pivot at world 0 --
+    # move it to the leaf's own base (where it joins the tree/stem) so
+    # rotate/scale in the outliner behaves the way an artist expects.
+    cmds.xform(mesh, piv=attach, ws=True)
     return cmds.rename(mesh, name)
 
 
@@ -254,6 +258,7 @@ def _build_card_leaf(attach, x_axis, y_axis, z_axis, length, width, name):
               (hw, length, 0.0), (-hw, length, 0.0)]
     pts = [_to_world(attach, x_axis, y_axis, z_axis, c) for c in corners]
     mesh = cmds.polyCreateFacet(p=pts, ch=False)[0]
+    cmds.xform(mesh, piv=attach, ws=True)
     return cmds.rename(mesh, name)
 
 
@@ -280,6 +285,7 @@ def _build_stem(p0, p1, x_axis, z_axis, radius, name, sides=4):
     mesh = cmds.polyUnite(*faces, ch=False, mergeUVSets=True)[0] \
         if len(faces) > 1 else faces[0]
     cmds.polyMergeVertex(mesh + '.vtx[*]', distance=0.01, ch=False)
+    cmds.xform(mesh, piv=p0, ws=True)
     return cmds.rename(mesh, name)
 
 
@@ -368,122 +374,138 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
     # silently renamed on cmds.parent(), leaving the returned name stale.
     call_salt = random.randint(1000, 9999)
 
-    for curve, indices in by_curve.items():
-        if not cmds.attributeQuery('radiusData', node=curve, exists=True):
-            skipped_curves.append(curve)
-            continue
-        species = _infer_species(curve)
-        if species is None or species not in LEAF_PARAMS:
-            skipped_curves.append(curve)
-            continue
-
-        params = LEAF_PARAMS[species]
-
-        # Prefer the tree's actual build scale (stamped on the curve at
-        # generation time) over the UI's manual override, so leaves always
-        # match the tree even if the caller left `scale` at its default.
-        if cmds.attributeQuery('treeScale', node=curve, exists=True):
-            curve_scale = cmds.getAttr(curve + '.treeScale')
-        else:
-            curve_scale = scale
-
-        # Likewise prefer the tree's actual (scale/density/age-adjusted)
-        # termination radius over the raw per-species constant -- tip
-        # leaves sit right at this threshold, so using the unadjusted
-        # constant here silently drifted leaf size with scale/density/age.
-        # Falls back to the constant scaled by curve_scale alone for
-        # curves built before this was recorded.
-        if cmds.attributeQuery('minForkRadius', node=curve, exists=True):
-            min_fork_r = cmds.getAttr(curve + '.minForkRadius')
-        else:
-            min_fork_r = (eucalyptusGen.SPECIES[species]['min_fork_radius']
-                         * curve_scale)
-
-        # Leaves live in the tree's geo folder alongside trunk/branch preview
-        # meshes rather than parented onto the curve itself. Falls back to
-        # the curve if it's not actually part of a generated tree (e.g. a
-        # standalone test curve).
-        tree_grp = eucalyptusGen._tree_group_for(curve)
-        geo_grp = eucalyptusGen.get_or_create_geo_group(tree_grp) \
-            if tree_grp else None
-
-        radii = cmds.getAttr(curve + '.radiusData')
-        n_cvs = _cv_count(curve)
-        positions = [cmds.pointPosition('{}.cv[{}]'.format(curve, i),
-                                        world=True)
-                    for i in range(n_cvs)]
-
-        for idx in indices:
-            if idx >= len(positions) or idx >= len(radii):
+    # A spray can easily mean hundreds of leaves, each several serial Maya
+    # commands (create/unite/merge/xform/rename/parent) -- left at Maya's
+    # defaults, every one of those triggers its own viewport refresh and
+    # undo-queue entry, which is what actually makes the whole UI look
+    # "frozen" during a big Generate, not any single slow call. Suspending
+    # redraws and grouping the whole run into one undo chunk fixes both
+    # without changing behaviour (undo still undoes the entire Generate in
+    # one step).
+    cmds.refresh(suspend=True)
+    cmds.undoInfo(openChunk=True)
+    try:
+        for curve, indices in by_curve.items():
+            if not cmds.attributeQuery('radiusData', node=curve, exists=True):
+                skipped_curves.append(curve)
                 continue
-            cv_pos = tuple(positions[idx])
-            local_r = radii[idx]
+            species = _infer_species(curve)
+            if species is None or species not in LEAF_PARAMS:
+                skipped_curves.append(curve)
+                continue
 
-            if idx == 0:
-                tangent = eucalyptusGen._vnorm(
-                    eucalyptusGen._vsub(positions[1], positions[0]))
-            elif idx == n_cvs - 1:
-                tangent = eucalyptusGen._vnorm(
-                    eucalyptusGen._vsub(positions[-1], positions[-2]))
+            params = LEAF_PARAMS[species]
+
+            # Prefer the tree's actual build scale (stamped on the curve at
+            # generation time) over the UI's manual override, so leaves
+            # always match the tree even if the caller left `scale` at its
+            # default.
+            if cmds.attributeQuery('treeScale', node=curve, exists=True):
+                curve_scale = cmds.getAttr(curve + '.treeScale')
             else:
-                tangent = eucalyptusGen._vnorm(
-                    eucalyptusGen._vsub(positions[idx + 1], positions[idx - 1]))
+                curve_scale = scale
 
-            size_mult = max(0.5, min(1.3, local_r / max(min_fork_r * 2.0, 0.1)))
-            n_leaves = random.randint(lo, hi)
-            phyllotaxis_offset = random.uniform(0, 360)
+            # Likewise prefer the tree's actual (scale/density/age-adjusted)
+            # termination radius over the raw per-species constant -- tip
+            # leaves sit right at this threshold, so using the unadjusted
+            # constant here silently drifted leaf size with scale/density/age.
+            # Falls back to the constant scaled by curve_scale alone for
+            # curves built before this was recorded.
+            if cmds.attributeQuery('minForkRadius', node=curve, exists=True):
+                min_fork_r = cmds.getAttr(curve + '.minForkRadius')
+            else:
+                min_fork_r = (eucalyptusGen.SPECIES[species]['min_fork_radius']
+                             * curve_scale)
 
-            for i in range(n_leaves):
-                azimuth = (phyllotaxis_offset + i * eucalyptusGen.GOLDEN_ANGLE
-                          + random.gauss(0, 15))
-                # Random lean off straight-down, capped well below 90 so
-                # leaves always favor gravity and never swing up.
-                tilt = random.uniform(15.0, 55.0)
-                x_axis, y_axis, z_axis, radial = _leaf_basis(
-                    tangent, azimuth, tilt)
+            # Leaves live in the tree's geo folder alongside trunk/branch
+            # preview meshes rather than parented onto the curve itself.
+            # Falls back to the curve if it's not actually part of a
+            # generated tree (e.g. a standalone test curve).
+            tree_grp = eucalyptusGen._tree_group_for(curve)
+            geo_grp = eucalyptusGen.get_or_create_geo_group(tree_grp) \
+                if tree_grp else None
 
-                length = random.uniform(*params['length']) * size_mult * curve_scale
-                if mode == 'card':
-                    length *= CARD_CLUSTER_MULT
-                width = length * params['width_ratio']
-                curl = params['curl'] * random.uniform(0.7, 1.3)
+            radii = cmds.getAttr(curve + '.radiusData')
+            n_cvs = _cv_count(curve)
+            positions = [cmds.pointPosition('{}.cv[{}]'.format(curve, i),
+                                            world=True)
+                        for i in range(n_cvs)]
 
-                surface_pos = eucalyptusGen._vadd(
-                    cv_pos, eucalyptusGen._vscale(radial, local_r))
+            for idx in indices:
+                if idx >= len(positions) or idx >= len(radii):
+                    continue
+                cv_pos = tuple(positions[idx])
+                local_r = radii[idx]
 
-                if stems:
-                    stem_len = length * STEM_LENGTH_RATIO
-                    attach_pos = eucalyptusGen._vadd(
-                        surface_pos, eucalyptusGen._vscale(radial, stem_len))
+                if idx == 0:
+                    tangent = eucalyptusGen._vnorm(
+                        eucalyptusGen._vsub(positions[1], positions[0]))
+                elif idx == n_cvs - 1:
+                    tangent = eucalyptusGen._vnorm(
+                        eucalyptusGen._vsub(positions[-1], positions[-2]))
                 else:
-                    attach_pos = surface_pos
+                    tangent = eucalyptusGen._vnorm(
+                        eucalyptusGen._vsub(positions[idx + 1], positions[idx - 1]))
 
-                leaf_count += 1
-                base_name = '{}_leaf{}_{:04d}'.format(
-                    curve.rsplit('|', 1)[-1], call_salt, leaf_count)
+                size_mult = max(0.5, min(1.3, local_r / max(min_fork_r * 2.0, 0.1)))
+                n_leaves = random.randint(lo, hi)
+                phyllotaxis_offset = random.uniform(0, 360)
 
-                sg = _get_leaf_shader(species, mode)
-                if mode == 'poly':
-                    leaf_mesh = _build_poly_leaf(
-                        attach_pos, x_axis, y_axis, z_axis,
-                        length, width, curl, base_name)
-                else:
-                    leaf_mesh = _build_card_leaf(
-                        attach_pos, x_axis, y_axis, z_axis,
-                        length, width, base_name)
-                cmds.sets(leaf_mesh, edit=True, forceElement=sg)
-                cmds.parent(leaf_mesh, geo_grp or curve)
-                created.append(leaf_mesh)
+                for i in range(n_leaves):
+                    azimuth = (phyllotaxis_offset + i * eucalyptusGen.GOLDEN_ANGLE
+                              + random.gauss(0, 15))
+                    # Random lean off straight-down, capped well below 90 so
+                    # leaves always favor gravity and never swing up.
+                    tilt = random.uniform(15.0, 55.0)
+                    x_axis, y_axis, z_axis, radial = _leaf_basis(
+                        tangent, azimuth, tilt)
 
-                if stems:
-                    stem_radius = width * STEM_RADIUS_RATIO
-                    stem_mesh = _build_stem(
-                        surface_pos, attach_pos, x_axis, z_axis,
-                        stem_radius, base_name + '_stem')
-                    if stem_mesh:
-                        cmds.sets(stem_mesh, edit=True, forceElement=sg)
-                        cmds.parent(stem_mesh, geo_grp or curve)
-                        created.append(stem_mesh)
+                    length = random.uniform(*params['length']) * size_mult * curve_scale
+                    if mode == 'card':
+                        length *= CARD_CLUSTER_MULT
+                    width = length * params['width_ratio']
+                    curl = params['curl'] * random.uniform(0.7, 1.3)
+
+                    surface_pos = eucalyptusGen._vadd(
+                        cv_pos, eucalyptusGen._vscale(radial, local_r))
+
+                    if stems:
+                        stem_len = length * STEM_LENGTH_RATIO
+                        attach_pos = eucalyptusGen._vadd(
+                            surface_pos, eucalyptusGen._vscale(radial, stem_len))
+                    else:
+                        attach_pos = surface_pos
+
+                    leaf_count += 1
+                    base_name = '{}_leaf{}_{:04d}'.format(
+                        curve.rsplit('|', 1)[-1], call_salt, leaf_count)
+
+                    sg = _get_leaf_shader(species, mode)
+                    if mode == 'poly':
+                        leaf_mesh = _build_poly_leaf(
+                            attach_pos, x_axis, y_axis, z_axis,
+                            length, width, curl, base_name)
+                    else:
+                        leaf_mesh = _build_card_leaf(
+                            attach_pos, x_axis, y_axis, z_axis,
+                            length, width, base_name)
+                    cmds.sets(leaf_mesh, edit=True, forceElement=sg)
+                    cmds.parent(leaf_mesh, geo_grp or curve)
+                    created.append(leaf_mesh)
+
+                    if stems:
+                        stem_radius = width * STEM_RADIUS_RATIO
+                        stem_mesh = _build_stem(
+                            surface_pos, attach_pos, x_axis, z_axis,
+                            stem_radius, base_name + '_stem')
+                        if stem_mesh:
+                            cmds.sets(stem_mesh, edit=True, forceElement=sg)
+                            cmds.parent(stem_mesh, geo_grp or curve)
+                            created.append(stem_mesh)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+        cmds.refresh(suspend=False)
+        cmds.refresh()
 
     if skipped_curves:
         print('[eucalyptusLeaves] skipped (no tree data / unknown species): {}'
