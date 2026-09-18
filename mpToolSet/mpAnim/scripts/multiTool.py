@@ -9,6 +9,7 @@ import mtRefPlane
 import mtWSBake
 import mtOSBake
 import mtBakeDown
+import mtFromToBake
 import mtCycleKeys
 import mtTips
 import mtPanic
@@ -348,7 +349,7 @@ def _bake_content(layout):
     ws_btn.setMinimumHeight(BTN_H)
     ws_btn.setStyleSheet(_btn('#4A5E7A'))
     ws_btn.setToolTip(
-        'Select one object, drag-select a range, bake to world space.\n'
+        'Select object(s), drag-select a range, bake to world space.\n'
         'No range selected = full timeline.')
     ws_btn.clicked.connect(mtWSBake.bake_to_world)
     row.addWidget(ws_btn)
@@ -357,12 +358,22 @@ def _bake_content(layout):
     os_btn.setMinimumHeight(BTN_H)
     os_btn.setStyleSheet(_btn('#6B4A5E'))
     os_btn.setToolTip(
-        'Select driven first, driver last, drag-select a range, bake to object space.\n'
+        'Select driven object(s) first, driver last, drag-select a range, bake to object space.\n'
         'No range selected = full timeline.')
     os_btn.clicked.connect(mtOSBake.bake_to_object)
     row.addWidget(os_btn)
 
     layout.addLayout(row)
+
+    ft_btn = QtWidgets.QPushButton('Bake From To')
+    ft_btn.setMinimumHeight(BTN_H)
+    ft_btn.setStyleSheet(_btn('#7A5E4A'))
+    ft_btn.setToolTip(
+        "Select 'from'/'to' pairs — one 'from' then one 'to', repeated for each pair\n"
+        "(e.g. sim-driven joint, then the control it should key), drag-select a range,\n"
+        "bake the sim onto the 'to' objects as keys. No range selected = full timeline.")
+    ft_btn.clicked.connect(mtFromToBake.bake_from_to)
+    layout.addWidget(ft_btn)
 
     down_btn = QtWidgets.QPushButton('Bake to Origin Space')
     down_btn.setMinimumHeight(BTN_H)
@@ -373,7 +384,8 @@ def _bake_content(layout):
     down_btn.clicked.connect(mtBakeDown.bake_to_origin)
     layout.addWidget(down_btn)
 
-    hint = QtWidgets.QLabel('WS: one object  |  OS: driven → driver last  |  origin: select layer to bake to layer')
+    hint = QtWidgets.QLabel(
+        'WS/OS: any number of objects  |  From/To: from,to,from,to…  |  origin: select layer to bake to layer')
     hint.setStyleSheet(HINT_STYLE)
     layout.addWidget(hint)
 
