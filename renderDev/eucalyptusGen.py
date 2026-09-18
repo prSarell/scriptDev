@@ -1464,6 +1464,11 @@ class EucalyptusGenerator:
             cmds.addAttr(crv, longName='branchParam', attributeType='double')
             cmds.setAttr('{}.branchParam'.format(crv), cd['branch_param'])
 
+            # Recorded so downstream tools (eucalyptusLeaves) can match the
+            # tree's actual build scale without the user re-entering it.
+            cmds.addAttr(crv, longName='treeScale', attributeType='double')
+            cmds.setAttr('{}.treeScale'.format(crv), self.scale)
+
             r, g, b = colors[min(cd['order'], 4)]
             cmds.setAttr('{}.overrideEnabled'.format(crv), 1)
             cmds.setAttr('{}.overrideRGBColors'.format(crv), 1)
@@ -1521,20 +1526,44 @@ def _tube_from_curve(points, radii, sections=8):
     return mesh
 
 
+def _geo_group_name_for(tree_grp):
+    prefix = tree_grp.rsplit('|', 1)[-1]
+    if prefix.endswith('_tree_GRP'):
+        prefix = prefix[:-len('_tree_GRP')]
+    return '{}_geo_GRP'.format(prefix)
+
+
+def get_or_create_geo_group(tree_grp):
+    """Return the tree's sibling '<prefix>_geo_GRP', creating an empty one
+    if it doesn't exist yet. Shared by generate_geometry() and
+    eucalyptusLeaves, so trunk/branch preview meshes and leaves both end up
+    in the same folder regardless of which tool runs first."""
+    if not cmds.objExists(tree_grp):
+        raise ValueError('No tree group found: {}'.format(tree_grp))
+    name = _geo_group_name_for(tree_grp)
+    return name if cmds.objExists(name) else cmds.group(empty=True, name=name)
+
+
 def generate_geometry(tree_grp):
     """Build a separate preview polygon tube mesh for every curve under
     tree_grp, using each curve's stored radiusData. No merging — each curve
     gets its own mesh, parented under a sibling '<prefix>_geo_GRP'.
 
+    Reuses the geo group if one already exists (e.g. from a previous run,
+    or because leaves were generated first) and clears out only its old
+    trunk/branch preview meshes — tagged with `treePreviewGeo` at creation
+    below — before rebuilding, leaving any leaves already parented there
+    untouched.
+
     Returns the name of the geo group node.
     """
-    if not cmds.objExists(tree_grp):
-        raise ValueError('No tree group found: {}'.format(tree_grp))
+    geo_grp = get_or_create_geo_group(tree_grp)
 
-    prefix = tree_grp.rsplit('|', 1)[-1]
-    if prefix.endswith('_tree_GRP'):
-        prefix = prefix[:-len('_tree_GRP')]
-    geo_grp = cmds.group(empty=True, name='{}_geo_GRP'.format(prefix))
+    stale = [c for c in cmds.listRelatives(geo_grp, children=True,
+                                           fullPath=True) or []
+            if cmds.attributeQuery('treePreviewGeo', node=c, exists=True)]
+    if stale:
+        cmds.delete(stale)
 
     curves = cmds.listRelatives(tree_grp, allDescendents=True,
                                 type='transform', fullPath=True) or []
@@ -1557,6 +1586,8 @@ def generate_geometry(tree_grp):
         mesh = _tube_from_curve(points, radii)
         short_name = crv.rsplit('|', 1)[-1]
         mesh = cmds.rename(mesh, '{}_geo'.format(short_name))
+        cmds.addAttr(mesh, longName='treePreviewGeo', attributeType='bool')
+        cmds.setAttr(mesh + '.treePreviewGeo', True)
         cmds.parent(mesh, geo_grp)
         created.append(mesh)
 

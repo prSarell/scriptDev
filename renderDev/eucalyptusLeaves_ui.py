@@ -4,7 +4,8 @@ PySide6 interface for eucalyptusLeaves. Operates on curves from an
 already-generated eucalyptusGen tree.
 
 Workflow:
-    1. Select tree curves in the viewport/outliner, click "Select Curves".
+    1. Select tree curves in the viewport/outliner, click "Select Spray"
+       (only the branch-tip curves among them are kept).
     2. Drag "Keep Last N CVs" to narrow the selection toward the tip.
     3. Click "Generate Leaves" — repeatable on the same or different curves.
 """
@@ -46,11 +47,13 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
         sel_box = QtWidgets.QGroupBox('Curve Selection')
         sel_lay = QtWidgets.QVBoxLayout(sel_box)
 
-        self._select_curves_btn = QtWidgets.QPushButton('Select Curves')
-        self._select_curves_btn.setToolTip(
-            'Select tree curves first, then click this to switch to CV '
-            'mode with every CV on them selected.')
-        sel_lay.addWidget(self._select_curves_btn)
+        self._select_spray_btn = QtWidgets.QPushButton('Select Spray')
+        self._select_spray_btn.setToolTip(
+            'Select tree curves, a branch, or the whole tree group first, '
+            'then click this to keep only the branch-tip curves at or '
+            'below it and switch to CV mode with every CV on them '
+            'selected.')
+        sel_lay.addWidget(self._select_spray_btn)
 
         slider_row = QtWidgets.QHBoxLayout()
         self._cv_label = QtWidgets.QLabel('Keep Last N CVs')
@@ -74,10 +77,10 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
 
         count_row = QtWidgets.QHBoxLayout()
         self._min_count_spin = QtWidgets.QSpinBox()
-        self._min_count_spin.setRange(0, 20)
+        self._min_count_spin.setRange(0, 60)
         self._min_count_spin.setValue(1)
         self._max_count_spin = QtWidgets.QSpinBox()
-        self._max_count_spin.setRange(0, 20)
+        self._max_count_spin.setRange(0, 60)
         self._max_count_spin.setValue(3)
         count_row.addWidget(self._min_count_spin)
         count_row.addWidget(QtWidgets.QLabel('to'))
@@ -99,8 +102,10 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
         self._scale_spin.setSingleStep(0.1)
         self._scale_spin.setDecimals(2)
         self._scale_spin.setToolTip(
-            'Match the Scale used to generate the tree.')
-        param_lay.addRow('Scale', self._scale_spin)
+            "Fallback only — trees now record their own build scale, so "
+            "this is used only if the selected curve predates that (no "
+            "treeScale attribute).")
+        param_lay.addRow('Scale (fallback)', self._scale_spin)
 
         root.addWidget(param_box)
 
@@ -123,7 +128,7 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
         root.addWidget(log_box)
 
     def _connect_signals(self):
-        self._select_curves_btn.clicked.connect(self._on_select_curves)
+        self._select_spray_btn.clicked.connect(self._on_select_spray)
         self._cv_slider.valueChanged.connect(self._on_slider_changed)
         self._generate_btn.clicked.connect(self._on_generate)
 
@@ -147,10 +152,10 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
         lay.addWidget(close_btn)
         dlg.exec()
 
-    def _on_select_curves(self):
+    def _on_select_spray(self):
         try:
             importlib.reload(eucalyptusLeaves)
-            curves = eucalyptusLeaves.select_curves_and_cvs()
+            curves = eucalyptusLeaves.select_spray_and_cvs()
             self._active_curves = curves
             max_cvs = max(
                 (eucalyptusLeaves._cv_count(c) for c in curves), default=1)
@@ -161,7 +166,7 @@ class EucalyptusLeavesUI(QtWidgets.QDialog):
             self._cv_slider.blockSignals(False)
             self._cv_val.setText(str(max_cvs))
             self._generate_btn.setEnabled(True)
-            self._log_msg('Selected {} curve(s), {} CVs max.'.format(
+            self._log_msg('Selected {} spray curve(s), {} CVs max.'.format(
                 len(curves), max_cvs))
         except Exception:
             tb = traceback.format_exc()

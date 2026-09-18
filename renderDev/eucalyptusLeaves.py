@@ -3,8 +3,9 @@ Eucalyptus Leaf Generator
 Manual, curve-by-curve leaf decoration tool for trees built by eucalyptusGen.
 
 Workflow (see eucalyptusLeaves_ui.py for the interactive version):
-    1. Select tree curves, call select_curves_and_cvs() to switch to CV
-       component mode with every CV on those curves selected.
+    1. Select tree curves, call select_spray_and_cvs() to keep only the
+       terminal (branch-tip) curves and switch to CV component mode with
+       every CV on those curves selected.
     2. reduce_selection_to_tip(curves, keep_count) narrows the selection to
        the last `keep_count` CVs (counting from the tip) on each curve, so
        leaves can be placed only near branch/twig ends.
@@ -76,20 +77,50 @@ def _resolve_transform(node):
     return parents[0] if parents else node
 
 
-def select_curves_and_cvs():
-    """Step 1: switch the current curve selection to CV component mode with
-    every CV selected. Returns the list of curve transforms selected."""
+def _is_terminal_curve(curve):
+    """True if no other curve forks from this one — i.e. it's a branch tip
+    a real spray of foliage would grow from, not an interior limb/trunk."""
+    children = cmds.listRelatives(curve, children=True, type='transform',
+                                  fullPath=True) or []
+    return not any(cmds.listRelatives(c, shapes=True, type='nurbsCurve')
+                   for c in children)
+
+
+def select_spray_and_cvs():
+    """Step 1: from the current selection — individual curves, a branch, or
+    the whole tree group — collect every curve at or below it, keep only
+    the terminal ones (branch tips), and switch to CV component mode with
+    every CV on them selected. Returns the list of curve transforms
+    selected."""
     sel = cmds.ls(selection=True, type='transform') or []
-    curves = [s for s in sel
-              if cmds.listRelatives(s, shapes=True, type='nurbsCurve')]
+    if not sel:
+        raise ValueError('Select one or more tree curves (or the tree '
+                         'group/a branch) first.')
+
+    curves = set()
+    for s in sel:
+        if cmds.listRelatives(s, shapes=True, type='nurbsCurve'):
+            curves.add(s)
+        descendants = cmds.listRelatives(
+            s, allDescendents=True, type='transform', fullPath=True) or []
+        for d in descendants:
+            if cmds.listRelatives(d, shapes=True, type='nurbsCurve'):
+                curves.add(d)
     if not curves:
-        raise ValueError('Select one or more tree curves first.')
+        raise ValueError('Select one or more tree curves (or the tree '
+                         'group/a branch) first.')
+
+    spray = [c for c in curves if _is_terminal_curve(c)]
+    if not spray:
+        raise ValueError(
+            'None of the selected curves are branch tips — select curves '
+            'closer to the ends of the tree.')
 
     cmds.select(clear=True)
-    for c in curves:
+    for c in spray:
         n = _cv_count(c)
         cmds.select('{}.cv[0:{}]'.format(c, n - 1), add=True)
-    return curves
+    return spray
 
 
 def reduce_selection_to_tip(curves, keep_count):
@@ -257,7 +288,19 @@ def _get_leaf_shader(species, mode):
     name = 'eucLeaf_{}_{}_mtl'.format(species, mode)
     sg_name = name + 'SG'
     if cmds.objExists(sg_name):
-        return sg_name
+        if cmds.listConnections(sg_name + '.surfaceShader', source=True,
+                                destination=False):
+            return sg_name
+        # Leftover from an earlier failed build (e.g. mtoa not loaded at
+        # the time) — the SG got created but never wired to a shader.
+        # Clear both stale nodes so they're rebuilt clean below instead of
+        # silently reusing a shading group that renders as no shader.
+        cmds.delete(sg_name)
+        if cmds.objExists(name):
+            cmds.delete(name)
+
+    if not cmds.pluginInfo('mtoa', query=True, loaded=True):
+        cmds.loadPlugin('mtoa')
 
     shader = cmds.shadingNode('aiStandardSurface', asShader=True, name=name)
     sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True,
@@ -294,8 +337,9 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
         min_count, max_count: random leaf count range per CV.
         mode: 'poly' (low-poly 3D blade) or 'card' (single alpha-cut quad).
         stems: build a thin connecting stem between the twig and each leaf.
-        scale: size multiplier — match whatever scale the tree was
-               generated at.
+        scale: size multiplier used only as a fallback, for curves built
+               before treeScale was recorded on them (see eucalyptusGen).
+               Otherwise each curve's own treeScale attribute wins.
 
     Returns:
         List of created mesh transform names.
@@ -327,6 +371,22 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
 
         params = LEAF_PARAMS[species]
         min_fork_r = eucalyptusGen.SPECIES[species]['min_fork_radius']
+
+        # Prefer the tree's actual build scale (stamped on the curve at
+        # generation time) over the UI's manual override, so leaves always
+        # match the tree even if the caller left `scale` at its default.
+        if cmds.attributeQuery('treeScale', node=curve, exists=True):
+            curve_scale = cmds.getAttr(curve + '.treeScale')
+        else:
+            curve_scale = scale
+
+        # Leaves live in the tree's geo folder alongside trunk/branch preview
+        # meshes rather than parented onto the curve itself. Falls back to
+        # the curve if it's not actually part of a generated tree (e.g. a
+        # standalone test curve).
+        tree_grp = eucalyptusGen._tree_group_for(curve)
+        geo_grp = eucalyptusGen.get_or_create_geo_group(tree_grp) \
+            if tree_grp else None
 
         radii = cmds.getAttr(curve + '.radiusData')
         n_cvs = _cv_count(curve)
@@ -363,7 +423,7 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
                 x_axis, y_axis, z_axis, radial = _leaf_basis(
                     tangent, azimuth, tilt)
 
-                length = random.uniform(*params['length']) * size_mult * scale
+                length = random.uniform(*params['length']) * size_mult * curve_scale
                 width = length * params['width_ratio']
                 curl = params['curl'] * random.uniform(0.7, 1.3)
 
@@ -391,7 +451,7 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
                         attach_pos, x_axis, y_axis, z_axis,
                         length, width, base_name)
                 cmds.sets(leaf_mesh, edit=True, forceElement=sg)
-                cmds.parent(leaf_mesh, curve)
+                cmds.parent(leaf_mesh, geo_grp or curve)
                 created.append(leaf_mesh)
 
                 if stems:
@@ -401,7 +461,7 @@ def generate_leaves(min_count=1, max_count=3, mode='poly', stems=True,
                         stem_radius, base_name + '_stem')
                     if stem_mesh:
                         cmds.sets(stem_mesh, edit=True, forceElement=sg)
-                        cmds.parent(stem_mesh, curve)
+                        cmds.parent(stem_mesh, geo_grp or curve)
                         created.append(stem_mesh)
 
     if skipped_curves:
