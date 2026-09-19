@@ -32,17 +32,32 @@ import maya.cmds as cmds
 # Persistence
 # -------------------------
 
-_PRESET_DIRNAME = "ps_cam_preset_simple"
+_PRESET_DIRNAME = "camPresets"
 
 
 def _preset_dir() -> str:
-    user_dir = cmds.internalVar(userAppDir=True)  # Documents/maya/<ver>/
-    folder = os.path.join(user_dir, _PRESET_DIRNAME)
+    """
+    Presets live under the current Maya project's data/ folder, so they
+    travel with the project (and, later, with wherever that project's
+    data/ folder is hosted - H-drive/server) instead of being tied to a
+    single user's machine and Maya version.
+    """
+    proj_root = cmds.workspace(query=True, rootDirectory=True)
+    data_rule = cmds.workspace(fileRuleEntry="data") or "data"
+    folder = os.path.join(proj_root, data_rule, _PRESET_DIRNAME)
     if not os.path.isdir(folder):
         try:
             os.makedirs(folder)
         except Exception:
-            folder = user_dir
+            # Fall back to the per-user location if the project's data/
+            # folder can't be created (e.g. read-only or no project set).
+            user_dir = cmds.internalVar(userAppDir=True)
+            folder = os.path.join(user_dir, _PRESET_DIRNAME)
+            if not os.path.isdir(folder):
+                try:
+                    os.makedirs(folder)
+                except Exception:
+                    folder = user_dir
     return folder
 
 
@@ -413,6 +428,12 @@ _WIN = "psCamPresetSimpleWin"
 _PRESET_NAME_FIELD = "psCamPresetSimple_presetNameField"
 _PRESET_MENU = "psCamPresetSimple_presetMenu"
 _STATUS = "psCamPresetSimple_status"
+_PROJECT_LABEL = "psCamPresetSimple_projectLabel"
+
+
+def _current_project_name() -> str:
+    proj_root = cmds.workspace(query=True, rootDirectory=True) or ""
+    return os.path.basename(os.path.normpath(proj_root)) if proj_root else "(none)"
 
 
 def _set_status(msg: str) -> None:
@@ -585,6 +606,9 @@ def show() -> None:
     cmds.separator(height=4, style="none")
     cmds.text(label="Select a camera in the viewport, then save or apply presets.",
               align="left")
+    cmds.text(_PROJECT_LABEL,
+              label="Project: {}  (Set Project to switch)".format(_current_project_name()),
+              align="left", font="smallObliqueLabelFont")
     cmds.separator(height=6, style="in")
 
     # ── Create Preset ──
