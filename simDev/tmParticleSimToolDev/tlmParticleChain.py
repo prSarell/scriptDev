@@ -1165,11 +1165,13 @@ class SimParticleRig():
 				cmds.textScrollList('controls_scrollList', e=True, append=controlsList)
 			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 0)
 			cmds.button('undo_button', l='Undo Preview', e=True, en=True)
+			cmds.button('reactivate_button', e=True, en=True)
 			cmds.button('segmentStregth_button', e=True, en=False)
 			cmds.button('presets_list', e=True, en=False)
 			cmds.paneLayout('pane_layout2', e=True, en=False)
 		else:
 			cmds.button('undo_button', l='Undo Preview', e=True, en=False)
+			cmds.button('reactivate_button', e=True, en=False)
 			cmds.button('segmentStregth_button', e=True, en=True)
 			cmds.button('presets_list', e=True, en=True)
 			cmds.paneLayout('pane_layout2', e=True, en=True)
@@ -1314,6 +1316,36 @@ class SimParticleRig():
 			cmds.delete(previewLayer)
 		cmds.delete(rigName + '_preview_grp')
 		cmds.delete(rigName + '_controlNames')
+		self.cacheCheckUI(rigName)
+		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
+
+	def _uniqueKeptLayerName(self, rigName):
+		base = rigName + '_previewKept'
+		if not cmds.animLayer(base, q=True, exists=True):
+			return base
+		i = 2
+		while cmds.animLayer(base + '_%02d' % i, q=True, exists=True):
+			i += 1
+		return base + '_%02d' % i
+
+	def reactivateSim(self, *args):
+		"""Same teardown as undoPreview (drop _preview_grp/_controlNames,
+		re-show the live hairSystem) but keeps the preview's baked anim
+		layer instead of deleting it -- for "I like this pass, keep it,
+		but let me run a new sim over the top to compare" rather than
+		discarding it. Renames the throwaway _previewLayer to a permanent,
+		uniquely-named layer so it survives the next previewSim()/
+		bakeFinalSim() call, both of which target the fixed name
+		rigName + '_previewLayer'.
+		"""
+		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		previewLayer = rigName + '_previewLayer'
+		if cmds.animLayer(previewLayer, q=True, exists=True):
+			cmds.rename(previewLayer, self._uniqueKeptLayerName(rigName))
+		if cmds.objExists(rigName + '_preview_grp'):
+			cmds.delete(rigName + '_preview_grp')
+		if cmds.objExists(rigName + '_controlNames'):
+			cmds.delete(rigName + '_controlNames')
 		self.cacheCheckUI(rigName)
 		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
 
@@ -1518,9 +1550,12 @@ class SimParticleRig():
 		cmds.iconTextButton(w=25, image1='SP_TrashIcon.png', ann='Click here to DELETE objects from the list.', c=partial(self.delObjs, 'controls_scrollList'), p='copyFrom_rowLayout')
 		cmds.textScrollList('controls_scrollList', allowMultiSelection=True, h=80, w=195, p='copyFrom_columnLayout')
 
-		cmds.rowLayout('rigSimSwitch_rowLayout', nc=2, adjustableColumn=1, p='preview_frameLayout')
+		cmds.rowLayout('rigSimSwitch_rowLayout', nc=3, adjustableColumn=1, p='preview_frameLayout')
 		cmds.button(l='Preview on Rig', bgc=(.8, .8, .6), c=self.previewSim)
-		cmds.button('undo_button', l='Undo Preview', w=210, bgc=(.2, .2, .2), en=False, c=self.undoPreview)
+		cmds.button('undo_button', l='Undo Preview', w=130, bgc=(.2, .2, .2), en=False, c=self.undoPreview,
+		           ann='Discard this preview/bake entirely and return to live sim mode.')
+		cmds.button('reactivate_button', l='Keep & Resim', w=90, bgc=(.3, .4, .5), en=False, c=self.reactivateSim,
+		           ann='Keep this preview/bake as a permanent anim layer, then return to live sim mode so a new pass can be run over the top for comparison.')
 
 		cmds.frameLayout('transferSim_frameLayout', lv=False, bv=False, p='particleChain_frameLayout')
 		cmds.separator(st='none')

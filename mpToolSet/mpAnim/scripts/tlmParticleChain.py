@@ -66,6 +66,11 @@ class SimParticleRig():
 			('closeFollow', 'Close Follow'),
 			('baseOnly', 'Base Only'),
 		]
+		# Set after a successful Build (see buildParticleRig) -- lets the
+		# Nucleus dropdown default to sharing THIS session's last-built rig
+		# rather than "New" on the next build, so back-to-back chains
+		# collide with each other unless "New" is deliberately picked.
+		self._last_built_rig = None
 	# ------------------------------------------------------------------
 	# Copied verbatim from tlmClothChain.py -- sim-backend-agnostic.
 	# ------------------------------------------------------------------
@@ -661,12 +666,14 @@ class SimParticleRig():
 		cmds.optionMenu('particleRig_list', e=True, v=rigName)
 
 		# Register this rig as a nucleus-sharing target for the NEXT build,
-		# and reset the choice back to "New" -- otherwise building rig #2
-		# right after rig #1 would default to silently sharing rig #1's
-		# nucleus instead of it being a deliberate choice each time.
+		# and default the choice TO it rather than "New" -- multiple chains
+		# built back-to-back should collide with each other by default;
+		# picking "New" is now the deliberate opt-out for a genuinely
+		# separate/non-colliding chain, not the other way around.
 		if cmds.optionMenu('nucleusChoice_list', exists=True):
 			cmds.menuItem(rigName + '_nucleusChoice', label=rigName, p='nucleusChoice_list')
-			cmds.optionMenu('nucleusChoice_list', e=True, v='New')
+			cmds.optionMenu('nucleusChoice_list', e=True, v=rigName + '_nucleusChoice')
+		self._last_built_rig = rigName
 
 		self.loadSettings()
 		self._applyConstraintProfile(rigName, 'baseToTip')
@@ -1165,11 +1172,13 @@ class SimParticleRig():
 				cmds.textScrollList('controls_scrollList', e=True, append=controlsList)
 			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 0)
 			cmds.button('undo_button', l='Undo Preview', e=True, en=True)
+			cmds.button('reactivate_button', e=True, en=True)
 			cmds.button('segmentStregth_button', e=True, en=False)
 			cmds.button('presets_list', e=True, en=False)
 			cmds.paneLayout('pane_layout2', e=True, en=False)
 		else:
 			cmds.button('undo_button', l='Undo Preview', e=True, en=False)
+			cmds.button('reactivate_button', e=True, en=False)
 			cmds.button('segmentStregth_button', e=True, en=True)
 			cmds.button('presets_list', e=True, en=True)
 			cmds.paneLayout('pane_layout2', e=True, en=True)
@@ -1317,6 +1326,36 @@ class SimParticleRig():
 		self.cacheCheckUI(rigName)
 		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
 
+	def _uniqueKeptLayerName(self, rigName):
+		base = rigName + '_previewKept'
+		if not cmds.animLayer(base, q=True, exists=True):
+			return base
+		i = 2
+		while cmds.animLayer(base + '_%02d' % i, q=True, exists=True):
+			i += 1
+		return base + '_%02d' % i
+
+	def reactivateSim(self, *args):
+		"""Same teardown as undoPreview (drop _preview_grp/_controlNames,
+		re-show the live hairSystem) but keeps the preview's baked anim
+		layer instead of deleting it -- for "I like this pass, keep it,
+		but let me run a new sim over the top to compare" rather than
+		discarding it. Renames the throwaway _previewLayer to a permanent,
+		uniquely-named layer so it survives the next previewSim()/
+		bakeFinalSim() call, both of which target the fixed name
+		rigName + '_previewLayer'.
+		"""
+		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		previewLayer = rigName + '_previewLayer'
+		if cmds.animLayer(previewLayer, q=True, exists=True):
+			cmds.rename(previewLayer, self._uniqueKeptLayerName(rigName))
+		if cmds.objExists(rigName + '_preview_grp'):
+			cmds.delete(rigName + '_preview_grp')
+		if cmds.objExists(rigName + '_controlNames'):
+			cmds.delete(rigName + '_controlNames')
+		self.cacheCheckUI(rigName)
+		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
+
 	def bakeFinalSim(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
@@ -1413,11 +1452,21 @@ class SimParticleRig():
 		cmds.textField('particleRigName_textField', w=150)
 
 		cmds.rowLayout('nucleusChoice_rowLayout', nc=2, adjustableColumn=2, p='particleChain_frameLayout')
-		cmds.text('Nucleus:', ann='Share an existing rig\'s nucleus instead of creating a new one -- hairSystems on the SAME nucleus can collide with each other; separate nuclei never see each other.')
+		cmds.text('Nucleus:', ann='Defaults to sharing an existing rig\'s nucleus so chains collide with each other -- hairSystems on the SAME nucleus can collide; separate nuclei never see each other. Pick "New" to deliberately keep this chain non-colliding/separate.')
 		cmds.optionMenu('nucleusChoice_list', w=150)
 		cmds.menuItem('New', p='nucleusChoice_list')
-		for existingRig in self._get_existing_rig_names():
+		existingRigs = self._get_existing_rig_names()
+		for existingRig in existingRigs:
 			cmds.menuItem(existingRig + '_nucleusChoice', label=existingRig, p='nucleusChoice_list')
+		# Default to sharing an existing rig's nucleus rather than "New" when
+		# one is available -- chains should collide with each other unless
+		# "New" is deliberately chosen. Prefers this instance's own last
+		# build (self._last_built_rig); a fresh UI open/refresh creates a new
+		# SimParticleRig() with no build history yet, so falls back to
+		# whichever existing rig turns up last in the scene.
+		defaultRig = self._last_built_rig if self._last_built_rig in existingRigs else (existingRigs[-1] if existingRigs else None)
+		if defaultRig:
+			cmds.optionMenu('nucleusChoice_list', e=True, v=defaultRig + '_nucleusChoice')
 		cmds.separator(st='none', h=10, p='particleChain_frameLayout')
 
 		cmds.frameLayout('buildParticleRig_frameLayout', lv=False, bv=False, p='particleChain_frameLayout')
@@ -1518,9 +1567,12 @@ class SimParticleRig():
 		cmds.iconTextButton(w=25, image1='SP_TrashIcon.png', ann='Click here to DELETE objects from the list.', c=partial(self.delObjs, 'controls_scrollList'), p='copyFrom_rowLayout')
 		cmds.textScrollList('controls_scrollList', allowMultiSelection=True, h=80, w=195, p='copyFrom_columnLayout')
 
-		cmds.rowLayout('rigSimSwitch_rowLayout', nc=2, adjustableColumn=1, p='preview_frameLayout')
+		cmds.rowLayout('rigSimSwitch_rowLayout', nc=3, adjustableColumn=1, p='preview_frameLayout')
 		cmds.button(l='Preview on Rig', bgc=(.8, .8, .6), c=self.previewSim)
-		cmds.button('undo_button', l='Undo Preview', w=210, bgc=(.2, .2, .2), en=False, c=self.undoPreview)
+		cmds.button('undo_button', l='Undo Preview', w=130, bgc=(.2, .2, .2), en=False, c=self.undoPreview,
+		           ann='Discard this preview/bake entirely and return to live sim mode.')
+		cmds.button('reactivate_button', l='Keep & Resim', w=90, bgc=(.3, .4, .5), en=False, c=self.reactivateSim,
+		           ann='Keep this preview/bake as a permanent anim layer, then return to live sim mode so a new pass can be run over the top for comparison.')
 
 		cmds.frameLayout('transferSim_frameLayout', lv=False, bv=False, p='particleChain_frameLayout')
 		cmds.separator(st='none')
