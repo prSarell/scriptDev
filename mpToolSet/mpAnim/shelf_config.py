@@ -51,7 +51,7 @@ BUTTONS = [
     },
     {
         "label": "ParticleChain",
-        "tooltip": "Open the Particle Chain Sim tool — build and control nHair/nucleus dynamics chains",
+        "tooltip": "Open the Particle Chain Sim tool — build and control nHair-driven curve chain rigs, with an optional goal-hunting attractor target",
         "icon": "iconParticleChain.png",
         "command": (
             "import importlib\n"
