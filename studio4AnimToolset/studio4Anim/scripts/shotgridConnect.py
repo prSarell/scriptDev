@@ -286,7 +286,10 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
         print("shotSub: rvio not found — publishing thumbnail-only, no scrubbable movie.")
         return None
 
-    cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path]
+    # Explicit H.264 -- rvio's default .mp4 codec is Motion-JPEG (tagged mp4v),
+    # which Premiere / DaVinci Resolve on Windows can't import, so students
+    # couldn't cut ShotGrid downloads into an edit.
+    cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path, "-codec", "libx264"]
     if fps:
         cmd += ["-fps", str(fps)]
     try:
