@@ -105,17 +105,23 @@ def _load_config():
 def _student_login_from_identity_file():
     """Best-effort derivation of a ShotGrid login from shotSub's own
     student-identity file (<Maya userPrefDir>/shotSub_student.json's
-    "student_id", written by shotSub.py's ensure_student_identity()) --
-    converts it to the RMIT student email format
-    (s<digits>@student.rmit.edu.au) that matches every real student login
-    on this site, e.g. "S4177501" -> "s4177501@student.rmit.edu.au". This
-    is what lets a shared, no-personal-login config file (the one
-    distributed to the whole class) still resolve to each student's own
-    identity, with no manual JSON editing on their end.
+    "student_id", written by shotSub.py's ensure_student_identity() or its
+    inline "Student # / Staff Email" field). Two forms are recognized:
 
-    Returns None if the file doesn't exist yet, or its student_id has no
-    digits in it at all (e.g. a staff/mentor identity like
-    "patrick.sarell2" -- current_login() falls through to an explicit
+    - A bare student number (e.g. "S4177501") is converted to the RMIT
+      student email format (s<digits>@student.rmit.edu.au) that matches
+      every real student login on this site, e.g.
+      "S4177501" -> "s4177501@student.rmit.edu.au". This is what lets a
+      shared, no-personal-login config file (the one distributed to the
+      whole class) still resolve to each student's own identity, with no
+      manual JSON editing on their end.
+    - A full email address (anything containing "@") is used as-is --
+      lets a staff/mentor type their real ShotGrid login (e.g.
+      "patrick.sarell2@rmit.edu.au") directly into the same field instead
+      of needing a config-file sudo_as_login override.
+
+    Returns None if the file doesn't exist yet, or its student_id is
+    neither of the above (current_login() falls through to an explicit
     sudo_as_login/getpass.getuser() in that case, same as before this
     existed)."""
     try:
@@ -130,7 +136,12 @@ def _student_login_from_identity_file():
             data = json.load(f)
     except (ValueError, OSError):
         return None
-    match = _STUDENT_ID_DIGITS_RE.search((data.get("student_id") or "").strip())
+    value = (data.get("student_id") or "").strip()
+    if not value:
+        return None
+    if "@" in value:
+        return value
+    match = _STUDENT_ID_DIGITS_RE.search(value)
     if not match:
         return None
     return "s{0}@{1}".format(match.group(1), _STUDENT_EMAIL_DOMAIN)
