@@ -237,6 +237,27 @@ def list_project_shots(project_name, as_login=None):
     )
 
 
+def list_assigned_shots(project_name, as_login=None):
+    """Shots in the named Project with a Task assigned to as_login
+    (defaults to current_login()), same {"id","code"} shape as
+    list_project_shots(). Lets shotSub narrow the Shot dropdown by who's
+    actually assigned in ShotGrid rather than by shot naming -- shots
+    like Assignment 3's NWF_EAP_010 carry no student ID in their code.
+    Returns [] if the login has no matching HumanUser."""
+    login = as_login or current_login()
+    sg = get_connection(as_login=login)
+    project = _find_project(sg, project_name, as_login=login)
+    user = sg.find_one("HumanUser", [["login", "is", login]], ["id"])
+    if not user:
+        return []
+    return sg.find(
+        "Shot",
+        [["project", "is", project], ["tasks.Task.task_assignees", "is", user]],
+        ["id", "code"],
+        order=[{"field_name": "code", "direction": "asc"}],
+    )
+
+
 def upload_entity_thumbnail(entity_type, entity_id, image_path, as_login=None):
     """Push image_path up as entity_type/entity_id's ShotGrid thumbnail.
     Silently no-ops on a blank/missing path."""

@@ -1436,7 +1436,17 @@ class ShotSub(object):
 
         student_id = cmds.textField(self.widgets["identity_id_field"], q=True, text=True).strip().lower()
         if student_id and "@" not in student_id:
-            matching_shots = [s for s in shots if student_id in s["code"].lower()]
+            # Assigned Shots first -- shot codes don't always carry the
+            # student ID (e.g. Assignment 3's NWF_EAP_010), so matching on
+            # code alone hid those Shots whenever an older assignment's
+            # did match. Code match stays as the fallback.
+            try:
+                matching_shots = shotgridConnect.list_assigned_shots(project_name)
+            except Exception as exc:
+                cmds.warning("Could not look up your assigned Shots: {0}".format(exc))
+                matching_shots = []
+            if not matching_shots:
+                matching_shots = [s for s in shots if student_id in s["code"].lower()]
             if matching_shots:
                 shots = matching_shots
             else:
