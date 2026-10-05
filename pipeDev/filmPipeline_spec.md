@@ -112,6 +112,26 @@ unit (publish replica, "open backup → save to scratch"). shotSub already
 works with per-shot projects (as in Assignment 3). Build Shot should set the
 Maya project automatically so students don't have to switch by hand.
 
+### 3g. Solo students / single film-wide project — DEFERRED (decided 2026-10-05)
+
+Build **per-shot / per-asset projects only** for now. A simplified mode where
+a solo student uses one Maya project for the whole film is deferred to later.
+
+It was confirmed feasible: the server, publish and ShotGrid side is identical
+either way; only the local scratch layout differs. To keep that door open
+without a redesign, the first build must follow two rules:
+
+1. **Pulled assets keep their version in the folder path**
+   (`assets\char\scout\rig\v003\`), so several versions can coexist in one
+   project (shot 10 on rig v3, shot 20 on v4).
+2. **References are stored relative to the project root**
+   (`assets/char/scout/rig/v003/scout_rig.ma`), so the same path resolves in
+   a per-shot project and in a film-wide project.
+
+With those in place, adding the solo mode later is just one setting in the
+Build tool ("pull into this shot's project" vs "pull into my film project").
+The publish tool and shotSub need no changes.
+
 ---
 
 ## 4. Open questions
