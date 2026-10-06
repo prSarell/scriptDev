@@ -98,6 +98,12 @@ software** below it. Inside each software folder is that software's own
 structure. Neither the film folder nor the software folders are Maya
 projects.
 
+**Why:** this layout drives the pipeline, and it brings all the software
+for a film together in one place. Everything for the film, from every
+program, sits under a single folder. Each program keeps the structure it
+expects, and ShotGrid's sequence, shot and asset names tie the programs
+together.
+
 **Film folder naming:** `<FILM>_<TYPE>`, where TYPE is a three-letter
 production-type code:
 
