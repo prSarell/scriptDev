@@ -89,17 +89,99 @@ Review (shotSub) and publish are **two separate stages**.
   never edit paths by hand. (The alternative — a path variable that
   resolves to server or scratch — is not needed.)
 
-### 3f. Maya project folder structure — DECIDED
+### 3f. Film folder structure, v1 — DECIDED (2026-10-06)
 
-Each **shot and asset is its own Maya project** (own `workspace.mel`),
-organised under a film folder that is **not itself a Maya project**:
+First version of the folder structure. Build on it from here.
+
+**Layout rule:** the **film folder** is at the top, with **one folder per
+software** below it. Inside each software folder is that software's own
+structure. Neither the film folder nor the software folders are Maya
+projects.
+
+**Film folder naming:** `<FILM>_<TYPE>`, where TYPE is a three-letter
+production-type code:
+
+| Code | Meaning |
+|------|---------|
+| `SHF` | short film |
+| `GSF` | group short film |
+| `CLA` | class assignment |
+
+More codes will be added as needed. Example: `NWF_SHF` = *Not Worth Fixing*,
+short film.
+
+**Naming style:** folder names are camelCase (`davinciResolve`,
+`shotgridMovs`). Shot and sequence folders use the ShotGrid codes as they
+are (`EAP_010_010`) so tools can match folders to ShotGrid. Asset folders
+are camelCase versions of the ShotGrid asset codes (`Scout's House` ->
+`scoutsHouse`, `AT-KS` -> `ATKS`). Rename an asset in ShotGrid and on disk
+together, so the two stay in step (e.g. `willyWagTail` -> `willieWagtail`,
+2026-10-06).
 
 ```
-H:\NWF\                              <- film folder (organising only)
-  assets\char\scout\                 <- asset project (published versions)
-  shots\seq010\sh010\                <- shot project (published keyframes + locked replica)
+NWF_SHF\                                 <- film folder (organising only)
+  afterEffects\                          <- empty, structure TBD
+  blender\                               <- empty, structure TBD
+  davinciResolve\
+    cuts\                                <- edit projects / cuts
+    edl\                                 <- edit decision lists
+    shotgridMovs\                        <- review movies pulled from ShotGrid Versions
+  houdini\                               <- empty, structure TBD
+  maya\
+    assets\
+      character\<asset>\                 <- one Maya project per asset
+      environment\<asset>\
+      prop\<asset>\
+      vehicle\<asset>\
+    sequences\
+      <SEQ>\                             <- one folder per ShotGrid Sequence
+        <SHOT>\                          <- one Maya project per shot
+    studioLibrary\                       <- shared Studio Library library; empty, structure TBD
+  premiere\
+    cuts\
+    edl\
+    shotgridMovs\
+  toonBoom\                              <- empty, structure TBD
+  unreal\                                <- empty, structure TBD
+```
 
-<scratch>\NWF\shots\seq010\sh010\    <- same shot project, pulled to sandbox
+**Maya:** each **shot and asset is its own Maya project**, with its own
+`workspace.mel` and Maya's default project folders. They're created with
+Maya's File > Project Window > New logic (`sp_createAndSetDefaultProject`
+in `setProject.mel`, run from mayapy, as in
+`pipeDev/shotSubDev/build_student_shot_projects.py`). `assets\`,
+`sequences\`, the asset-type folders and the per-sequence folders are plain
+grouping folders, not projects.
+
+- **`sequences\`, not `shots\` or `scenes\`:** every shot project already
+  has Maya's own `scenes\` inside it, so a top-level `scenes\` would read
+  as `maya\scenes\EAP_010\EAP_010_010\scenes\`.
+- **Asset type folders** match ShotGrid's `sg_asset_type` values
+  (Character / Environment / Prop / Vehicle). ShotGrid `Graphic` assets
+  (style guides, character design, storyboards) don't get a Maya project.
+
+**First build — `C:\Users\scout\Dropbox\NWF_SHF\` (2026-10-06):**
+- 75 shot projects from ShotGrid project *Not Worth Fixing* (id 157):
+  sequences `EAP_010`, `SEQ010` and `SEQ020`, shots `_010` to `_250` in
+  each. `EAP_020` has no shots and was skipped. `EAP_010_FULL_CUT` is a
+  reference shot and was skipped too.
+- 19 asset projects: character (`scout`, `ATKS`, `willieWagtail`,
+  `welcomeSwallow`, `scoutGrownUp`, `scoutsChild`), environment
+  (`scoutsHouse`, `riverAndScrub`, `sandyRiver`, `cliffTop`,
+  `farmBuildings`, `sugarcaneFields`), prop (`backpack`, `battery`,
+  `stick`, `bananaLounge`, `bakedBeansCan`, `spoon`, `farmEquipment`).
+  `vehicle\` is empty. `Farm Equipment` has no asset type in ShotGrid and
+  was put under `prop` for now.
+- The build used one-off mayapy scripts; there's no reusable build script in
+  the repo yet.
+
+**Server vs scratch:** the server ("H drive") holds the whole film folder.
+A student's scratch drive mirrors the same path for whatever they've pulled:
+
+```
+H:\NWF_SHF\maya\sequences\SEQ010\SEQ010_010\             <- shot project on server (published keyframes + locked replica)
+
+<scratch>\NWF_SHF\maya\sequences\SEQ010\SEQ010_010\      <- same shot project, pulled to sandbox
   workspace.mel
   scenes\        <- animator's working scenes
   assets\        <- pulled copies of this shot's assets
@@ -122,10 +204,10 @@ either way; only the local scratch layout differs. To keep that door open
 without a redesign, the first build must follow two rules:
 
 1. **Pulled assets keep their version in the folder path**
-   (`assets\char\scout\rig\v003\`), so several versions can coexist in one
+   (`assets\character\scout\rig\v003\`), so several versions can coexist in one
    project (shot 10 on rig v3, shot 20 on v4).
 2. **References are stored relative to the project root**
-   (`assets/char/scout/rig/v003/scout_rig.ma`), so the same path resolves in
+   (`assets/character/scout/rig/v003/scout_rig.ma`), so the same path resolves in
    a per-shot project and in a film-wide project.
 
 With those in place, adding the solo mode later is just one setting in the
@@ -148,6 +230,20 @@ The publish tool and shotSub need no changes.
   `mutils` anim format (already shipped to students), Maya ATOM. Alembic/FBX
   are baked and not editable, but may be needed downstream (lighting/Unreal).
 - ~~Maya project folder structure~~ — decided, see §3f.
+- **Cross-software assets:** an asset that exists in several programs (e.g.
+  `scout` in Maya and Unreal) — do asset/shot names and grouping match
+  across software folders so tools can find "the same asset" in each?
+- **Non-software material:** editorial is now covered by the
+  `premiere\` / `davinciResolve\` folders (§3f). Audio, reference,
+  scripts/boards and ShotGrid `Graphic` assets still need a home: a
+  shared folder at film level (e.g. `NWF_SHF\reference\`) alongside the
+  software folders, or somewhere else?
+- **Inner structure of the other software folders:** `afterEffects`,
+  `blender`, `houdini`, `toonBoom`, `unreal` and `maya\studioLibrary` are
+  empty placeholders in v1.
+- **Reusable build script:** v1 was built with one-off scripts. A
+  `pipeDev` tool that builds a film folder from a ShotGrid project (any
+  `<FILM>_<TYPE>`) would make this repeatable.
 - **Per-department detail:** what exactly rigging, modelling and FX pull and
   publish (same workflow as animation, details not yet written up).
 
