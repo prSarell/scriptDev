@@ -126,6 +126,7 @@ NWF_SHF\                                 <- film folder (organising only)
     cuts\                                <- edit projects / cuts
     edl\                                 <- edit decision lists
     shotgridMovs\                        <- review movies pulled from ShotGrid Versions
+  dragonframe\                           <- empty, structure TBD
   houdini\                               <- empty, structure TBD
   maya\
     assets\
@@ -241,7 +242,7 @@ The publish tool and shotSub need no changes.
   shared folder at film level (e.g. `NWF_SHF\reference\`) alongside the
   software folders, or somewhere else?
 - **Inner structure of the other software folders:** `afterEffects`,
-  `blender`, `houdini`, `photoshop`, `substancePainter`, `toonBoom`, `unreal` and `maya\studioLibrary` are
+  `blender`, `dragonframe`, `houdini`, `photoshop`, `substancePainter`, `toonBoom`, `unreal` and `maya\studioLibrary` are
   empty placeholders in v1.
 - **Reusable build script:** v1 was built with one-off scripts. A
   `pipeDev` tool that builds a film folder from a ShotGrid project (any
