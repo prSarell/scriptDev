@@ -14,9 +14,14 @@
 #     <project>/images/...
 # - Saves playblasts to:
 #     <project>/images/<scene-relative-folder>/v###
-# - JPEG sequence only
-# - Opens sequence in viewer after playblast
-# - Burn-ins drawn directly onto JPEGs after playblast:
+# - Playblasts to a temporary JPEG sequence, burns in, then encodes it
+#   straight to an H.264 <scene>.mp4 (via RV's rvio) and deletes the
+#   frames -- each v### folder keeps only the mp4 + a <scene>.thumb.jpg
+#   still. ShotGrid holds the review movie, so there's no reason to keep
+#   a full JPEG sequence on disk. If rvio is missing/fails, the frames are
+#   kept instead so the version can still be reviewed/published.
+# - Opens the movie in RV after playblast
+# - Burn-ins drawn directly onto the frames before encoding:
 #     top-left   = frame rate
 #     top-middle = scene filename
 #     top-right  = frame number
@@ -44,9 +49,8 @@
 #   <Maya userPrefDir>/shotSub_config.json), independent of JiffySG (see
 #   timeManagementDev/jiffySGDev/), which is currently paused.
 #   shotgridConnect.upload_playblast() creates a real ShotGrid Version
-#   (+ Note, + Shot/Version thumbnail, + an rvio-encoded review movie,
-#   using shotSub's own find_rv_executable() to locate rvio) from this
-#   hand-off.
+#   (+ Note, + Shot/Version thumbnail, + the version's review movie) from
+#   this hand-off.
 #
 # Shelf button:
 # import importlib
@@ -418,7 +422,7 @@ class ShotSub(object):
     # --------------------------------------------------------
     MAX_VERSIONS_OPTIONVAR = "shotSub_maxLocalVersions"
     AUTO_PRUNE_OPTIONVAR = "shotSub_autoPruneEnabled"
-    DEFAULT_MAX_VERSIONS = 5
+    DEFAULT_MAX_VERSIONS = 1
 
     def get_max_versions_to_keep(self):
         if cmds.optionVar(exists=self.MAX_VERSIONS_OPTIONVAR):
@@ -674,17 +678,38 @@ class ShotSub(object):
                 return version["path"]
         return None
 
-    def get_version_folder_prefix(self, version_folder):
-        """Derives the rvpush sequence prefix for an arbitrary local version
-        folder by inspecting its files (mirrors shotgridConnect's own
-        _frame_sequence_prefix()) -- unlike get_playblast_prefix() (which
-        assumes the *current* scene name), this works for any version on
-        disk, including one left over from a since-renamed scene."""
-        files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+    def get_frame_files(self, version_folder):
+        """The <name>.####.jpg playblast frames in version_folder -- excludes
+        the single <name>.thumb.jpg still. Normally empty once a version's
+        movie is encoded; only populated for an rvio-less fallback version
+        or one made before shotSub stopped keeping frames."""
+        return sorted(
+            f for f in glob.glob(os.path.join(version_folder, "*.jpg"))
+            if re.search(r"\.\d+\.jpg$", f, flags=re.IGNORECASE)
+        )
+
+    def get_version_movie(self, version_folder):
+        movies = sorted(glob.glob(os.path.join(version_folder, "*.mp4")))
+        return movies[0] if movies else None
+
+    def get_version_thumbnail(self, version_folder):
+        thumbs = sorted(glob.glob(os.path.join(version_folder, "*.thumb.jpg")))
+        return thumbs[0] if thumbs else None
+
+    def get_version_media(self, version_folder):
+        """What RV should load for an arbitrary local version folder: its
+        mp4 if there is one, else its JPEG sequence pattern (fallback /
+        older versions). Inspects files on disk rather than assuming the
+        *current* scene name, so it works for a version left over from a
+        since-renamed scene."""
+        movie = self.get_version_movie(version_folder)
+        if movie:
+            return movie
+        files = self.get_frame_files(version_folder)
         if not files:
             return None
         match = re.search(r"^(.*)\.\d+\.jpg$", os.path.basename(files[0]), flags=re.IGNORECASE)
-        return os.path.join(version_folder, match.group(1)) if match else None
+        return os.path.join(version_folder, match.group(1)) + ".#.jpg" if match else None
 
     # --------------------------------------------------------
     # Camera / viewport helpers
@@ -1061,14 +1086,15 @@ class ShotSub(object):
         candidates.sort(key=version_key)
         return candidates[-1]
 
-    def open_in_rv(self, prefix):
+    def open_in_rv(self, media):
+        """media is a movie path or a "<prefix>.#.jpg" sequence pattern
+        (see get_version_media())."""
         rvpush = self.find_rv_executable("rvpush")
         if not rvpush:
             cmds.warning("Could not find RV (rvpush) on this machine. Skipped opening in RV.")
             return
 
-        sequence_pattern = prefix + ".#.jpg"
-        cmd = [rvpush, "-tag", self.RV_TAG, "set", sequence_pattern]
+        cmd = [rvpush, "-tag", self.RV_TAG, "set", media]
 
         # rvpush blocks synchronously while it connects -- if the previous RV under
         # this tag was just closed, that first connect attempt has to time out against
@@ -1081,7 +1107,7 @@ class ShotSub(object):
         thread.daemon = True
         thread.start()
 
-    def open_in_rv_with_audio(self, prefix, audio_path, audio_offset, start_frame):
+    def open_in_rv_with_audio(self, media, audio_path, audio_offset, start_frame):
         """
         rvpush's "set" command (used by open_in_rv) does not support RV's
         multi-file source grouping -- confirmed empirically: it silently drops
@@ -1102,8 +1128,7 @@ class ShotSub(object):
         if self.audio_rv_process is not None and self.audio_rv_process.poll() is None:
             self.audio_rv_process.terminate()
 
-        sequence_pattern = prefix + ".#.jpg"
-        cmd = [rv_exe, "[", sequence_pattern, audio_path]
+        cmd = [rv_exe, "[", media, audio_path]
 
         if audio_offset != start_frame:
             fps = self.get_fps_value()
@@ -1168,6 +1193,54 @@ class ShotSub(object):
     # --------------------------------------------------------
     # Playblast
     # --------------------------------------------------------
+    def encode_playblast_movie(self, prefix):
+        """Encodes <prefix>.####.jpg to an H.264 <prefix>.mp4 via RV's
+        rvio. Returns the mp4 path, or None if rvio is missing or the
+        encode fails -- the caller keeps the frames in that case.
+
+        Explicit libx264 -- rvio's default .mp4 codec is Motion-JPEG (tagged
+        mp4v), which Premiere / DaVinci Resolve on Windows can't import, so
+        students couldn't cut ShotGrid downloads into an edit."""
+        rvio_path = self.find_rv_executable("rvio")
+        if not rvio_path:
+            return None
+
+        out_path = prefix + ".mp4"
+        cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path, "-codec", "libx264",
+               "-fps", str(self.get_fps_value())]
+        try:
+            subprocess.run(
+                cmd, capture_output=True, text=True, check=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            cmds.warning("shotSub: rvio encode failed — {0}".format(exc))
+            return None
+
+        return out_path if os.path.isfile(out_path) else None
+
+    def finalize_playblast_frames(self, prefix, files):
+        """Turns a freshly burned-in frame sequence into the version's
+        movie: encodes the mp4, keeps the middle frame as <prefix>.thumb.jpg
+        (ShotGrid Version/Shot thumbnail), then deletes the frames. Returns
+        what RV should open -- the mp4, or the sequence pattern if encoding
+        wasn't possible (frames are kept so the version stays usable)."""
+        movie = self.encode_playblast_movie(prefix)
+        if not movie:
+            cmds.warning(
+                "shotSub: couldn't encode a movie (RV's rvio missing or failed) — "
+                "keeping the JPEG frames for this version instead."
+            )
+            return prefix + ".#.jpg"
+
+        shutil.copyfile(files[len(files) // 2], prefix + ".thumb.jpg")
+        for filepath in files:
+            try:
+                os.remove(filepath)
+            except OSError as exc:
+                cmds.warning("shotSub: could not delete frame {0} — {1}".format(filepath, exc))
+        return movie
+
     def create_playblast(self):
         try:
             self.ensure_scene_saved()
@@ -1198,18 +1271,22 @@ class ShotSub(object):
             )
 
             self.last_created_version_folder = version_folder
-            self.last_created_files = sorted(glob.glob(prefix + ".*.jpg"))
+            frame_files = self.get_frame_files(version_folder)
+            media = None
 
-            if self.last_created_files:
-                self.apply_burnins_to_sequence(self.last_created_files)
+            if frame_files:
+                self.apply_burnins_to_sequence(frame_files)
+                media = self.finalize_playblast_frames(prefix, frame_files)
 
                 open_in_rv = cmds.checkBox(self.widgets["open_in_rv"], q=True, value=True)
                 if open_in_rv:
                     audio_path, audio_offset = self.get_scene_audio_info()
                     if audio_path:
-                        self.open_in_rv_with_audio(prefix, audio_path, audio_offset, start_frame)
+                        self.open_in_rv_with_audio(media, audio_path, audio_offset, start_frame)
                     else:
-                        self.open_in_rv(prefix)
+                        self.open_in_rv(media)
+
+            self.last_created_files = sorted(glob.glob(os.path.join(version_folder, "*")))
 
             if self.get_auto_prune_enabled():
                 self.prune_old_versions(os.path.dirname(version_folder), self.get_max_versions_to_keep())
@@ -1228,7 +1305,7 @@ class ShotSub(object):
             print("  Scene: {0}".format(self.get_scene_name()))
             print("  Output: {0}".format(version_folder))
             print("  Resolution: {0} x {1}".format(render_width, render_height))
-            print("  Files: {0}".format(len(self.last_created_files)))
+            print("  Media: {0}".format(media or "<no frames rendered>"))
 
         except Exception as exc:
             cmds.warning("Playblast failed: {0}".format(exc))
@@ -1532,11 +1609,12 @@ class ShotSub(object):
         rather than guessing a name from folder structure -- that marker
         was written by this tool's own link_to_shotgrid().
 
-        Only ever sends the raw JPEG sequence as-is plus fps -- no video
-        encoding step in shotSub itself beyond resolving rvio's path;
-        shotgridConnect.upload_playblast() does the actual mp4 encode (via
-        rvio) and decides what to do with the sequence. If rvio can't be
-        found at all, machine_diagnostic is passed through so
+        Normally sends the version's already-encoded mp4 + thumbnail (see
+        finalize_playblast_frames()) -- no re-encode at publish time. Only a
+        version that still holds JPEG frames (rvio-less fallback, or made
+        before shotSub stopped keeping frames) is handed over as frames +
+        rvio_path for upload_playblast() to encode. If there's no movie and
+        rvio can't be found at all, machine_diagnostic is passed through so
         upload_playblast() can attach it to an automatic ShotGrid Note --
         see that function's docstring -- instead of the publish silently
         going out thumbnail-only with no record of why.
@@ -1554,12 +1632,17 @@ class ShotSub(object):
         if not shotgridConnect:
             return
 
-        files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
+        files = self.get_frame_files(version_folder)
+        # A folder that still has frames goes through upload_playblast()'s
+        # own encode path, exactly as before -- any mp4 already beside them
+        # came from an older publish-time encode and may predate the H.264 fix.
+        movie_path = None if files else self.get_version_movie(version_folder)
+        thumbnail_path = self.get_version_thumbnail(version_folder)
         notes = cmds.scrollField(self.widgets["publish_notes"], q=True, text=True).strip()
-        rvio_path = self.find_rv_executable("rvio")
+        rvio_path = None if movie_path else self.find_rv_executable("rvio")
 
         machine_diagnostic = None
-        if not rvio_path:
+        if not movie_path and not rvio_path:
             machine_diagnostic = self._get_machine_diagnostic_summary()
             cmds.warning(
                 "shotSub: RV's rvio tool was not found on this machine — this publish "
@@ -1573,6 +1656,8 @@ class ShotSub(object):
                 link["sg_entity_id"],
                 version_folder,
                 files=files,
+                movie_path=movie_path,
+                thumbnail_path=thumbnail_path,
                 notes=notes or None,
                 fps=self.get_fps_value(),
                 rvio_path=rvio_path,
@@ -1608,11 +1693,11 @@ class ShotSub(object):
         if not version_folder:
             cmds.warning("Select a local version to play first.")
             return
-        prefix = self.get_version_folder_prefix(version_folder)
-        if not prefix:
-            cmds.warning("No frames found in {0} to play.".format(version_folder))
+        media = self.get_version_media(version_folder)
+        if not media:
+            cmds.warning("No movie or frames found in {0} to play.".format(version_folder))
             return
-        self.open_in_rv(prefix)
+        self.open_in_rv(media)
 
 
 def show_shotSub():
