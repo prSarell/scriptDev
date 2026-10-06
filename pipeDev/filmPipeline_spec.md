@@ -145,6 +145,7 @@ NWF_SHF\                                 <- film folder (organising only)
     shotgridMovs\
   substancePainter\                      <- empty, structure TBD
   toonBoom\                              <- empty, structure TBD
+  tvPaint\                               <- empty, structure TBD
   unreal\                                <- empty, structure TBD
 ```
 
@@ -242,7 +243,7 @@ The publish tool and shotSub need no changes.
   shared folder at film level (e.g. `NWF_SHF\reference\`) alongside the
   software folders, or somewhere else?
 - **Inner structure of the other software folders:** `afterEffects`,
-  `blender`, `dragonframe`, `houdini`, `photoshop`, `substancePainter`, `toonBoom`, `unreal` and `maya\studioLibrary` are
+  `blender`, `dragonframe`, `houdini`, `photoshop`, `substancePainter`, `toonBoom`, `tvPaint`, `unreal` and `maya\studioLibrary` are
   empty placeholders in v1.
 - **Reusable build script:** v1 was built with one-off scripts. A
   `pipeDev` tool that builds a film folder from a ShotGrid project (any
