@@ -293,7 +293,7 @@ def _frame_sequence_prefix(version_folder):
     return os.path.join(version_folder, match.group(1)) if match else None
 
 
-def _encode_to_mp4(version_folder, fps, rvio_path):
+def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset_seconds=0.0):
     """Best-effort JPEG-sequence -> mp4 transcode via RV's bundled rvio.
     rvio_path is resolved by the caller (shotSub.py already has its own
     find_rv_executable()) -- this function never looks up RV itself.
@@ -302,14 +302,19 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
     doesn't work, never block on it.
 
     Skips re-encoding if <prefix>.mp4 already exists and is newer than the
-    newest .jpg in the folder, so a notes-only re-publish doesn't re-encode."""
+    newest .jpg in the folder, so a notes-only re-publish doesn't re-encode --
+    unless audio_path is given, since an older cached mp4 may be silent.
+
+    audio_path/audio_offset_seconds (from shotSub's scene time slider sound)
+    are muxed in via an rvio source group so lip sync reviews work (rvio's
+    default PCM audio -- its aac encoder fails, see shotSub)."""
     prefix = _frame_sequence_prefix(version_folder)
     if not prefix:
         return None
     out_path = prefix + ".mp4"
 
     jpgs = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
-    if os.path.isfile(out_path) and jpgs:
+    if os.path.isfile(out_path) and jpgs and not audio_path:
         newest_jpg = max(os.path.getmtime(f) for f in jpgs)
         if os.path.getmtime(out_path) >= newest_jpg:
             return out_path
@@ -321,7 +326,13 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
     # Explicit H.264 -- rvio's default .mp4 codec is Motion-JPEG (tagged mp4v),
     # which Premiere / DaVinci Resolve on Windows can't import, so students
     # couldn't cut ShotGrid downloads into an edit.
-    cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path, "-codec", "libx264"]
+    sources = [prefix + ".#.jpg"]
+    if audio_path and os.path.isfile(audio_path):
+        sources = ["[", sources[0], audio_path]
+        if audio_offset_seconds:
+            sources += ["-ao", str(audio_offset_seconds)]
+        sources += ["]"]
+    cmd = [rvio_path] + sources + ["-o", out_path, "-codec", "libx264"]
     if fps:
         cmd += ["-fps", str(fps)]
     try:
@@ -338,7 +349,8 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
 
 def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None,
                       rvio_path=None, as_login=None, machine_diagnostic=None,
-                      movie_path=None, thumbnail_path=None):
+                      movie_path=None, thumbnail_path=None, audio_path=None,
+                      audio_offset_seconds=0.0):
     """Hand-off target for shotSub's "Publish Selected Version" button (see
     shotSub.py publish_version()). shotSub resolves entity_type/entity_id
     itself, from an explicit ShotGrid Shot id stored in a local
@@ -417,7 +429,8 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
         # current as new playblasts get published.
         upload_entity_thumbnail(entity_type, entity_id, representative_frame, as_login=as_login)
 
-    mp4_path = movie_path or _encode_to_mp4(version_folder_norm, fps, rvio_path)
+    mp4_path = movie_path or _encode_to_mp4(
+        version_folder_norm, fps, rvio_path, audio_path, audio_offset_seconds)
     if mp4_path:
         sg.upload("Version", version["id"], mp4_path, field_name="sg_uploaded_movie")
         print("shotSub: uploaded movie '{0}' to Version id {1}".format(mp4_path, version["id"]))

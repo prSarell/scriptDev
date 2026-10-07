@@ -293,7 +293,7 @@ def _frame_sequence_prefix(version_folder):
     return os.path.join(version_folder, match.group(1)) if match else None
 
 
-def _encode_to_mp4(version_folder, fps, rvio_path):
+def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset_seconds=0.0):
     """Best-effort JPEG-sequence -> mp4 transcode via RV's bundled rvio.
     rvio_path is resolved by the caller (shotSub.py already has its own
     find_rv_executable()) -- this function never looks up RV itself.
@@ -302,14 +302,19 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
     doesn't work, never block on it.
 
     Skips re-encoding if <prefix>.mp4 already exists and is newer than the
-    newest .jpg in the folder, so a notes-only re-publish doesn't re-encode."""
+    newest .jpg in the folder, so a notes-only re-publish doesn't re-encode --
+    unless audio_path is given, since an older cached mp4 may be silent.
+
+    audio_path/audio_offset_seconds (from shotSub's scene time slider sound)
+    are muxed in via an rvio source group so lip sync reviews work (rvio's
+    default PCM audio -- its aac encoder fails, see shotSub)."""
     prefix = _frame_sequence_prefix(version_folder)
     if not prefix:
         return None
     out_path = prefix + ".mp4"
 
     jpgs = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
-    if os.path.isfile(out_path) and jpgs:
+    if os.path.isfile(out_path) and jpgs and not audio_path:
         newest_jpg = max(os.path.getmtime(f) for f in jpgs)
         if os.path.getmtime(out_path) >= newest_jpg:
             return out_path
@@ -321,7 +326,13 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
     # Explicit H.264 -- rvio's default .mp4 codec is Motion-JPEG (tagged mp4v),
     # which Premiere / DaVinci Resolve on Windows can't import, so students
     # couldn't cut ShotGrid downloads into an edit.
-    cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path, "-codec", "libx264"]
+    sources = [prefix + ".#.jpg"]
+    if audio_path and os.path.isfile(audio_path):
+        sources = ["[", sources[0], audio_path]
+        if audio_offset_seconds:
+            sources += ["-ao", str(audio_offset_seconds)]
+        sources += ["]"]
+    cmd = [rvio_path] + sources + ["-o", out_path, "-codec", "libx264"]
     if fps:
         cmd += ["-fps", str(fps)]
     try:
@@ -337,7 +348,9 @@ def _encode_to_mp4(version_folder, fps, rvio_path):
 
 
 def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None,
-                      rvio_path=None, as_login=None, machine_diagnostic=None):
+                      rvio_path=None, as_login=None, machine_diagnostic=None,
+                      movie_path=None, thumbnail_path=None, audio_path=None,
+                      audio_offset_seconds=0.0):
     """Hand-off target for shotSub's "Publish Selected Version" button (see
     shotSub.py publish_version()). shotSub resolves entity_type/entity_id
     itself, from an explicit ShotGrid Shot id stored in a local
@@ -351,8 +364,11 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
     finds and reuses the existing Version rather than creating a
     duplicate.
 
-    Publishes a real scrubbable movie (Version.sg_uploaded_movie, encoded
-    via rvio -- see _encode_to_mp4) alongside the thumbnail. Also stores
+    Publishes a real scrubbable movie (Version.sg_uploaded_movie) alongside
+    the thumbnail. movie_path/thumbnail_path are the mp4 + still shotSub
+    already encoded at playblast time (it no longer keeps the JPEG frames);
+    only a version with no movie but frames on disk is encoded here via
+    rvio (see _encode_to_mp4). Also stores
     Version.sg_path_to_frames (the local version_folder), and creates a
     ShotGrid Note per publish (see _create_note above) if notes are given.
 
@@ -378,10 +394,12 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
         )
     project = entity["project"]
 
+    if movie_path and not os.path.isfile(movie_path):
+        movie_path = None
     if files is None:
         files = sorted(glob.glob(os.path.join(version_folder, "*.jpg")))
-    if not files:
-        raise RuntimeError("shotSub: no frames found in {0} to publish".format(version_folder))
+    if not files and not movie_path:
+        raise RuntimeError("shotSub: no movie or frames found in {0} to publish".format(version_folder))
 
     version_folder_norm = os.path.normpath(version_folder).replace("\\", "/")
     version_name = os.path.basename(version_folder_norm)
@@ -401,15 +419,18 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
         print("shotSub: created Version '{0}' on {1} '{2}' (id {3})".format(
             code, entity_type, entity["code"], version["id"]))
 
-    representative_frame = files[len(files) // 2]
-    sg.upload_thumbnail("Version", version["id"], representative_frame)
+    representative_frame = thumbnail_path if thumbnail_path and os.path.isfile(thumbnail_path) else (
+        files[len(files) // 2] if files else None)
+    if representative_frame:
+        sg.upload_thumbnail("Version", version["id"], representative_frame)
 
-    # ShotGrid does not cascade a Version's thumbnail up to its linked
-    # Shot on its own -- do it explicitly so the Shot's thumbnail stays
-    # current as new playblasts get published.
-    upload_entity_thumbnail(entity_type, entity_id, representative_frame, as_login=as_login)
+        # ShotGrid does not cascade a Version's thumbnail up to its linked
+        # Shot on its own -- do it explicitly so the Shot's thumbnail stays
+        # current as new playblasts get published.
+        upload_entity_thumbnail(entity_type, entity_id, representative_frame, as_login=as_login)
 
-    mp4_path = _encode_to_mp4(version_folder_norm, fps, rvio_path)
+    mp4_path = movie_path or _encode_to_mp4(
+        version_folder_norm, fps, rvio_path, audio_path, audio_offset_seconds)
     if mp4_path:
         sg.upload("Version", version["id"], mp4_path, field_name="sg_uploaded_movie")
         print("shotSub: uploaded movie '{0}' to Version id {1}".format(mp4_path, version["id"]))

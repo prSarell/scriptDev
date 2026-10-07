@@ -788,6 +788,15 @@ class ShotSub(object):
     def get_fps_value(self):
         return mel.eval("currentTimeUnitToFPS")
 
+    def get_scene_audio_for_encode(self, start_frame):
+        """(audio_path, offset_seconds) to mux into the review movie, or
+        (None, 0.0). Same offset math open_in_rv_with_audio() uses for RV's
+        -ao flag: the sound node's offset is the frame its audio starts on."""
+        audio_path, audio_offset = self.get_scene_audio_info()
+        if not audio_path:
+            return None, 0.0
+        return audio_path, (audio_offset - start_frame) / self.get_fps_value()
+
     # --------------------------------------------------------
     # Burn-in drawing
     # --------------------------------------------------------
@@ -1193,21 +1202,27 @@ class ShotSub(object):
     # --------------------------------------------------------
     # Playblast
     # --------------------------------------------------------
-    def encode_playblast_movie(self, prefix):
+    def encode_playblast_movie(self, prefix, audio_path=None, audio_offset_seconds=0.0):
         """Encodes <prefix>.####.jpg to an H.264 <prefix>.mp4 via RV's
         rvio. Returns the mp4 path, or None if rvio is missing or the
         encode fails -- the caller keeps the frames in that case.
 
         Explicit libx264 -- rvio's default .mp4 codec is Motion-JPEG (tagged
         mp4v), which Premiere / DaVinci Resolve on Windows can't import, so
-        students couldn't cut ShotGrid downloads into an edit."""
+        students couldn't cut ShotGrid downloads into an edit.
+
+        audio_path (the time slider's sound, see get_scene_audio_for_encode)
+        is muxed in via an rvio source group -- without it the ShotGrid
+        review movie is silent, which breaks lip-sync review. Audio is left
+        at rvio's default (16-bit PCM): `-audiocodec aac` fails in rvio
+        2025.1 ("non monotonically increasing dts")."""
         rvio_path = self.find_rv_executable("rvio")
         if not rvio_path:
             return None
 
         out_path = prefix + ".mp4"
-        cmd = [rvio_path, prefix + ".#.jpg", "-o", out_path, "-codec", "libx264",
-               "-fps", str(self.get_fps_value())]
+        cmd = [rvio_path] + _rvio_source_args(prefix + ".#.jpg", audio_path, audio_offset_seconds)
+        cmd += ["-o", out_path, "-codec", "libx264", "-fps", str(self.get_fps_value())]
         try:
             subprocess.run(
                 cmd, capture_output=True, text=True, check=True,
@@ -1219,13 +1234,13 @@ class ShotSub(object):
 
         return out_path if os.path.isfile(out_path) else None
 
-    def finalize_playblast_frames(self, prefix, files):
+    def finalize_playblast_frames(self, prefix, files, audio_path=None, audio_offset_seconds=0.0):
         """Turns a freshly burned-in frame sequence into the version's
         movie: encodes the mp4, keeps the middle frame as <prefix>.thumb.jpg
         (ShotGrid Version/Shot thumbnail), then deletes the frames. Returns
         what RV should open -- the mp4, or the sequence pattern if encoding
         wasn't possible (frames are kept so the version stays usable)."""
-        movie = self.encode_playblast_movie(prefix)
+        movie = self.encode_playblast_movie(prefix, audio_path, audio_offset_seconds)
         if not movie:
             cmds.warning(
                 "shotSub: couldn't encode a movie (RV's rvio missing or failed) — "
@@ -1276,12 +1291,16 @@ class ShotSub(object):
 
             if frame_files:
                 self.apply_burnins_to_sequence(frame_files)
-                media = self.finalize_playblast_frames(prefix, frame_files)
+                audio_path, audio_offset_seconds = self.get_scene_audio_for_encode(start_frame)
+                media = self.finalize_playblast_frames(
+                    prefix, frame_files, audio_path, audio_offset_seconds)
 
                 open_in_rv = cmds.checkBox(self.widgets["open_in_rv"], q=True, value=True)
                 if open_in_rv:
-                    audio_path, audio_offset = self.get_scene_audio_info()
-                    if audio_path:
+                    # An encoded mp4 already carries the audio -- only the
+                    # rvio-less frame fallback needs it grouped in RV-side.
+                    if audio_path and not media.lower().endswith(".mp4"):
+                        audio_offset = self.get_scene_audio_info()[1]
                         self.open_in_rv_with_audio(media, audio_path, audio_offset, start_frame)
                     else:
                         self.open_in_rv(media)
@@ -1640,6 +1659,8 @@ class ShotSub(object):
         thumbnail_path = self.get_version_thumbnail(version_folder)
         notes = cmds.scrollField(self.widgets["publish_notes"], q=True, text=True).strip()
         rvio_path = None if movie_path else self.find_rv_executable("rvio")
+        # Only used if upload_playblast() has to encode frames itself.
+        audio_path, audio_offset_seconds = self.get_scene_audio_for_encode(self.get_frame_range()[0])
 
         machine_diagnostic = None
         if not movie_path and not rvio_path:
@@ -1662,6 +1683,8 @@ class ShotSub(object):
                 fps=self.get_fps_value(),
                 rvio_path=rvio_path,
                 machine_diagnostic=machine_diagnostic,
+                audio_path=audio_path,
+                audio_offset_seconds=audio_offset_seconds,
             )
         except NotImplementedError as exc:
             cmds.warning("ShotGrid publish isn't built yet: {0}".format(exc))
@@ -1698,6 +1721,17 @@ class ShotSub(object):
             cmds.warning("No movie or frames found in {0} to play.".format(version_folder))
             return
         self.open_in_rv(media)
+
+
+def _rvio_source_args(sequence, audio_path=None, audio_offset_seconds=0.0):
+    """rvio input args: the bare sequence, or an RV source group
+    `[ seq.#.jpg audio.wav -ao <secs> ]` pairing it with its audio."""
+    if not audio_path:
+        return [sequence]
+    args = ["[", sequence, audio_path]
+    if audio_offset_seconds:
+        args += ["-ao", str(audio_offset_seconds)]
+    return args + ["]"]
 
 
 def show_shotSub():
