@@ -1349,12 +1349,19 @@ class SimParticleRig():
 
 	def cacheCheckUI(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		if not rigName or not cmds.objExists(rigName + '_particleRig_grp'):
+			# No rig (or the dropdown points at one that was deleted) --
+			# reset to the idle state rather than erroring on missing nodes.
+			cmds.button('undo_button', l='Undo Preview', e=True, en=False)
+			cmds.button('reactivate_button', e=True, en=False)
+			return
 		if cmds.objExists(rigName + '_preview_grp'):
 			controlsList = []
-			for i in cmds.listAttr(rigName + '_controlNames') or []:
-				if len(i) == 1:
-					controlsList.append(cmds.getAttr(rigName + '_controlNames.' + i))
-			if cmds.textScrollList('controls_scrollList', q=True, ai=True) is None:
+			if cmds.objExists(rigName + '_controlNames'):
+				for i in cmds.listAttr(rigName + '_controlNames') or []:
+					if len(i) == 1:
+						controlsList.append(cmds.getAttr(rigName + '_controlNames.' + i))
+			if controlsList and cmds.textScrollList('controls_scrollList', q=True, ai=True) is None:
 				cmds.textScrollList('controls_scrollList', e=True, append=controlsList)
 			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 0)
 			cmds.button('undo_button', l='Undo Preview', e=True, en=True)
@@ -1428,7 +1435,47 @@ class SimParticleRig():
 		self.controlsList = self._orderControlsAlongChain(rigName, self.controlsList)
 
 		cmds.group(empty=True, name=rigName + '_preview_grp', p=rigName + '_particleRig_grp')
+		# Any failure from here on would leave a half-built preview (a
+		# _preview_grp with no layer/controlNames) that locked the UI in
+		# preview mode until relaunch -- tear it back down and re-raise.
+		try:
+			self._buildPreview(rigName, aimGroups, tipAnchor, start_fr, end_fr)
+		except Exception:
+			for ctrl in self.controlsList:
+				for c in cmds.listRelatives(ctrl, type='parentConstraint') or []:
+					cmds.delete(c)
+			self._exitPreview(rigName, deleteLayer=True)
+			raise
+		cmds.select(clear=True)
+		self.cacheCheckUI(rigName)
 
+	def _bakeToLayer(self, controlsList, start_fr, end_fr, sampleBy, layerName):
+		"""bakeResults onto a new override layer, renamed to layerName.
+		The new layer is found by before/after diff rather than assuming
+		Maya named it 'BakeResults' -- if a stray BakeResults layer is
+		already in the scene, Maya picks BakeResults1 and renaming the
+		fixed name grabbed the wrong layer."""
+		before = set(cmds.ls(type='animLayer') or [])
+		cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleBy, bakeOnOverrideLayer=True, simulation=True)
+		new = list(set(cmds.ls(type='animLayer') or []) - before)
+		return cmds.rename(new[0], layerName) if new else None
+
+	def _exitPreview(self, rigName, deleteLayer):
+		"""Shared end-of-preview teardown for Undo Preview, Keep & Resim and
+		Bake: every step is guarded so a partly-built preview still tears
+		down cleanly, and the UI always ends back in live-sim mode."""
+		previewLayer = rigName + '_previewLayer'
+		if deleteLayer and cmds.animLayer(previewLayer, q=True, exists=True):
+			cmds.delete(previewLayer)
+		for node in (rigName + '_preview_grp', rigName + '_controlNames'):
+			if cmds.objExists(node):
+				cmds.delete(node)
+		if cmds.objExists(rigName + '_hairSystem_grp'):
+			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
+		cmds.refresh(su=False)
+		self.cacheCheckUI(rigName)
+
+	def _buildPreview(self, rigName, aimGroups, tipAnchor, start_fr, end_fr):
 		# Step through the range once so the sim is populated before
 		# snapshotting constraints onto it -- nucleus solvers evaluate
 		# lazily, so a frame nothing queries never actually gets solved
@@ -1473,10 +1520,13 @@ class SimParticleRig():
 		# is revealed automatically, which is also a more correct undo than
 		# manually restoring a single snapshot pose ever was.
 		cmds.refresh(su=True)
-		cmds.bakeResults(self.controlsList, t=(start_fr, end_fr), sampleBy=1, bakeOnOverrideLayer=True, simulation=True)
-		previewLayer = cmds.rename('BakeResults', rigName + '_previewLayer')
-		self._eulerFilterRotates(self.controlsList, layerName=previewLayer)
-		cmds.refresh(su=False)
+		try:
+			previewLayer = self._bakeToLayer(self.controlsList, start_fr, end_fr, 1, rigName + '_previewLayer')
+			self._eulerFilterRotates(self.controlsList, layerName=previewLayer)
+		finally:
+			# Always resume redraw -- left suspended by an error, the
+			# viewport stops updating and the whole scene looks locked.
+			cmds.refresh(su=False)
 
 		for ctrl in self.controlsList:
 			for c in cmds.listRelatives(ctrl, type='parentConstraint') or []:
@@ -1492,9 +1542,6 @@ class SimParticleRig():
 			cmds.addAttr(rigName + '_controlNames', ln=attName, dt='string')
 			cmds.setAttr(rigName + '_controlNames.' + attName, self.controlsList[i], type='string')
 
-		cmds.select(clear=True)
-		self.cacheCheckUI(rigName)
-
 	def undoPreview(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		# Nothing to hand-restore -- previewSim bakes onto a throwaway
@@ -1504,13 +1551,7 @@ class SimParticleRig():
 		# automatically, which also covers a control that already had its
 		# own animation before Preview -- a case the old snapshot-based
 		# restore never handled correctly.
-		previewLayer = rigName + '_previewLayer'
-		if cmds.animLayer(previewLayer, q=True, exists=True):
-			cmds.delete(previewLayer)
-		cmds.delete(rigName + '_preview_grp')
-		cmds.delete(rigName + '_controlNames')
-		self.cacheCheckUI(rigName)
-		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
+		self._exitPreview(rigName, deleteLayer=True)
 
 	def _uniqueKeptLayerName(self, rigName):
 		base = rigName + '_previewKept'
@@ -1535,12 +1576,7 @@ class SimParticleRig():
 		previewLayer = rigName + '_previewLayer'
 		if cmds.animLayer(previewLayer, q=True, exists=True):
 			cmds.rename(previewLayer, self._uniqueKeptLayerName(rigName))
-		if cmds.objExists(rigName + '_preview_grp'):
-			cmds.delete(rigName + '_preview_grp')
-		if cmds.objExists(rigName + '_controlNames'):
-			cmds.delete(rigName + '_controlNames')
-		self.cacheCheckUI(rigName)
-		cmds.setAttr(rigName + '_hairSystem_grp.visibility', 1)
+		self._exitPreview(rigName, deleteLayer=False)
 
 	def bakeFinalSim(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
@@ -1558,24 +1594,21 @@ class SimParticleRig():
 			# collapses its composited values, verified headlessly), then
 			# drop it: onto a fresh override layer if "Create AnimLayer" is
 			# checked, or straight onto the base animation if not.
-			previewLayer = rigName + '_previewLayer'
 			cmds.refresh(su=True)
-			if animLayer:
-				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, bakeOnOverrideLayer=True, simulation=True)
-				cmds.rename('BakeResults', rigName + '_simLayer')
-				self._eulerFilterRotates(controlsList, layerName=rigName + '_simLayer')
-			else:
-				cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, simulation=True)
-				self._eulerFilterRotates(controlsList)
-			if cmds.animLayer(previewLayer, q=True, exists=True):
-				cmds.delete(previewLayer)
-			cmds.refresh(su=False)
+			try:
+				if animLayer:
+					simLayer = self._bakeToLayer(controlsList, start_fr, end_fr, sampleByValue, rigName + '_simLayer')
+					self._eulerFilterRotates(controlsList, layerName=simLayer)
+				else:
+					cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleByValue, simulation=True)
+					self._eulerFilterRotates(controlsList)
+			finally:
+				cmds.refresh(su=False)
 
-			cmds.delete(rigName + '_preview_grp')
-			cmds.delete(rigName + '_controlNames')
-
-			self.cacheCheckUI(rigName)
-			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 0)
+			# Bake ends the preview exactly like Undo Preview (layer gone,
+			# sim visible, settings unlocked) -- the baked keys stay, and
+			# the rig is ready for another pass without relaunching.
+			self._exitPreview(rigName, deleteLayer=True)
 
 			if cmds.checkBox('deleteClothRig_checkBox', q=True, v=True):
 				# The nucleus lives under particleSimChain_grp, not under
@@ -1597,6 +1630,17 @@ class SimParticleRig():
 				children = cmds.listRelatives('particleSimChain_grp') or []
 				if len(children) == 1:
 					cmds.delete('particleSimChain_grp')
+				# Drop the deleted rig from both dropdowns -- left in
+				# place, every button afterwards targeted a rig that no
+				# longer exists and the tool needed relaunching.
+				for item in (rigName + '_particleRig', rigName + '_nucleusChoice'):
+					if cmds.menuItem(item, exists=True):
+						cmds.deleteUI(item, menuItem=True)
+				cmds.textScrollList('controls_scrollList', e=True, ra=True)
+				if cmds.optionMenu('particleRig_list', q=True, ni=True):
+					self.loadSettings()
+				else:
+					self.cacheCheckUI()
 
 			mel.eval('print "Done!";')
 		else:
