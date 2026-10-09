@@ -43,6 +43,7 @@ SIMTOOL_SCRIPTS = [
 ANIMDEV_SCRIPTS = [
     "toggleShotCam.py",
     "smoothTool/smoothTool_api.py",
+    "smoothTool/smoothTool_fkchain.py",
     "smoothTool/smoothTool_ui.py",
 ]
 
@@ -206,8 +207,9 @@ BUTTONS = [
         "script": "smoothTool.py",
         "command": (
             "import importlib\n"
-            "import smoothTool_api, smoothTool_ui\n"
+            "import smoothTool_api, smoothTool_fkchain, smoothTool_ui\n"
             "importlib.reload(smoothTool_api)\n"
+            "importlib.reload(smoothTool_fkchain)\n"
             "importlib.reload(smoothTool_ui)\n"
             "smoothTool_ui.show()"
         ),
