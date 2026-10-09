@@ -56,8 +56,15 @@ class SimParticleRig():
 			                  'influenceProfile': 'baseToTip',
 			                  'nucleus': {'gravity': 9.8, 'timeScale': 1.0, 'spaceScale': 0.1, 'subSteps': 10},
 			                  'collideWidthOffset': 5.4, 'displayColor': [1.0, 0.8, 0.0], 'huntWeight': 1.0},
+			# Promoted from a user preset the same way (influence was
+			# baseToTip on a 19-segment chain).
+			'massiveKillerVines': {'bendResistance': 1.0, 'drag': 0.05, 'damp': 0.0, 'mass': 10.0,
+			                       'stretchResistance': 10.0, 'stretchDamp': 1000.0, 'dynamicsWeight': 10.0,
+			                       'influenceProfile': 'baseToTip',
+			                       'nucleus': {'gravity': 9.8, 'timeScale': 1.0, 'spaceScale': 2.0, 'subSteps': 10},
+			                       'collideWidthOffset': 1.5, 'displayColor': [1.0, 0.8, 0.0], 'huntWeight': 1.0},
 		}
-		self.presetsList = ['custom', 'tentacle', 'monsterTongue']
+		self.presetsList = ['custom', 'tentacle', 'monsterTongue', 'massiveKillerVines']
 		# Nucleus fields a user preset carries -- every Settings-row field
 		# except startFrame, which belongs to the shot, not the tuning.
 		self.presetNucleusAttrs = ['gravity', 'timeScale', 'spaceScale', 'subSteps']
