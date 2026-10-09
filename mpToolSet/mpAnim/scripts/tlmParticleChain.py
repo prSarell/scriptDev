@@ -30,20 +30,37 @@ class SimParticleRig():
 		# defaults (verified via a headless probe against a fresh
 		# hairSystem node), matching how the old nParticle customPreset was
 		# also just nParticle's own defaults.
-		self.hairSettingsName = ['stiffness', 'drag', 'damp', 'mass', 'stretchResistance', 'stretchDamp', 'dynamicsWeight']
-		self.customPreset = [0.15, 0.05, 0.0, 1.0, 10.0, 0.10, 1.0]
+		# bendResistance, not stiffness: hairSystem.stiffness is a classic
+		# (non-nucleus) hair attribute -- verified headlessly that changing
+		# it leaves an nHair sim bit-for-bit identical, while bendResistance
+		# is what actually stiffens the strand. Old saved presets that only
+		# carry 'stiffness' just skip it on load (it never did anything).
+		self.hairSettingsName = ['bendResistance', 'drag', 'damp', 'mass', 'stretchResistance', 'stretchDamp', 'dynamicsWeight']
+		self.customPreset = [1.0, 0.05, 0.0, 1.0, 10.0, 0.10, 1.0]
 		# 'tentacle' mirrors tlmClothChain.py's own named preset in spirit --
 		# a tuned starting point for a muscular chain rather than a floppy one:
-		# higher stiffness/stretchResistance so it holds its shape and resists
+		# higher bendResistance/stretchResistance so it holds its shape and resists
 		# elongating, moderate drag/damp so it doesn't whip forever, and a
 		# bit more mass for a weightier feel. dynamicsWeight stays at full
 		# (1.0) -- this preset tunes how the sim behaves, not how much of it
 		# is in effect.
 		self.namedPresets = {
-			'tentacle': {'stiffness': 0.6, 'drag': 0.15, 'damp': 0.3, 'mass': 1.5,
+			'tentacle': {'bendResistance': 5.0, 'drag': 0.15, 'damp': 0.3, 'mass': 1.5,
 			             'stretchResistance': 40.0, 'stretchDamp': 0.2, 'dynamicsWeight': 1.0},
+			# Tuned in-scene and saved as a user preset, then promoted to a
+			# built-in. Its saved influence was exactly baseToTip on a
+			# 36-segment chain, so it's stored as the profile name -- a true
+			# baseToTip on any segment count rather than a resampled copy.
+			'monsterTongue': {'bendResistance': 50.0, 'drag': 0.05, 'damp': 0.0, 'mass': 5000.0,
+			                  'stretchResistance': 10.0, 'stretchDamp': 1000.0, 'dynamicsWeight': 1.0,
+			                  'influenceProfile': 'baseToTip',
+			                  'nucleus': {'gravity': 9.8, 'timeScale': 1.0, 'spaceScale': 0.1, 'subSteps': 10},
+			                  'collideWidthOffset': 5.4, 'displayColor': [1.0, 0.8, 0.0], 'huntWeight': 1.0},
 		}
-		self.presetsList = ['custom', 'tentacle']
+		self.presetsList = ['custom', 'tentacle', 'monsterTongue']
+		# Nucleus fields a user preset carries -- every Settings-row field
+		# except startFrame, which belongs to the shot, not the tuning.
+		self.presetNucleusAttrs = ['gravity', 'timeScale', 'spaceScale', 'subSteps']
 		# User-saved presets: version-agnostic per-user Maya app dir, not
 		# the repo -- this tool ends up in the shared student toolset, and
 		# presets are personal tuning, not something to ship or git-track.
@@ -66,11 +83,6 @@ class SimParticleRig():
 			('closeFollow', 'Close Follow'),
 			('baseOnly', 'Base Only'),
 		]
-		# Set after a successful Build (see buildParticleRig) -- lets the
-		# Nucleus dropdown default to sharing THIS session's last-built rig
-		# rather than "New" on the next build, so back-to-back chains
-		# collide with each other unless "New" is deliberately picked.
-		self._last_built_rig = None
 	# ------------------------------------------------------------------
 	# Copied verbatim from tlmClothChain.py -- sim-backend-agnostic.
 	# ------------------------------------------------------------------
@@ -240,7 +252,7 @@ class SimParticleRig():
 			cmds.optionMenu('colliders_list', e=True, v=sel)
 			colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 			thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
-			cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
+			cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 		else:
 			cmds.warning('Create a Particle Rig first.')
 
@@ -253,17 +265,17 @@ class SimParticleRig():
 					if itemToDelete in i:
 						cmds.delete(i)
 				if cmds.listRelatives('passiveColliders_grp', ad=True) is None:
-					cmds.textField('colliderColThickness_textField', e=True, tx='')
+					cmds.textField('pc_colliderColThickness_textField', e=True, tx='')
 				else:
 					colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
-					cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
+					cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 		except Exception:
 			pass
 
 	def colliderCollisionThickness(self, *args):
 		colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
-		value = float(cmds.textField('colliderColThickness_textField', q=True, tx=True))
+		value = float(cmds.textField('pc_colliderColThickness_textField', q=True, tx=True))
 		cmds.setAttr(colliderObj + '_nRigidShape1.thickness', value)
 
 	# ------------------------------------------------------------------
@@ -666,14 +678,12 @@ class SimParticleRig():
 		cmds.optionMenu('particleRig_list', e=True, v=rigName)
 
 		# Register this rig as a nucleus-sharing target for the NEXT build,
-		# and default the choice TO it rather than "New" -- multiple chains
-		# built back-to-back should collide with each other by default;
-		# picking "New" is now the deliberate opt-out for a genuinely
-		# separate/non-colliding chain, not the other way around.
+		# and reset the choice back to "New" -- otherwise building rig #2
+		# right after rig #1 would default to silently sharing rig #1's
+		# nucleus instead of it being a deliberate choice each time.
 		if cmds.optionMenu('nucleusChoice_list', exists=True):
 			cmds.menuItem(rigName + '_nucleusChoice', label=rigName, p='nucleusChoice_list')
-			cmds.optionMenu('nucleusChoice_list', e=True, v=rigName + '_nucleusChoice')
-		self._last_built_rig = rigName
+			cmds.optionMenu('nucleusChoice_list', e=True, v='New')
 
 		self.loadSettings()
 		self._applyConstraintProfile(rigName, 'baseToTip')
@@ -868,6 +878,60 @@ class SimParticleRig():
 			                alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyStrength, str(index)),
 			                p='particleSegmentOffset_rowColumnLayout')
 
+	def _captureInfluence(self, hairSystem):
+		"""Every attractionScale ramp entry as sorted [position, value] pairs.
+		Stored by normalized ramp position rather than segment number so a
+		preset saved on one rig can be loaded onto a rig with a different
+		segment count (see _applyInfluence)."""
+		points = []
+		for i in cmds.getAttr(hairSystem + '.attractionScale', multiIndices=True) or []:
+			pos = cmds.getAttr('%s.attractionScale[%d].attractionScale_Position' % (hairSystem, i))
+			val = cmds.getAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i))
+			points.append([pos, val])
+		return sorted(points)
+
+	def _applyInfluence(self, rigName, points):
+		"""Resample saved [position, value] pairs onto this rig's segments
+		(linear interpolation, clamped at the ends) -- the exact saved values
+		when the segment count matches, a proportional fit when it doesn't."""
+		hairSystem = self._get_hairSystem(rigName)
+		total = self._get_segment_count(rigName)
+		if not points or not hairSystem:
+			return {}
+		# Clear first: a ramp left with more entries than this rig has
+		# segments would otherwise keep stale points past the last one.
+		for i in cmds.getAttr(hairSystem + '.attractionScale', multiIndices=True) or []:
+			cmds.removeMultiInstance('%s.attractionScale[%d]' % (hairSystem, i), b=True)
+		result = {}
+		for i in range(total):
+			pos = float(i) / float(total - 1) if total > 1 else 0.0
+			if pos <= points[0][0]:
+				strength = points[0][1]
+			elif pos >= points[-1][0]:
+				strength = points[-1][1]
+			else:
+				for (p0, v0), (p1, v1) in zip(points, points[1:]):
+					if p0 <= pos <= p1:
+						t = (pos - p0) / (p1 - p0) if p1 > p0 else 0.0
+						strength = v0 + (v1 - v0) * t
+						break
+			cmds.setAttr('%s.attractionScale[%d].attractionScale_Position' % (hairSystem, i), pos)
+			cmds.setAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i), strength)
+			cmds.setAttr('%s.attractionScale[%d].attractionScale_Interp' % (hairSystem, i), 1)
+			result[i + 1] = strength
+		return result
+
+	def _refreshInfluenceFields(self, rigName, strengths):
+		# Only if the Set Influence window is open on this same rig.
+		if not cmds.text('particleRig_text', exists=True):
+			return
+		if cmds.text('particleRig_text', q=True, l=True).partition(': ')[2] != rigName:
+			return
+		for index, strength in strengths.items():
+			textFieldName = 'segment_%d_textField' % index
+			if cmds.textField(textFieldName, exists=True):
+				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
+
 	def applyStrength(self, segmentNumber, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		value = float(cmds.textField('segment_' + segmentNumber + '_textField', q=True, tx=True))
@@ -896,7 +960,7 @@ class SimParticleRig():
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		nucleus = self._get_nucleus(rigName)
 		if nucleus:
-			value = float(cmds.textField(attribute + '_textField', q=True, tx=True))
+			value = float(cmds.textField('pc_' + attribute + '_textField', q=True, tx=True))
 			cmds.setAttr(nucleus + '.' + attribute, value)
 
 	def loadHairSettings(self, *args):
@@ -905,11 +969,11 @@ class SimParticleRig():
 		if hairSystem:
 			for nm in self.hairSettingsName:
 				value = "%.2f" % cmds.getAttr(hairSystem + '.' + nm)
-				cmds.textField(nm + '_textField', e=True, tx=value)
+				cmds.textField('pc_' + nm + '_textField', e=True, tx=value)
 
 	def applyHairSettings(self, option, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
-		value = float(cmds.textField(option + '_textField', q=True, tx=True))
+		value = float(cmds.textField('pc_' + option + '_textField', q=True, tx=True))
 		hairSystem = self._get_hairSystem(rigName)
 		if hairSystem:
 			cmds.setAttr(hairSystem + '.' + option, value)
@@ -946,7 +1010,50 @@ class SimParticleRig():
 			# silently forcing an unrelated value onto an older preset.
 			if nm in vals:
 				cmds.setAttr(hairSystem + '.' + nm, vals[nm])
-		self.loadHairSettings()
+		# Same backward-compat idea for everything below: a key missing from
+		# the preset (older saves, and the built-in ones, which only carry
+		# hair settings) leaves the current value alone.
+		if vals.get('influenceProfile'):
+			strengths = self._applyConstraintProfile(rigName, vals['influenceProfile'])
+			self._refreshInfluenceFields(rigName, strengths)
+		elif vals.get('influence'):
+			strengths = self._applyInfluence(rigName, vals['influence'])
+			self._refreshInfluenceFields(rigName, strengths)
+		# Note a shared nucleus (Nucleus: <rig> at build) means these also
+		# change every other rig on it -- same as editing the fields by hand.
+		nucleus = self._get_nucleus(rigName)
+		if nucleus:
+			for nm, value in (vals.get('nucleus') or {}).items():
+				if nm in self.presetNucleusAttrs:
+					cmds.setAttr(nucleus + '.' + nm, value)
+		if 'collideWidthOffset' in vals:
+			cmds.setAttr(hairSystem + '.collideWidthOffset', vals['collideWidthOffset'])
+		if 'displayColor' in vals:
+			cmds.setAttr(hairSystem + '.displayColor', *vals['displayColor'], type='double3')
+		if 'huntWeight' in vals and cmds.floatSliderGrp('huntWeight_slider', exists=True):
+			cmds.floatSliderGrp('huntWeight_slider', e=True, v=vals['huntWeight'])
+			self.applyHuntWeight()
+		# loadSettings re-reads the nucleus fields, collision slider, colour
+		# swatch and hair settings from the nodes just set.
+		self.loadSettings()
+
+	def _capturePreset(self, rigName):
+		"""Everything editable in the UI that's tuning rather than scene
+		wiring. Deliberately left out: rig name, nucleus choice, joint /
+		control lists, hunt target object, colliders (per-object, scene
+		specific), the On/Off toggle, nucleus startFrame (shot specific) and
+		the whole Preview and Bake section."""
+		hairSystem = self._get_hairSystem(rigName)
+		vals = {nm: cmds.getAttr(hairSystem + '.' + nm) for nm in self.hairSettingsName}
+		vals['influence'] = self._captureInfluence(hairSystem)
+		nucleus = self._get_nucleus(rigName)
+		if nucleus:
+			vals['nucleus'] = {nm: cmds.getAttr(nucleus + '.' + nm) for nm in self.presetNucleusAttrs}
+		vals['collideWidthOffset'] = cmds.getAttr(hairSystem + '.collideWidthOffset')
+		vals['displayColor'] = list(cmds.getAttr(hairSystem + '.displayColor')[0])
+		if cmds.floatSliderGrp('huntWeight_slider', exists=True):
+			vals['huntWeight'] = cmds.floatSliderGrp('huntWeight_slider', q=True, v=True)
+		return vals
 
 	# ------------------------------------------------------------------
 	# User-saved presets -- persisted to a JSON file in Maya's per-user,
@@ -979,13 +1086,17 @@ class SimParticleRig():
 		cmds.popupMenu('presets_popupMenu', e=True, deleteAllItems=True)
 		for i in self.presetsList:
 			cmds.menuItem(i + '_preset', label=i, p='presets_popupMenu', c=partial(self.loadPreset, i))
-		if self.userPresets:
+		# A user preset later promoted to a built-in (e.g. monsterTongue)
+		# can still sit in the JSON under the same name -- the built-in wins
+		# in loadPreset anyway, so don't list it twice.
+		userNames = sorted(n for n in self.userPresets if n not in self.presetsList)
+		if userNames:
 			cmds.menuItem(divider=True, p='presets_popupMenu')
 			# menuItem's own name (not its label) has to be a valid Maya UI
 			# identifier -- a user-typed preset name can contain spaces or
 			# other characters that aren't, so index into a fixed prefix
 			# instead of deriving the identifier from the name itself.
-			for idx, name in enumerate(sorted(self.userPresets)):
+			for idx, name in enumerate(userNames):
 				cmds.menuItem('userPreset_%d' % idx, label=name, p='presets_popupMenu', c=partial(self.loadPreset, name))
 		cmds.menuItem(divider=True, p='presets_popupMenu')
 		cmds.menuItem('savePreset_menuItem', label='Save Current as Preset...', p='presets_popupMenu', c=self.savePresetPrompt)
@@ -1010,7 +1121,7 @@ class SimParticleRig():
 		if name in self.presetsList:
 			cmds.warning('"%s" is a built-in preset name -- choose another.' % name)
 			return
-		self.userPresets[name] = {nm: cmds.getAttr(hairSystem + '.' + nm) for nm in self.hairSettingsName}
+		self.userPresets[name] = self._capturePreset(rigName)
 		self._save_user_presets_to_disk()
 		self._rebuildPresetsMenu()
 
@@ -1043,11 +1154,11 @@ class SimParticleRig():
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		nucleus = self._get_nucleus(rigName)
 		if nucleus:
-			cmds.textField('gravity_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.gravity'))
-			cmds.textField('startFrame_textField', e=True, tx=str(cmds.getAttr(nucleus + '.startFrame')))
-			cmds.textField('timeScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.timeScale'))
-			cmds.textField('spaceScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.spaceScale'))
-			cmds.textField('subSteps_textField', e=True, tx=str(cmds.getAttr(nucleus + '.subSteps')))
+			cmds.textField('pc_gravity_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.gravity'))
+			cmds.textField('pc_startFrame_textField', e=True, tx=str(cmds.getAttr(nucleus + '.startFrame')))
+			cmds.textField('pc_timeScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.timeScale'))
+			cmds.textField('pc_spaceScale_textField', e=True, tx="%.2f" % cmds.getAttr(nucleus + '.spaceScale'))
+			cmds.textField('pc_subSteps_textField', e=True, tx=str(cmds.getAttr(nucleus + '.subSteps')))
 
 		if cmds.listRelatives('passiveColliders_grp', ad=True) is not None:
 			for i in cmds.listRelatives('passiveColliders_grp') or []:
@@ -1057,7 +1168,7 @@ class SimParticleRig():
 			colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 			if colliderObj:
 				thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
-				cmds.textField('colliderColThickness_textField', e=True, tx=thickValue)
+				cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 
 		hairSystem = self._get_hairSystem(rigName)
 		if hairSystem:
@@ -1075,9 +1186,14 @@ class SimParticleRig():
 
 	def setHuntTarget(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		# Selection first (fills the field for you); falls back to whatever
+		# is typed in the field when nothing is selected.
+		sel = cmds.ls(sl=True, transforms=True) or []
+		if sel:
+			cmds.textField('huntTarget_textField', e=True, tx=sel[0])
 		huntTransform = (cmds.textField('huntTarget_textField', q=True, tx=True) or '').strip()
 		if not huntTransform:
-			cmds.warning('Set a Hunt Target object first.')
+			cmds.warning('Select the Hunt Target object, then click Set.')
 			return
 		if not cmds.objExists(huntTransform):
 			cmds.warning('Hunt Target "%s" does not exist.' % huntTransform)
@@ -1088,52 +1204,102 @@ class SimParticleRig():
 		self._wireHuntTarget(rigName, huntTransform)
 		cmds.button('clearHunt_button', e=True, en=True)
 
+	def _huntSegmentWeight(self, segIndex, total, huntWeight):
+		"""Share of the full aim-at-target rotation that segment segIndex
+		gets (1 = the segment leaving the base CV, total - 1 = the tip
+		segment): a linear base-to-tip ramp scaled by Hunt Weight, so the
+		root barely turns and the tip turns the most -- the chain curls
+		toward the target instead of swinging stiffly like a stick."""
+		return huntWeight * float(segIndex) / float(max(total - 1, 1))
+
 	def _wireHuntTarget(self, rigName, huntTransform):
-		"""Blend the (already joint-driven) goal curve's CVs toward
-		huntTransform, weighted tip-heavy via the same mirrored baseToTip
-		math the nParticle version used for its second goalWeight -- nHair
-		has no native second-goal concept, so instead of a parallel pull
-		this moves the one thing the strand already attracts toward. A
-		blendColors node is spliced into each CV's existing
-		decomposeMatrix->controlPoints connection; only ever created when
-		the user explicitly sets a Hunt Target, so a rig with none has zero
-		extra nodes from this, same as before.
+		"""Bend the (already joint-driven) goal curve toward huntTransform
+		by ROTATING each segment about the base, never by pulling CVs at
+		the target -- nHair has no native second goal, so this reshapes the
+		one thing the strand attracts toward. Rotation keeps every goal
+		segment its own length, so the goal can't stretch toward a distant
+		target (the old per-CV point blend pulled the tip CV ~90% of the way
+		there while its neighbour barely moved, hyper-extending the last
+		segment).
+
+		Shared: one angleBetween from the chain's base->tip direction to the
+		base->target direction (live per frame, so both the animated chain
+		and an animated target are tracked). Per segment: its own vector
+		(p[i] - p[i-1]) rotated about that axis by angle * weight (see
+		_huntSegmentWeight), accumulated out from the untouched base CV:
+		q[0] = p[0], q[i] = q[i-1] + R[i] * (p[i] - p[i-1]).
+		Only ever created when the user explicitly sets a Hunt Target.
 		"""
-		hairSystem = self._get_hairSystem(rigName)
+		if not cmds.pluginInfo('quatNodes', q=True, loaded=True):
+			cmds.loadPlugin('quatNodes', quiet=True)
 		goalCurveShape = self._get_goal_curve_shape(rigName)
 		total = self._get_segment_count(rigName)
-		grp = cmds.group(empty=True, name=rigName + '_huntLocators_grp', p=rigName + '_particleRig_grp')
+		src = []
+		for i in range(total):
+			conns = cmds.listConnections(goalCurveShape + '.controlPoints[%d]' % i,
+			                             source=True, destination=False, plugs=True) or []
+			src.append(conns[0] if conns else None)
+		if None in src:
+			cmds.warning('Goal curve is missing its joint drivers -- try Refresh Goal first.')
+			return
+		# Marker group -- its existence is what Set/Clear/Hunt Weight check.
+		cmds.group(empty=True, name=rigName + '_huntLocators_grp', p=rigName + '_particleRig_grp')
 		huntWeight = 1.0
 		if cmds.floatSliderGrp('huntWeight_slider', exists=True):
 			huntWeight = cmds.floatSliderGrp('huntWeight_slider', q=True, v=True)
-		for i in range(total):
-			index = i + 1
-			loc = cmds.spaceLocator(name=rigName + '_huntPoint_%02d' % i)[0]
-			cmds.pointConstraint(huntTransform, loc, mo=False)
-			cmds.parent(loc, grp)
 
-			existing = cmds.listConnections(goalCurveShape + '.controlPoints[%d]' % i,
-			                                 source=True, destination=False, plugs=True) or []
-			blend = cmds.createNode('blendColors', name=rigName + '_huntBlend_%02d' % i)
-			if existing:
-				cmds.connectAttr(existing[0], blend + '.color1', f=True)
-			cmds.connectAttr(loc + '.translate', blend + '.color2', f=True)
-			fall = self._constraintProfileStrength('baseToTip', total - index + 1, total)
-			cmds.setAttr(blend + '.blender', fall * huntWeight)
-			cmds.connectAttr(blend + '.output', goalCurveShape + '.controlPoints[%d]' % i, f=True)
+		targetDM = cmds.createNode('decomposeMatrix', name=rigName + '_huntTargetDM')
+		cmds.connectAttr(huntTransform + '.worldMatrix[0]', targetDM + '.inputMatrix')
+		chainDir = cmds.createNode('plusMinusAverage', name=rigName + '_huntChainDir')
+		cmds.setAttr(chainDir + '.operation', 2)
+		cmds.connectAttr(src[-1], chainDir + '.input3D[0]')
+		cmds.connectAttr(src[0], chainDir + '.input3D[1]')
+		targetDir = cmds.createNode('plusMinusAverage', name=rigName + '_huntTargetDir')
+		cmds.setAttr(targetDir + '.operation', 2)
+		cmds.connectAttr(targetDM + '.outputTranslate', targetDir + '.input3D[0]')
+		cmds.connectAttr(src[0], targetDir + '.input3D[1]')
+		aim = cmds.createNode('angleBetween', name=rigName + '_huntAngle')
+		cmds.connectAttr(chainDir + '.output3D', aim + '.vector1')
+		cmds.connectAttr(targetDir + '.output3D', aim + '.vector2')
+
+		prev = src[0]
+		for i in range(1, total):
+			seg = cmds.createNode('plusMinusAverage', name=rigName + '_huntSeg_%02d' % i)
+			cmds.setAttr(seg + '.operation', 2)
+			cmds.connectAttr(src[i], seg + '.input3D[0]')
+			cmds.connectAttr(src[i - 1], seg + '.input3D[1]')
+			scale = cmds.createNode('multDoubleLinear', name=rigName + '_huntScale_%02d' % i)
+			cmds.connectAttr(aim + '.angle', scale + '.input1')
+			cmds.setAttr(scale + '.input2', self._huntSegmentWeight(i, total, huntWeight))
+			quat = cmds.createNode('axisAngleToQuat', name=rigName + '_huntQuat_%02d' % i)
+			cmds.connectAttr(aim + '.axis', quat + '.inputAxis')
+			cmds.connectAttr(scale + '.output', quat + '.inputAngle')
+			rotM = cmds.createNode('composeMatrix', name=rigName + '_huntRot_%02d' % i)
+			cmds.setAttr(rotM + '.useEulerRotation', 0)
+			cmds.connectAttr(quat + '.outputQuat', rotM + '.inputQuat')
+			rotSeg = cmds.createNode('pointMatrixMult', name=rigName + '_huntRotSeg_%02d' % i)
+			cmds.setAttr(rotSeg + '.vectorMultiply', 1)
+			cmds.connectAttr(seg + '.output3D', rotSeg + '.inPoint')
+			cmds.connectAttr(rotM + '.outputMatrix', rotSeg + '.inMatrix')
+			pos = cmds.createNode('plusMinusAverage', name=rigName + '_huntPos_%02d' % i)
+			cmds.connectAttr(prev, pos + '.input3D[0]')
+			cmds.connectAttr(rotSeg + '.output', pos + '.input3D[1]')
+			cmds.connectAttr(pos + '.output3D', goalCurveShape + '.controlPoints[%d]' % i, f=True)
+			prev = pos + '.output3D'
 
 	def applyHuntWeight(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		if not cmds.objExists(rigName + '_huntLocators_grp'):
 			return
+		if cmds.objExists(rigName + '_huntBlend_00'):
+			cmds.warning('This rig has an old-style Hunt setup -- Clear and Set the Hunt Target again.')
+			return
 		total = self._get_segment_count(rigName)
 		huntWeight = cmds.floatSliderGrp('huntWeight_slider', q=True, v=True)
-		for i in range(total):
-			index = i + 1
-			fall = self._constraintProfileStrength('baseToTip', total - index + 1, total)
-			blend = rigName + '_huntBlend_%02d' % i
-			if cmds.objExists(blend):
-				cmds.setAttr(blend + '.blender', fall * huntWeight)
+		for i in range(1, total):
+			scale = rigName + '_huntScale_%02d' % i
+			if cmds.objExists(scale):
+				cmds.setAttr(scale + '.input2', self._huntSegmentWeight(i, total, huntWeight))
 
 	def clearHuntTarget(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
@@ -1142,14 +1308,27 @@ class SimParticleRig():
 		goalCurveShape = self._get_goal_curve_shape(rigName)
 		total = self._get_segment_count(rigName)
 		for i in range(total):
+			# Reconnect each CV straight to its joint driver: the build-time
+			# goalDM node, or an old-style blend's color1 source (rigs that
+			# had Hunt set before the rotation rewrite).
+			source = None
 			blend = rigName + '_huntBlend_%02d' % i
 			if cmds.objExists(blend):
-				srcConns = cmds.listConnections(blend + '.color1', source=True, destination=False, plugs=True) or []
-				if srcConns and goalCurveShape:
-					cmds.connectAttr(srcConns[0], goalCurveShape + '.controlPoints[%d]' % i, f=True)
-				cmds.delete(blend)
+				conns = cmds.listConnections(blend + '.color1', source=True, destination=False, plugs=True) or []
+				source = conns[0] if conns else None
+			elif cmds.objExists(rigName + '_goalDM_%02d' % i):
+				source = rigName + '_goalDM_%02d.outputTranslate' % i
+			if source and goalCurveShape:
+				cmds.connectAttr(source, goalCurveShape + '.controlPoints[%d]' % i, f=True)
+		huntNodes = [n for n in cmds.ls(rigName + '_hunt*') or [] if n != rigName + '_huntLocators_grp']
+		if huntNodes:
+			cmds.delete(huntNodes)
+		# Old-style rigs kept their per-CV locators under the group itself.
 		cmds.delete(rigName + '_huntLocators_grp')
-		cmds.button('clearHunt_button', e=True, en=False)
+		if cmds.button('clearHunt_button', exists=True):
+			cmds.button('clearHunt_button', e=True, en=False)
+		if cmds.textField('huntTarget_textField', exists=True):
+			cmds.textField('huntTarget_textField', e=True, tx='')
 
 	# ------------------------------------------------------------------
 	# Preview + Bake -- conceptually the same as tlmClothChain.py, minus
@@ -1361,7 +1540,7 @@ class SimParticleRig():
 		controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
 		start_fr = int(cmds.playbackOptions(q=True, minTime=True))
 		end_fr = int(cmds.playbackOptions(q=True, maxTime=True))
-		sampleByValue = int(cmds.textField('sampleByValue_textField', q=True, tx=True))
+		sampleByValue = int(cmds.textField('pc_sampleByValue_textField', q=True, tx=True))
 		animLayer = cmds.checkBox('bakeOnAnimLayer_checkBox', q=True, v=True)
 
 		if cmds.objExists(rigName + '_preview_grp'):
@@ -1452,21 +1631,11 @@ class SimParticleRig():
 		cmds.textField('particleRigName_textField', w=150)
 
 		cmds.rowLayout('nucleusChoice_rowLayout', nc=2, adjustableColumn=2, p='particleChain_frameLayout')
-		cmds.text('Nucleus:', ann='Defaults to sharing an existing rig\'s nucleus so chains collide with each other -- hairSystems on the SAME nucleus can collide; separate nuclei never see each other. Pick "New" to deliberately keep this chain non-colliding/separate.')
+		cmds.text('Nucleus:', ann='Share an existing rig\'s nucleus instead of creating a new one -- hairSystems on the SAME nucleus can collide with each other; separate nuclei never see each other.')
 		cmds.optionMenu('nucleusChoice_list', w=150)
 		cmds.menuItem('New', p='nucleusChoice_list')
-		existingRigs = self._get_existing_rig_names()
-		for existingRig in existingRigs:
+		for existingRig in self._get_existing_rig_names():
 			cmds.menuItem(existingRig + '_nucleusChoice', label=existingRig, p='nucleusChoice_list')
-		# Default to sharing an existing rig's nucleus rather than "New" when
-		# one is available -- chains should collide with each other unless
-		# "New" is deliberately chosen. Prefers this instance's own last
-		# build (self._last_built_rig); a fresh UI open/refresh creates a new
-		# SimParticleRig() with no build history yet, so falls back to
-		# whichever existing rig turns up last in the scene.
-		defaultRig = self._last_built_rig if self._last_built_rig in existingRigs else (existingRigs[-1] if existingRigs else None)
-		if defaultRig:
-			cmds.optionMenu('nucleusChoice_list', e=True, v=defaultRig + '_nucleusChoice')
 		cmds.separator(st='none', h=10, p='particleChain_frameLayout')
 
 		cmds.frameLayout('buildParticleRig_frameLayout', lv=False, bv=False, p='particleChain_frameLayout')
@@ -1484,7 +1653,7 @@ class SimParticleRig():
 
 		cmds.rowLayout('huntTarget_rowLayout', nc=4, adjustableColumn=2, p='buildParticleRig_frameLayout')
 		cmds.text('Hunt Target (optional):')
-		cmds.textField('huntTarget_textField', w=140, ann='Optional attractor the tip reaches toward. Leave empty for a plain skin-follow chain.')
+		cmds.textField('huntTarget_textField', w=140, ann='Optional object the chain curls toward. Select it and click Set; Clear removes it.')
 		cmds.button(l='Set', w=40, c=self.setHuntTarget)
 		cmds.button('clearHunt_button', l='Clear', w=45, en=False, c=self.clearHuntTarget)
 		cmds.rowLayout('huntWeight_rowLayout', nc=2, adjustableColumn=2, p='buildParticleRig_frameLayout')
@@ -1498,15 +1667,15 @@ class SimParticleRig():
 
 		cmds.rowLayout('buildParticleRig_rowLayout3', nc=10, p='settings_frameLayout')
 		cmds.text('Gravity:')
-		cmds.textField('gravity_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'gravity'))
+		cmds.textField('pc_gravity_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'gravity'))
 		cmds.text(' Start Frame:', al='left')
-		cmds.textField('startFrame_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'startFrame'))
+		cmds.textField('pc_startFrame_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'startFrame'))
 		cmds.text(' Time Scale:')
-		cmds.textField('timeScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'timeScale'))
+		cmds.textField('pc_timeScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'timeScale'))
 		cmds.text(' Space Scale:')
-		cmds.textField('spaceScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'spaceScale'))
+		cmds.textField('pc_spaceScale_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'spaceScale'))
 		cmds.text(' Substeps:')
-		cmds.textField('subSteps_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'subSteps'))
+		cmds.textField('pc_subSteps_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.nucleusChange, 'subSteps'))
 
 		cmds.rowLayout('collider_rowLayout', adj=1, nc=4, p='settings_frameLayout')
 		cmds.optionMenu('colliders_list', label='Colliders:', w=190, cc=self.loadSettings)
@@ -1515,7 +1684,7 @@ class SimParticleRig():
 
 		cmds.rowLayout('collider_rowLayout2', nc=2, adjustableColumn=2, p='collider_rowLayout')
 		cmds.text('Collision Thickness:')
-		cmds.textField('colliderColThickness_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=self.colliderCollisionThickness)
+		cmds.textField('pc_colliderColThickness_textField', w=40, alwaysInvokeEnterCommandOnReturn=True, ec=self.colliderCollisionThickness)
 
 		cmds.text('Particle Rig Settings:', fn="boldLabelFont", p='settings_frameLayout')
 
@@ -1532,19 +1701,23 @@ class SimParticleRig():
 		            ann='Re-bake the goal curve from the joints\' CURRENT animation -- use this after adding or changing keys on the joints post-Build.')
 		cmds.separator(st='none', h=5, p='settings_frameLayout')
 
+		# Field names carry a 'pc_' prefix: tlmClothChain.py builds fields
+		# with the same bare names (stretchResistance_textField,
+		# gravity_textField, ...), and with both tools open in one session a
+		# short-name lookup could read/write the cloth tool's field instead.
 		cmds.paneLayout('pane_layout2', cn='vertical2', p='settings_frameLayout')
 		cmds.columnLayout('particleRigSettings_columnLayout', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('stiffness', 'Stiffness'), ('drag', 'Drag'), ('damp', 'Damp'), ('mass', 'Mass')]:
+		for nm, label in [('bendResistance', 'Bend Resistance'), ('drag', 'Drag'), ('damp', 'Damp'), ('mass', 'Mass')]:
 			row = 'row_' + nm
 			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout')
-			cmds.textField(nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
+			cmds.textField('pc_' + nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
 			cmds.text(label)
 
 		cmds.columnLayout('particleRigSettings_columnLayout2', adj=1, cat=['right', 0], p='pane_layout2')
 		for nm, label in [('stretchResistance', 'Stretch Resistance'), ('stretchDamp', 'Stretch Damp'), ('dynamicsWeight', 'Dynamics Weight')]:
 			row = 'row_' + nm
 			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout2')
-			cmds.textField(nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
+			cmds.textField('pc_' + nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
 			cmds.text(label)
 
 		self.feedOptionMenu('particleRig')
@@ -1580,7 +1753,7 @@ class SimParticleRig():
 		cmds.rowLayout('transferSim_rowLayout', nc=7, adjustableColumn=5, p='transferSim_frameLayout')
 		cmds.checkBox('bakeOnAnimLayer_checkBox', l='Create AnimLayer')
 		cmds.text(' Sample by:')
-		cmds.textField('sampleByValue_textField', tx='1', w=35)
+		cmds.textField('pc_sampleByValue_textField', tx='1', w=35)
 		cmds.text(' ')
 		cmds.button(l='Bake!', bgc=(.3, .5, .3), c=self.bakeFinalSim)
 		cmds.text(' ')
