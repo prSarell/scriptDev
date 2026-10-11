@@ -1,0 +1,219 @@
+{\rtf1\ansi\ansicpg1252\deff0\deflang1033
+{\fonttbl{\f0\fswiss\fcharset0 Calibri;}}
+\viewkind4\uc1\pard\f0\fs24
+
+{\b\fs36 RMIT Asset Pipeline Tool: Technical Development Notes}\par
+{\fs20 Phase 1 architecture and requirements -- 2026-08-08}\par
+\par
+\pard\fs24
+Companion document: {\i rmit_pipeline_hod_strategy_brief.rtf} covers the institutional/political context this tool sits inside. This document is scoped to the technical design only.\par
+\par
+
+{\b\fs28 1. Phased build plan}\par
+{\b Phase 1 -- now, no new infrastructure required.} Build and prove a pull/publish asset tool against the existing H-drive + local-scratch-drive setup. Maya only.\par
+{\b Phase 2 -- pending IT.} Move the same tool onto a dedicated multi-user test server once IT provisions one.\par
+{\b Phase 3 -- 2027.} Live classroom testing, timed with the rollout of the new program.\par
+(Phase 4 is a decision point on the BYO question, not a technical build phase -- see the strategy brief.)\par
+\par
+
+{\b\fs28 2. Phase 1 session workflow}\par
+Student launches Maya --> opens the tool --> sets/selects the active class project --> pulls assets from the H drive, scoped to what's needed for the current session --> works locally against the scratch copy --> {\b Publish to H Drive} at end of session (working structure, versioned) --> optionally {\b Publish for Review} (promotes a working version to the published structure, links to ShotGrid via shotSub).\par
+\par
+
+{\b\fs28 3. Relationship to shotSub / ShotGrid}\par
+This tool is a layer underneath shotSub. It manages working files/versions pre-publish; shotSub still handles the final publish/review step to ShotGrid, unchanged. Raw shotSub submissions straight from scratch remain possible for informal/process documentation (e.g. a quick playblast share) -- but carry no guarantee of a backing Maya file, unlike a proper Publish for Review.\par
+\par
+
+{\b\fs28 4. Pull scope and dependency resolution}\par
+Manual selection for Phase 1: student picks their shot/task from a list in the tool's UI. The tool then needs to resolve what that shot depends on (rigs, sets, textures) and pull only those files.\par
+\par
+Two candidate sources for that dependency list:\par
+- Parsing Maya scene file references directly (reflects what's currently in the scene)\par
+- ShotGrid's Shot-to-Asset link field (reflects what's supposed to be in the shot, tracked independently of the scene file)\par
+\par
+Open question: use one, the other, or both as a cross-check.\par
+\par
+
+{\b\fs28 5. Load pattern and performance target}\par
+Roughly 26 students pulling simultaneously at the start of class, and publishing simultaneously at the end -- a burst pattern, not steady traffic. The tool likely needs to stagger/queue pulls and publishes across the class to avoid saturating the H drive. Target: the full pull operation and the full publish operation should each complete inside a 10-15 minute window.\par
+\par
+
+{\b\fs28 6. Three mirrored folder structures}\par
+All three follow the same Maya-native project layout (scenes/, sourceimages/, data/, etc.) so paths resolve consistently regardless of which one a file sits in. They are structurally consistent but not full mirrors -- each holds different content:\par
+\par
+1. {\b Scratch drive} (local, per student) -- wiped every couple of weeks, fully disposable. Holds Maya files, renders, and jpeg playblasts for whatever was pulled for the current session.\par
+2. {\b H drive -- Working structure} -- read/write, versioned, student's own in-progress files. Destination of "Publish to H Drive." Accumulates full, un-curated version history. Needs pruning/cap logic (similar to shotSub's existing version management) to control space usage on the H drive.\par
+3. {\b H drive -- Published structure} -- locked, cannot be saved over directly. Linked to ShotGrid. Holds only the curated set of versions a student has deliberately submitted via "Publish for Review." Openable/loadable, but any edit must be saved back into the working structure to persist.\par
+\par
+
+{\b\fs28 7. Two-tier publish model}\par
+- {\b Publish to H Drive}: scratch --> H-drive working. Versioned (v001, v002, v003...). Selective -- student chooses which files/versions to keep, not a blind full sync.\par
+- {\b Publish for Review}: H-drive working --> H-drive published, with a link to the connected ShotGrid entry via shotSub. Can only promote a version that already exists in the working structure -- keeps the flow strictly one-directional (scratch -> working -> published).\par
+\par
+
+{\b\fs28 8. Nested project structure (class-project level)}\par
+{\fs20 <ClassProject>/            -- global Maya project (its own scenes/, sourceimages/, data/...)\par
+  assets/\par
+    <AssetType>/       -- Character, Prop, Environment, Vehicle...\par
+      <AssetName>/\par
+        <StudentID>/\par
+          <per-tool project>\par
+  scenes/\par
+    <Sequence>/\par
+      <Shot>/\par
+        <StudentID>/\par
+          <per-tool project>\par}
+\fs24
+Mirrors ShotGrid's own data model: Assets are Project-level entities (not nested under Sequence/Shot), with an Asset Type field and Tasks assigned per student, same as Shots.\par
+\par
+One student always owns a given asset -- a simple per-student folder under each asset is sufficient, no per-Task nesting needed there. Shots in group/studio-model courses may have multiple student contributors on the same shot -- per-student nesting within the shot prevents overwrite collisions in that case. For single-owner projects (e.g. Major Project), the student-ID layer is a formality since there's no real contention.\par
+\par
+"Set Project" in Maya just points at whichever folder has the right subfolder convention -- nesting one project inside another's scenes/assets folder works fine technically. The tool needs to manage which level is active depending on context: class-level for anything project-wide (shared assets/sourceimages that aren't shot-specific), student-level when a student pulls a specific shot/asset to work on it.\par
+\par
+{\b Update 2026-10-02 -- nested Maya projects looking like the best folder structure.} Current thinking is that a nested Maya project setup is the strongest option for the folder structure: e.g. a single film project (the global Maya project) with a nested Maya project for each shot inside its scenes/ folder. The key benefit: it looks like this lets ShotGrid output be locked to projects -- each nested shot project maps cleanly to one ShotGrid Shot, so anything published from inside it can be tied to the right ShotGrid entity by where it lives, rather than relying on the student to pick the right target. Leaning, not yet finalized -- still to confirm how this sits with the per-student layer for group shots (above) and with Section 9's access control.\par
+\par
+
+{\b\fs28 9. Access control}\par
+- ShotGrid project assignment gates tool-level access, same as ShotGrid's own visibility rules -- if a student isn't assigned to a project in ShotGrid, the tool shouldn't let them see or pull its files.\par
+- Within a shared class project, the tool must not let a student load another student's working files -- access is scoped to their own StudentID folder plus read-only shared/published assets.\par
+- Open question: does staff/mentor access need an override to review a student's working (not just published) files?\par
+- Open question: how does the tool identify the logged-in student -- ShotGrid login, lab Windows credentials, or something else?\par
+\par
+
+{\b\fs28 10. Class project container flexibility}\par
+Different classes/teachers already configure ShotGrid differently (e.g. 3DCharacterPerformance vs Major Project vs an individual student film are not structured the same way today). The folder skeleton above should stay consistent regardless of ShotGrid configuration per class.\par
+\par
+Three archetypes the container needs to support:\par
+1. Classes delivering teaching material/exercises -- not building toward one cohesive film.\par
+2. Individual short films -- each student owns their own film.\par
+3. A class making one short film together -- studio-model, group project, lecturer-directed.\par
+\par
+Open question: does one container schema cover all three, or do they need genuinely different shapes?\par
+\par
+
+{\b\fs28 11. Cross-discipline / multi-software direction}\par
+Not Phase 1 scope (Phase 1 is Maya-only), but a confirmed direction the architecture must not foreclose: the system eventually needs to work for 2D, 3D, and stop-motion students, potentially with multiple tools inside a single project (Maya, Unreal, Blender, Toon Boom, Premiere, DaVinci Resolve, etc.).\par
+\par
+Implication: the per-tool leaf folder in Section 8 (labelled "<per-tool project>") should be treated as a generic working slot, not something Maya-specific -- Maya is simply the first adapter. The class-project/assets/scenes/sequence/shot/student skeleton above it must stay tool-agnostic so other tools' project folders can occupy that same leaf position later without restructuring anything above it.\par
+\par
+
+{\b\fs28 12. Render farm readiness}\par
+This structure directly answers the "no pipeline infrastructure to manage farm use" gap identified early on:\par
+- The published structure is the stable, locked, versioned source of truth a render job needs -- scratch is too ephemeral, working is still mutable/unreviewed.\par
+- The shared folder convention across all three structures means a render node resolves paths the same way without special repathing logic.\par
+- Locked published files can't be overwritten mid-render.\par
+- Because Publish for Review only promotes deliberately-chosen, complete versions, the farm only ever sees things worth spending render time on.\par
+\par
+
+{\b\fs28 13. Sequencing and integration with existing tools}\par
+In hindsight, this pipeline tool is more foundational than tools already built on top of looser assumptions -- notably JiffySchedule, which was designed before this project/class/student structure existed. This tool will end up defining how JiffySchedule should actually work (project/class context, student identity, task structure), not the other way around. Worth treating as a dev note rather than a retroactive rebuild: JiffySchedule's future development should be reconsidered in light of this pipeline once Phase 1 architecture is settled, rather than continuing to evolve independently.\par
+\par
+More broadly, every existing tool that touches students, projects, or ShotGrid needs a deliberate look at how it integrates with this new pipeline branch rather than assuming it's unaffected -- at minimum: JiffySchedule, Jiffy SG, shotSub, and pbTool. Not a Phase 1 blocker, but flagged so it isn't discovered late.\par
+\par
+
+{\b\fs28 14. Class Project Setup Tool}\par
+A consolidated tool that replaces the repeated pattern of writing a bespoke one-off mayapy script for every new class/film project's ShotGrid setup (as was done individually for Not Worth Fixing, UNretired, Ghosts and Oranges, Chimera, Hope, ESC, and Roll for Charisma). One reusable, config-driven tool instead of a new script per project.\par
+\par
+{\b Trigger and config generation:}\par
+- Andy and the user design ShotGrid Project Templates in consultation with staff -- these live in ShotGrid as real Template Projects (native ShotGrid feature).\par
+- A teacher signs into ShotGrid themselves, picks a template, and names the new Project -- the only ShotGrid contact staff have, and a small guided action rather than admin.\par
+- Each Template Project carries a custom field (proposed: sg_project_archetype) identifying its archetype (Individual Film / Group Film / Skills Exercises / etc). ShotGrid's "create Project from Template" duplicates the Template's field values onto the new Project, so the new Project should inherit this value automatically. {\b Needs verification on RMIT's site} -- confirm ShotGrid actually copies this custom field on template-based creation before relying on it.\par
+- Fully automatic config-file generation (triggered the moment a new Project is created) requires something watching ShotGrid's Event Log continuously -- either polling or a proper listener (ShotGrid's EventDaemon pattern). That's genuinely new infrastructure, so it's scoped as a {\b Phase 2 item} once the dedicated server exists, not a Phase 1 requirement.\par
+- For Phase 1: configs are hand-written per project (starting with Not Worth Fixing), built to the same shape the future automated generator would produce, so nothing needs rework later.\par
+\par
+{\b Capabilities the tool needs:}\par
+1. {\b Batch Sequence/Shot creation} -- step-10 numbering convention (as used across all prior one-off setups), generalizing jiffySG.py's create_sequence()/create_shot(). Teacher-facing and ongoing (Section 14's revised audience split), not just a one-time TD-run step at project creation.\par
+2. {\b Batch Asset creation} -- with Asset Type tagging, generalizing find_or_create_asset()/set_asset_type(). Same teacher-facing, ongoing basis as Sequence/Shot creation.\par
+3. {\b Class list import and roster management} -- staff select a class-list CSV (Name + Email columns, same format already used) and can add/remove individual students on an ongoing basis; tool adds/removes students on the Project and assigns Tasks, generalizing provision_shotgrid_class.py's existing logic. Student ID is always derived from the RMIT email address (existing regex pattern) -- nobody, staff or TD, manually enters or touches a student ID at any point. Teacher-facing and ongoing, not a one-time import.\par
+4. {\b H-drive folder structure generation} -- matching the three-structure model (Sections 6-8) and nested per-student skeleton (Section 8), driven by the same archetype config.\par
+\par
+{\b Audience split (revised):} at roughly 500 students and 30 staff against only 2 TDs (the user and Andy), routing ongoing class administration through the TD layer does not scale. The line isn't "TD sets everything up once, teachers just use it" -- it's:\par
+\par
+- {\b TD-facing, one-time per archetype:} designing and maintaining the ShotGrid Project Templates themselves (what Sequences/Shot patterns, Asset types, and folder shapes each archetype implies). This is the part that genuinely needs pipeline expertise and stays with the user and Andy.\par
+- {\b Teacher-facing, ongoing, self-service:} everything downstream of picking a template -- class roster management (add/remove students, matching Section 14's earlier note) AND batch Sequence/Shot/Asset creation for their own class (e.g. adding more shots mid-semester as a project grows). Confirmed: this needs to work the same way roster management does, for the same scale reason -- a teacher adding shots to their own class shouldn't need to go through the TD layer any more than adding a student does.\par
+\par
+This reinforces the open question already flagged about whether this needs to be a lightweight standalone tool rather than Maya-embedded -- both roster management and batch content creation need to be usable by a teacher who may not have Maya open, or installed at all.\par
+\par
+
+{\b\fs28 15. Confirmed Phase 1 workflow, end to end}\par
+As described by the user, this is the target workflow for the Class Project Setup Tool -- captured here as stated, before further breakdown:\par
+\par
+1. Teacher selects a ShotGrid Template Project (from the set the user and Andy maintain) via ShotGrid's own template picker.\par
+2. Teacher names and creates the Project. The template's archetype field (Section 14) should carry over onto the new Project.\par
+3. A config file for the desktop tool gets created from that archetype (hand-written for Phase 1, automatic later -- Section 14).\par
+4. Teacher opens the desktop tool.\par
+5. Teacher adds students (roster management, Section 14).\par
+6. Teacher defines assignments, with due dates -- generalizes provision_shotgrid_class.py's Sequence-per-assignment concept (e.g. "Assignment1"). Due dates are a new capability, not present in the current script (would write Task.due_date).\par
+7. Teacher adds shots to each assignment that students can submit work to -- generalizes provision_shotgrid_class.py's shot_types concept (e.g. "tail","walkCycle" under one assignment), matching the pattern already live on the 3DCharacterPerformance template. One Shot per (student, shot type) pair.\par
+8. Tool sets each student as Artist on their own Shots -- existing pattern (Task.task_assignees, mirrored onto Shot.sg_artist).\par
+9. Tool creates the matching H-drive folder structure for the whole project (students x assignments x shots), per the three-structure model (Section 6) and nested skeleton (Section 8).\par
+\par
+Open breakdown question for next session: for archetypes with a shared/group film shape rather than 3DCharacterPerformance's per-student-exercise shape, how do steps 6-8 differ -- are "assignments" still the right concept, or does a group-film archetype need something else in that slot?\par
+\par
+
+{\b\fs28 16. Open questions for next scoping pass}\par
+- What can Phase 1 actually run on today beyond raw H-drive access -- any script/service permissions from IT?\par
+- Version pruning rule for the H-drive working structure -- fixed count, age-based, manual cleanup, or something else?\par
+- Exact folder/naming convention for the working and published structures -- does it align with the existing ShotGrid Sequence/Shot structure (see Major Project Semester 2 conventions), or does it need its own scheme?\par
+- How "Publish for Review" technically links to the existing shotSub/ShotGrid flow -- does it call shotSub directly, or write metadata that shotSub then reads?\par
+- Software-agnostic adapter design for 2D/stop-motion -- worth sketching early so Phase 1's core isn't accidentally built Maya-only at the foundations.\par
+- How does the tool identify the logged-in student to enforce per-student access restriction?\par
+- Does staff/mentor access need an override to review a student's working files?\par
+- Publish-for-Review vs class-sharing coupling -- should publishing for mentor review ever automatically surface in a shared class critique project, or is that always a separate, deliberate action? Currently undecided/parked.\par
+- Should shot dependency resolution use ShotGrid's Shot-to-Asset link, Maya scene reference parsing, or both?\par
+- Does one class-project container schema cover all three class archetypes (Section 10), or do they need genuinely different shapes?\par
+- What would a minimal per-tool adapter interface look like, so non-Maya tools can slot into the same leaf position later?\par
+- Full audit of which existing tools (JiffySchedule, Jiffy SG, shotSub, pbTool, others) need rework vs. can integrate as-is once this pipeline's project/class/student structure exists (Section 13).\par
+- Verify ShotGrid actually copies a custom Project-level field (e.g. sg_project_archetype) from a Template Project onto a new Project created from it, on RMIT's own site (Section 14).\par
+- What does teacher-facing roster management actually need technically -- a lightweight standalone tool separate from the Maya-embedded pipeline tool (teachers may not have Maya open, or even installed), given it needs to work for 2D/stop-mo teachers too (Section 14)?\par
+- Does adding/removing a student from a class roster need to also retroactively update their H-drive folder access (create on add, revoke/archive on remove), and if so, how promptly?\par
+- Exact shape of the safe_run(tool_name, func) wrapper (Section 17) -- what counts as a "network/connection" error worth a friendly message vs. a real bug worth a full traceback?\par
+- Should the future server publish tool's local queue (Section 17) reuse shotSub's local-version-folder/publish-log pattern directly, or does a multi-student server context need its own mechanism?\par
+\par
+
+{\b\fs28 17. Resilience, fault isolation, and update-safety strategy}\par
+{\fs20 2026-08-09 discussion}\par
+\pard\fs24
+With rollout currently resting on one TD (the user) plus possibly one other Claude-literate teacher, the guiding principles for this whole build are: keep it as simple as possible, roll out slowly (prove things at small scale before expanding), and design explicitly to reduce bus-factor risk rather than just building features.\par
+\par
+
+{\b Consolidate the volatile surface.} shotgun_api3 and the ShotGrid connection/auth logic are currently hand-copied across mpToolSet, studio4AnimToolset, and teamHope independently. A breaking ShotGrid API or Maya version update means fixing the same problem in multiple places. Consolidating into one shared connector module (fixed once, pushed via the existing GitHub Actions release pipeline) turns a Maya/ShotGrid update from a scavenger hunt into a bounded, known task -- also makes it something a second teacher could follow without needing the full mental model.\par
+\par
+
+{\b Lightweight update-safety check.} Rather than a full test suite (needs mocking, adds maintenance weight, cuts against "keep it simple"), a single mayapy-runnable smoke-test script -- imports every shelf tool and instantiates its UI class, nothing more -- catches "this Maya update broke the tool outright" in seconds. Pair with a one-line "last verified against Maya 2025/2026" note per toolset in dev_notes.md.\par
+\par
+
+{\b Recovery already exists.} install.py/uninstall.py plus the GitHub Release tags already give a rollback path if an update breaks something mid-semester -- revert a class to the last known-good release. Worth recognizing as existing infrastructure, not something new to build.\par
+\par
+
+{\b Fault isolation.} A shared safe_run(tool_name, func) wrapper at every shelf tool's entry point (the button command) catches exceptions at that boundary, so one broken tool fails contained instead of an unhandled traceback taking down the shelf or leaving Maya's UI in a bad state.\par
+\par
+
+{\b Diagnostic capture.} The same wrapper logs structured failure data locally (tool name, Maya version, OS, timestamp, full traceback) to a prefs-folder log file on failure. Generalizes the pattern shotSub already validated with its machine_diagnostic Note (auto-flagging a missing rvio install instead of a silent local print() nobody sees) -- extend that "capture context automatically, don't rely on the student noticing/reporting" philosophy to every tool, not just shotSub. Kept local-file-only (not auto-uploaded anywhere) to stay simple; someone still has to send the log, no dashboard.\par
+\par
+
+{\b Network/server resilience -- whole chain.} The eventual chain is local Maya tools --> server publish tool --> ShotGrid, three links, not two. shotSub already proves the right pattern on the existing two-link chain: playblasting/scene-saving is entirely local, Publish is a distinct explicit later step, so a ShotGrid outage never loses work -- it just delays publishing, and the local publish log already tracks what's still pending. The server publish tool (Section 14 onward) needs the same shape extended down the chain: each link degrades gracefully and never blocks the link behind it. A ShotGrid-unreachable or server-unreachable error should say so plainly ("your work is saved locally, publish will retry once you're back online") rather than surface a raw exception -- this is a messaging fix on the existing chain today, and a design requirement for the server tool when built.\par
+\par
+
+{\b Sequencing.} Given the server publish tool is the heaviest, most operationally-demanding piece to add (self-hosted infrastructure the user would own -- uptime, security, backups -- not just another API client), it should be built and rolled out last, only once the simpler two-link chain (Maya tools <-> ShotGrid) has proven reliable at small scale. Matches the general slow-rollout principle -- concentrating the newest, least-proven, heaviest-risk piece before the rest is validated is where bus-factor risk compounds fastest.\par
+\par
+
+{\b\fs28 18. Cross-software publish pattern -- parked, NOT active development}\par
+{\fs20 2026-08-09 -- case study from Not Worth Fixing production. Flagged explicitly: this is a planning note, not a Phase 1 (or any current) build item.}\par
+\pard\fs24
+Real-world confirmation of Section 11's multi-software direction, surfaced from actual production pain rather than proposed abstractly. On Not Worth Fixing, custom MetaHuman-rigged characters move Unreal Engine (export) --> Wrap4D --> Maya (import via the MetaHuman-to-Maya plugin). With only 2 characters, ad hoc {\i fromUnreal}/{\i fromWrap}/{\i fromMaya} folders inside the Maya project are already untrackable.\par
+\par
+
+{\b Proposed pattern (not built):} each tool keeps its own native working structure -- no attempt to force Wrap4D or Unreal into a Maya-shaped folder convention. Anything crossing between tools goes through a ShotGrid publish as a {\i PublishedFile} (not a Version -- Version is for reviewable media, PublishedFile is the correct entity for a pipeline deliverable another tool consumes next), attached to the relevant Task. The next tool in the chain always pulls the latest PublishedFile from ShotGrid rather than reaching into another tool's native folder. This is the same generic per-tool-adapter shape Section 11 already calls for, just validated against a real workflow instead of a hypothetical one.\par
+\par
+
+{\b Explicitly decided against building native tools right now.} Writing shotSub-equivalent publish tools inside Unreal and Wrap4D would mean owning the update-compatibility risk of two more software ecosystems on top of Maya, while still solo pipeline TD -- directly against Section 17's keep-simple/slow-rollout/reduce-bus-factor principles. Decision: prove the publish/pull pattern manually first (human uploads/downloads through ShotGrid's own web UI, no plugin) on the real Scout/AT-KS case; only build a native tool for whichever software causes the most ongoing friction, once the pattern is actually validated in practice -- not before.\par
+\par
+
+{\b Feasibility research (done, not acted on):}\par
+- {\b Unreal Engine} -- strong yes. Epic officially maintains a ShotGrid/Flow Production Tracking plugin with its own documented Python API (unreal.ShotgridEngine) for loading assets from ShotGrid and publishing back to it. First-party integration already built by Epic/Autodesk -- if this is ever pursued, it's likely mostly configuration, not new development.\par
+- {\b Wrap4D} (the tier currently licensed, not WrapX) -- real but limited. Supports Python scripting for parameter expressions and node manipulation, plausibly enough to script a call to shotgun_api3 to push output on demand, but a full custom UI panel isn't clearly documented as supported at that tier. The fuller Python API for custom processing scenarios lives in WrapX, a separate paid professional tier. A Wrap4D tool would likely be a script/macro at best unless upgraded to WrapX.\par
+\par
+
+If this is picked back up later: check whether the manual publish/pull pattern was actually tried on Not Worth Fixing before jumping to building a native tool, and don't re-research Unreal/Wrap4D capabilities from scratch -- the findings above still hold barring a major version change to either product.\par
+}
