@@ -430,14 +430,17 @@ class PublishToolUI(QtWidgets.QDialog):
         try:
             for row in self._rows:
                 label = "%s %s" % (row["asset"], row["code"])
+                # Anything published under a shot (cameras, characters' anim,
+                # ...) always uses the whole timeline (spec "Shot publishes").
+                frames = None if row["asset_type"] == "shot" else frame_count
                 try:
                     if row["code"] == cam.CAM_CODE:
                         plan = cam.publish_camera(scene, *self._roots(),
                                                   camera=row["objects"][0],
-                                                  frame_count=frame_count, notes=notes)
+                                                  frame_count=frames, notes=notes)
                     else:
                         plan = api.publish(scene, *self._roots(), code=row["code"],
-                                           frame_count=frame_count, notes=notes,
+                                           frame_count=frames, notes=notes,
                                            objects=row["objects"],
                                            target=(row["asset_type"], row["asset"]))
                 except Exception as e:

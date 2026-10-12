@@ -500,6 +500,13 @@ The tools are developed side by side:
     built before this rule) is moved to the clean one when it's free;
     keys on it survive, including save + reopen.
 
+  **Shot publishes always use the whole timeline (DECIDED 2026-10-12):**
+  anything published under a shot (cameras, characters' animation, props
+  moving in the shot, ...) bakes and sends to ShotGrid the **whole
+  playback range**. The ShotSub frames setting (default 2) applies to
+  asset publishes only. In the Publish tool, a row whose target is a shot
+  always gets the whole range.
+
   **Cameras (started 2026-10-12)**
   - **DECIDED:** a camera **belongs to a shot**, not to the asset library.
     First test: shot `EAP_010_010` (ShotGrid Shot id 2560, Sequence
