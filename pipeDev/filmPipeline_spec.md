@@ -39,9 +39,12 @@ what each one pulls and publishes differs.
 - The animator runs the **Build Shot tool** (not yet built — nothing in the
   repo does this; `pipeDev/shotSubDev/build_student_shot_projects.py` only
   makes folders).
-- Build Shot knows what the shot contains from a **shot asset list on
-  ShotGrid**. ShotGrid's standard `Shot.assets` multi-entity field (with the
-  reverse `Asset.shots`) can hold this without custom schema.
+- ~~Build Shot knows what the shot contains from a **shot asset list on
+  ShotGrid**~~ — **superseded 2026-10-12:** Build Shot lists **all published
+  assets for the project** and the student picks what the shot needs (see
+  §3i). Why: any shot might need any asset at any time as the film develops,
+  and a per-shot list on ShotGrid is extra data entry and management for no
+  real gain.
 - Example shot: 1 character, 2 props, 1 set, a camera and some lights. Each
   of those is a published asset, pulled from the server onto the animator's
   scratch drive. **Camera and lights are pulled assets** like everything else.
@@ -186,7 +189,8 @@ grouping folders, not projects.
   the repo yet.
 
 **Server vs scratch:** the server ("H drive") holds the whole film folder.
-A student's scratch drive mirrors the same path for whatever they've pulled:
+A student's scratch drive mirrors the same path for whatever they've pulled
+(2026-10-12: superseded, scratch is now a full 1:1 folder mirror, see §3h):
 
 ```
 H:\NWF_SHF\maya\sequences\SEQ010\SEQ010_010\             <- shot project on server (published keyframes + locked replica)
@@ -223,6 +227,149 @@ without a redesign, the first build must follow two rules:
 With those in place, adding the solo mode later is just one setting in the
 Build tool ("pull into this shot's project" vs "pull into my film project").
 The publish tool and shotSub need no changes.
+
+### 3h. Drives and locations — DECIDED (2026-10-12)
+
+RMIT has **no definite server structure** to code against yet, and the
+H-drive setup there may change soon. The pipeline has to stay flexible about
+where each location physically lives.
+
+**First working form: three locations.**
+
+| Location | Role | Who moves work there |
+|---|---|---|
+| **H drive** (server) | Source of truth, as in §1 / §3d | Publish tool |
+| **Scratch drive** | Student's local sandbox, as in §1 / §3e | Build tool (pull from H) |
+| **Portable drive / cloud** (external drive, Dropbox, etc.) | **Portable scratch**: the student takes work home and keeps working on it there | The student, by hand |
+
+- Students **plan what they're working on**, pull the needed assets from the
+  H drive to scratch, then copy from scratch to their portable drive/cloud.
+- Only **scratch work** is copied to the portable location, not the whole
+  project.
+- The tools **don't manage** the portable/cloud copy. Students copy it
+  themselves.
+- Because it acts as portable scratch, it has the same layout as scratch.
+
+**Development / test setups:**
+
+| Setup | Scratch | H drive |
+|---|---|---|
+| Home machine, 2026-10-12 | `D:` (Bean): `D:\NWF_SHF\` | `F:` (One Touch), **today only**: `F:\NWF_SHF\` |
+| RMIT test install | lab scratch drive | lab H drive (setup may change) |
+
+Both `D:\NWF_SHF\` and `F:\NWF_SHF\` were seeded 2026-10-12 as exact copies
+of the full v1 skeleton (2,849 folders, 94 `workspace.mel`), so scratch and
+H drive start with a matching structure. `C:\Users\scout\Dropbox\NWF_SHF\`
+stays as the reference copy.
+
+**Scratch mirrors the H drive 1:1 — DECIDED (2026-10-12).** "We have to
+start somewhere": revisit if it causes problems in practice.
+Scratch holds the **whole film folder structure**, a 1:1 copy of the H
+drive's folders, but only holds **content** (assets, scenes) for what's
+being worked on. E.g. working on `EAP_010_010` → every shot/asset folder
+exists on scratch, but only `EAP_010_010` and its assets have files in them.
+
+- **Why:** keeps the code simpler and the system easier to manage. Paths are
+  identical everywhere, and tools never need to work out which folders to
+  create.
+- **Slow first build is fine.** Laying down the skeleton (~2,850 folders) is
+  slow on a USB drive (4.5 min to One Touch), but it only happens once, on
+  the first build.
+- **Empty folders look like real work.** A student could open or save into a
+  shot they haven't pulled. Accepted for now: students carry some
+  responsibility here.
+- **OPEN — skeleton goes stale.** When shots/assets are added or renamed on
+  the H drive (e.g. `willyWagTail` -> `willieWagtail`), each scratch copy
+  falls out of step. Undecided how to handle this.
+- Note: tech notes §6 says lab scratch drives are wiped every couple of
+  weeks, so at RMIT the "first build" may repeat after each wipe.
+
+**SUGGESTION (not agreed):** drive letters differ between these setups (and
+will at RMIT), so the tools should never hard-code `D:\`/`H:\`. Each location
+(H drive root, scratch root) would be a setting.
+
+### 3i. Tools and build order — DECIDED (2026-10-12)
+
+The tools are developed side by side:
+
+- **Build tool**: pulls H drive → scratch (§3a, §3e). **Active, from 2026-10-12.**
+- **Publish tool**: scratch → H drive, after approval (§3c). **Active, from 2026-10-12.**
+  **Build Shot workflow (DECIDED 2026-10-12, as described by the user):**
+  1. The tool holds a **list of all published assets for the project**
+     (replaces the ShotGrid shot asset list in §3a: no per-shot list to
+     maintain).
+  2. The student picks an asset and **chooses which published version** to
+     pull.
+  3. The tool saves it into the **shot project's own `assets\` folder**,
+     mirroring the asset type/name, under a **fixed, unversioned name**:
+     ```
+     F:\NWF_SHF\maya\assets\prop\backpack\scenes\backpack_model_v001.mb   <- published (H drive)
+     D:\NWF_SHF\maya\sequences\EAP_010\EAP_010_010\assets\prop\backpack\backpack.mb  <- pulled into shot (scratch)
+     ```
+  4. When a new version is published (`backpack_model_v002.mb` on the H
+     drive), the student selects the asset in Build Shot and **updates** it:
+     the tool **overwrites `backpack.mb`** on scratch with the new version.
+  5. So Build Shot **needs to know when a publish has been updated**.
+
+  **Other departments in the shot (DECIDED 2026-10-12):** the model sits at
+  the asset folder's root; a rig publish of the same asset goes in a `rig\`
+  subfolder:
+  ```
+  ...\EAP_010_010\assets\prop\backpack\
+    backpack.mb          <- latest Modeling publish
+    rig\
+      backpack.mb        <- latest Rigging publish
+  ```
+  **Department codes (DECIDED 2026-10-12):** each department has one short
+  code, used everywhere: published filename (`<asset>_<code>_v###`) and the
+  department subfolder in the shot. The tab shows the full label only.
+  Chosen because it will make more sense to students: the same word
+  everywhere.
+
+  | Tab label | Code |
+  |---|---|
+  | Modeling | `model` (exception: sits at the asset folder root in the shot, no `model\` folder) |
+  | Rigging | `rig` |
+  | Previs | `previs` |
+  | Anim | `anim` |
+  | Creature | `creature` |
+  | LookDev | `lookDev` |
+  | FX | `fx` |
+  | Render | `render` |
+
+  e.g. `backpack_model_v001.mb`, `backpack_rig_v001.mb` → shot `rig\backpack.mb`.
+
+  Note: the fixed name means the shot scene's reference path never changes
+  on update. This differs from §3g rule 1 (version in the pulled path), so
+  §3g's solo-mode plan needs revisiting.
+- **shotSub**: already exists; the review loop between build and publish (§3b).
+  **Shape (DECIDED 2026-10-12):** one Publish tool (one shelf button, one
+  window) with a **tab per production stage** (modelling, rigging,
+  animation, ...). Each tab has **its own Publish button** for that
+  department, not one shared button. This replaces the
+  shelf-per-department studio model, which is too much overhead for
+  generalist students. First tab: **modelling**, tested by publishing the
+  `Backpack` prop (ShotGrid Asset id 1577). Tab list/order (starting
+  set, 2026-10-12): **Modeling, Rigging, Previs, Anim, Creature, LookDev,
+  FX, Render**.
+
+  **Where publishes land (DECIDED 2026-10-12):** in the **same folder on
+  the H drive** that the work was done in on scratch. There is no separate
+  `publish\` folder. Scratch holds all the working variations; the H drive
+  holds only published milestones. Version and department go in the
+  filename instead, `<asset>_<department>_v###.<ext>`:
+
+  ```
+  D:\NWF_SHF\maya\assets\prop\backpack\scenes\backPack_wip_012.mb       <- scratch: working
+  F:\NWF_SHF\maya\assets\prop\backpack\scenes\backpack_model_v001.mb <- H drive: published
+  ```
+
+  Note for §3g rule 1: versions still coexist (several `v###` files side
+  by side), just by filename rather than by `v###` folder.
+- **Setup tool**: **keep in mind, not built yet.** Lays down the film
+  folder structure and links it to ShotGrid (the reusable version of the
+  hand-built v1 skeleton; cf. tech notes §14 Class Project Setup Tool).
+  Build and publish must stay compatible with the structure it will create.
 
 ---
 
