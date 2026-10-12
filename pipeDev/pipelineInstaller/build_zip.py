@@ -8,6 +8,7 @@ dev-direct tools, so there is no staged copy to drift), plus the mpPipe
 shelf config and icons, into:
 
     pipeDev/pipelineInstaller/dist/mpPipe.zip      (dist/ and *.zip are gitignored)
+    ~/Dropbox/mpPipe/mpPipe.zip                    (copy, for other machines)
 
 Zip layout (unzip anywhere, drag install.py onto the Maya viewport):
 
@@ -21,6 +22,7 @@ whose zips are published as public GitHub Releases.
 
 import os
 import sys
+import shutil
 import zipfile
 import subprocess
 from datetime import datetime
@@ -37,6 +39,12 @@ SCRIPTS = [
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
 TOP = "mpPipe"
+
+# Each build is also copied here, so the latest is ready to download on
+# another machine (e.g. RMIT) from dropbox.com. Private unless shared.
+# Skipped on machines without Dropbox.
+DROPBOX = os.path.join(os.path.expanduser("~"), "Dropbox")
+COPY_TO = os.path.join(DROPBOX, "mpPipe")
 
 
 def _git_hash():
@@ -76,6 +84,15 @@ def build():
             z.write(src, arc)
         z.writestr(TOP + "/version.txt", version + "\n")
     print("Built %s\n  build %s\n  %d files" % (out, version, len(entries) + 1))
+
+    if os.path.isdir(DROPBOX):
+        os.makedirs(COPY_TO, exist_ok=True)
+        shutil.copy2(out, os.path.join(COPY_TO, "mpPipe.zip"))
+        with open(os.path.join(COPY_TO, "mpPipe_build.txt"), "w") as f:
+            f.write("mpPipe build %s\n" % version)
+        print("Copied to %s" % os.path.join(COPY_TO, "mpPipe.zip"))
+    else:
+        print("No Dropbox folder on this machine; not copied.")
     return out
 
 
