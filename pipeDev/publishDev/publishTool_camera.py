@@ -339,12 +339,14 @@ def find_shotgrid_shot(plan, h_root):
 # One-click camera publish
 # ---------------------------------------------------------------------------
 
-def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=2, notes=""):
+def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, notes=""):
     """ShotGrid lookup -> playblast through the camera -> bake + write both
     files to the H drive -> ShotGrid Version on the Shot.
 
-    Keys are always baked over the whole playback range; frame_count only
-    sets how much of it goes to ShotGrid (None = all of it)."""
+    Shot publishes always use the whole playback range, for the baked keys
+    and the ShotGrid movie alike. frame_count is ignored (kept so callers
+    can pass the asset setting without a special case)."""
+    frame_count = None
     h_root = api.resolve_root(h_root)
     camera = check_camera([camera])
     plan = plan_camera(scene_path, h_root, scratch_root)

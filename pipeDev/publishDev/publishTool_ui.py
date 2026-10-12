@@ -166,7 +166,9 @@ class PublishToolUI(QtWidgets.QDialog):
         self.frames_spin.setRange(1, 10000)
         self.frames_spin.setValue(2)
         self.frames_spin.setToolTip("How many frames to playblast for ShotGrid, "
-                                    "from the start of the playback range.")
+                                    "from the start of the playback range.\n"
+                                    "Asset publishes only: shot publishes (e.g. "
+                                    "Camera) always use the whole timeline.")
         self.timeline_chk = QtWidgets.QCheckBox("Timeline")
         self.timeline_chk.setToolTip("Playblast the whole playback range instead.")
         self.timeline_chk.toggled.connect(lambda on: self.frames_spin.setEnabled(not on))
@@ -174,6 +176,9 @@ class PublishToolUI(QtWidgets.QDialog):
         frames_row.addWidget(QtWidgets.QLabel("ShotSub frames:"))
         frames_row.addWidget(self.frames_spin)
         frames_row.addWidget(self.timeline_chk)
+        shot_note = QtWidgets.QLabel("(shot publishes always use the whole timeline)")
+        shot_note.setStyleSheet("color: #999999;")
+        frames_row.addWidget(shot_note)
         frames_row.addStretch(1)
 
         # Notes go to ShotGrid as a Note on the Version, like shotSub's.
