@@ -294,6 +294,95 @@ The tools are developed side by side:
 
 - **Build tool**: pulls H drive → scratch (§3a, §3e). **Active, from 2026-10-12.**
 - **Publish tool**: scratch → H drive, after approval (§3c). **Active, from 2026-10-12.**
+  **One click publishes (DECIDED 2026-10-12):** for each row in the Publish
+  list, the Publish button (1) makes a **shotSub of the asset**: 2 frames by default, with the
+  option to playblast more; (2) copies the scene to the H drive; (3) sends
+  the shotSub to ShotGrid as a Version on the asset.
+  - The **ShotGrid asset defines the asset**. The asset project folder the
+    student works in (named from the ShotGrid asset, §3f) decides where
+    the publish goes. What the student calls their working files doesn't
+    matter; the tool renames the publish to fit the convention.
+  - Implementation (v0): the folder is matched to the ShotGrid Asset
+    ignoring case/spaces/punctuation (`bakedBeansCan` = `bakedBeans_Can`).
+    The film folder's ShotGrid project comes from `<H>\<FILM>\pipeline.json`
+    (hand-written for NWF_SHF on 2026-10-12; the Setup tool would write it
+    later).
+
+  **ShotGrid asset ID (DECIDED in principle 2026-10-12, not built):**
+  matching folder names to ShotGrid codes on every publish is fragile
+  (renames, look-alike names), so the stable ShotGrid ID goes in two places:
+  1. **In the asset's folder on the H drive:** e.g.
+     `<H>\NWF_SHF\maya\assets\prop\backpack\asset.json` holding the
+     ShotGrid ID, code and type. Tools read the ID instead of matching
+     names. The Setup tool would write these when it creates the folders.
+  2. **In the published asset itself:** a small `publishInfo` node (ShotGrid
+     ID, department, version, source scene...) stamped into every publish.
+     It travels into shots by reference (`backpack:publishInfo`), so a shot
+     knows exactly which asset/version each reference is (needed later
+     for shot publish §3c, and the "rig version on keyframe publishes"
+     idea in §6).
+     - Tested 2026-10-12: a `network` node made in the working scene just
+       for the publish, then deleted, survives both selected-objects and
+       whole-scene exports (.ma and .mb), and reads back through a
+       reference. **No top-group rule needed.** Maya's `fileInfo` was
+       tried first but is dropped by selected-objects exports.
+     - Implies whole-scene publishes become an export of everything
+       instead of a plain file copy.
+  - Not chosen for now: stamping the ID in the *working* scene (so Add to
+    List could pick the asset automatically). That would need a top-group
+    rule.
+
+  **The ID rule (DECIDED 2026-10-12):** only **two kinds of ShotGrid ID**
+  are needed, and both already exist on ShotGrid: **Asset IDs** (one per
+  asset; NWF has 19) and **Shot IDs** (one per shot; NWF has 76, e.g.
+  `EAP_010_010` = 2560). Everything else is identified by combining an ID
+  with the department code and version number. No new ShotGrid entities
+  are needed for cameras, caches or keys, and students never create
+  anything on ShotGrid for the tools to work.
+
+  | Thing | Identified by |
+  |---|---|
+  | Backpack model v002 | Asset 1577 + `model` + v002 |
+  | Shot camera v001 | Shot 2560 + `cam` + v001 |
+  | Scout's anim cache in a shot | Shot 2560 + Scout's Asset ID + `anim` + v004 |
+
+  - **Each thing keeps its own ID.** An asset referenced into a shot still
+    carries its own Asset ID; the shot doesn't re-label it. That's how the
+    same asset can be in many shots, and how the version record (anim
+    publish) knows what each reference is.
+  - **A camera has one ID: its shot's.** It belongs to the shot, so the
+    Shot ID is its identity. No ShotGrid asset for cameras.
+  - **Models and rigs have one ID: their own Asset ID.**
+  - **Anything published from a shot carries two:** the Shot ID (where it
+    goes: the shot folder, and the Version on that Shot) and the Asset ID
+    (what it is, e.g. which character a cache belongs to).
+  - Where IDs live on disk: `asset.json` in each asset folder, `shot.json`
+    in each shot folder (Shot ID, code, sequence). Written once; later the
+    Setup tool's job. The ShotGrid Version made on each publish is a record
+    of the publish, not something the tools look up by.
+
+  **Local publish frames:** once ShotGrid has the Version, the frames/movie
+  made for it are deleted from scratch (kept if the upload failed).
+
+  **Clearing scratch — moved to the Build tool (DECIDED 2026-10-12).** A
+  "Clean Up Scratch" button in the Publish tool was tried and felt too
+  scary: permanent deletion, one click under Publish. Since Build owns what's
+  on scratch (§3e), it also handles taking things off. Build tool has a
+  **My Scratch** tab:
+  - Lists every asset/shot on scratch that holds files, with **size**,
+    **latest publish** and a **status**: *Safe to remove* (nothing changed
+    since the last publish, or only re-pullable copies), *Changed since last
+    publish*, or *Not backed up* (never published; for shots, anything
+    that isn't a pulled asset, since shot publishing isn't built yet).
+  - Removal sends files to the **Recycle Bin** (undoable); folders and
+    `workspace.mel` stay (1:1 mirror). Never touches the H drive.
+  - **Safe:** a normal "Are you sure?" with what goes. **Risky:** lists the
+    files at risk and the student must **type the asset/shot name**.
+  - v0 rule: an asset is only "safe" if every file is a scene in `scenes\`
+    older than its newest publish. Textures etc. aren't published yet, so
+    they always count as at risk. Publish time = the H-drive file's
+    creation time.
+
   **Build Shot workflow (DECIDED 2026-10-12, as described by the user):**
   1. The tool holds a **list of all published assets for the project**
      (replaces the ShotGrid shot asset list in §3a: no per-shot list to
@@ -311,6 +400,26 @@ The tools are developed side by side:
      the tool **overwrites `backpack.mb`** on scratch with the new version.
   5. So Build Shot **needs to know when a publish has been updated**.
 
+  **One click (DECIDED 2026-10-12):** the button is called **Build Shot**.
+  The student picks an **Asset** + **Department** from the H drive and
+  **adds it to the shot's list** (as many as the shot needs); Build Shot
+  then, for every asset in the list, pulls it into the shot's `assets\`
+  folder and **references it into the open scene**, setting the shot as the
+  Maya project first. Already-built assets are updated if a different
+  version is chosen (overwrite + reload), never referenced twice. The
+  version dropdown starts at the version the shot already has, so updating
+  is a deliberate choice, not automatic.
+
+  Implementation (v0, 2026-10-12): the published list comes straight from
+  the H drive's `<asset>_<code>_v###` files (no ShotGrid). Each shot keeps
+  `assets\build_manifest.json` recording the version pulled per
+  asset/department; comparing it with the H drive gives "v002 available".
+  Updating overwrites the fixed-name file and reloads any reference to it in
+  the open scene. "Reference into Open Scene" stores the project-relative
+  path when the shot is the current Maya project (§3g rule 2). Known gap:
+  if a department switches `.mb` ↔ `.ma` between versions, the fixed name
+  changes and references need re-pointing (the tool warns).
+
   **Other departments in the shot (DECIDED 2026-10-12):** the model sits at
   the asset folder's root; a rig publish of the same asset goes in a `rig\`
   subfolder:
@@ -322,11 +431,11 @@ The tools are developed side by side:
   ```
   **Department codes (DECIDED 2026-10-12):** each department has one short
   code, used everywhere: published filename (`<asset>_<code>_v###`) and the
-  department subfolder in the shot. The tab shows the full label only.
+  department subfolder in the shot. The tools' Department menus show the full label only.
   Chosen because it will make more sense to students: the same word
   everywhere.
 
-  | Tab label | Code |
+  | Label | Code |
   |---|---|
   | Modeling | `model` (exception: sits at the asset folder root in the shot, no `model\` folder) |
   | Rigging | `rig` |
@@ -344,14 +453,20 @@ The tools are developed side by side:
   §3g's solo-mode plan needs revisiting.
 - **shotSub**: already exists; the review loop between build and publish (§3b).
   **Shape (DECIDED 2026-10-12):** one Publish tool (one shelf button, one
-  window) with a **tab per production stage** (modelling, rigging,
-  animation, ...). Each tab has **its own Publish button** for that
-  department, not one shared button. This replaces the
-  shelf-per-department studio model, which is too much overhead for
-  generalist students. First tab: **modelling**, tested by publishing the
-  `Backpack` prop (ShotGrid Asset id 1577). Tab list/order (starting
-  set, 2026-10-12): **Modeling, Rigging, Previs, Anim, Creature, LookDev,
-  FX, Render**.
+  window), replacing the shelf-per-department studio model, which is too
+  much overhead for generalist students. Department list/order:
+  **Modeling, Rigging, Previs, Anim, Creature, LookDev, FX, Render**.
+  - ~~A tab per department, each with its own Publish button~~ —
+    superseded the same day: the Publish tool now uses the **Build tool's
+    layout** as its template. Pick an **Asset** + **Department**, **add it
+    to a list**; each row is one publish with its own objects (empty =
+    whole scene). **Add to List takes whatever is selected in Maya** as
+    that row's objects (nothing selected = whole scene). One **Publish** click publishes every row, one ShotGrid
+    Version each, so several assets can come out of one scene.
+  - Live departments (v0): Modeling, Rigging, Creature, LookDev (all
+    publish an asset scene the same way). Previs, Anim, FX, Render are
+    shot work, shown "coming soon" until shot publishing exists.
+  - First test: the `Backpack` prop (ShotGrid Asset id 1577).
 
   **Where publishes land (DECIDED 2026-10-12):** in the **same folder on
   the H drive** that the work was done in on scratch. There is no separate
@@ -366,6 +481,122 @@ The tools are developed side by side:
 
   Note for §3g rule 1: versions still coexist (several `v###` files side
   by side), just by filename rather than by `v###` folder.
+
+  **Namespaces (DECIDED 2026-10-12)**: names were stacking up, e.g.
+  `backpack1:backpack:backPack_previs_001`: `backpack1:` from Build Shot
+  (a clash) and `backpack:` baked into v002 because the working scene had
+  it. Rules:
+  - **Published files never carry a namespace.** Publish takes them off
+    in the published file only: namespaced nodes are renamed for the
+    moment of export, then every name is put back by node UUID, so the
+    working scene ends unchanged. Nothing is deleted or merged. The status
+    line says which namespaces were taken off. A whole-scene publish with
+    namespaces is exported; a clean one is still copied. Name clashes
+    while stripping get Maya's usual number (`lambert7` → `lambert8`).
+  - **Build Shot always uses the clean namespace** (`backpack:`). An empty
+    leftover namespace is removed first. One still holding nodes is
+    explained ("already used in this scene by ..."), never turned into
+    `backpack1:`. An existing reference under another namespace (shots
+    built before this rule) is moved to the clean one when it's free;
+    keys on it survive, including save + reopen.
+
+  **Cameras (started 2026-10-12)**
+  - **DECIDED:** a camera **belongs to a shot**, not to the asset library.
+    First test: shot `EAP_010_010` (ShotGrid Shot id 2560, Sequence
+    `EAP_010`).
+  - **DECIDED: camera and keys are stored separately.** Two files per
+    camera publish: the camera (all its settings, no keys) and its keys
+    (baked curves plus a small map of which curve drives which attribute).
+    Build Shot references the camera, then imports the keys and connects
+    them, in one click.
+  - **DECIDED: keys are baked before publishing** (a key every frame) so
+    the curve shape survives whatever made it: rig parents, constraints,
+    tangents, expressions. Every animated or driven attribute on the camera
+    shape is found automatically and baked, not from a hand-made list (e.g.
+    focal length, film offset, locator scale).
+  - **DECIDED: all camera data is captured**: film back, film fit,
+    overscan, gates, display options, clip planes, etc. These travel in the
+    camera file because they belong to the camera node.
+  - **DECIDED: no scale on cameras.** The published camera is always scale
+    1 with no scale keys, and the scale channels are locked, because camera
+    scale breaks Arnold renders. Rig parent scale is not carried over;
+    position and rotation are baked in world space.
+  - Prototype test (2026-10-12, mayapy, not in the tools yet): a camera
+    under a ×2-scaled, rotating rig, aim-constrained, with spline keys,
+    keyed focal length / film offsets / locator scale, an expression on
+    camera scale, and non-default film back and display settings. It was
+    baked, split into `EAP_010_010_cam_v001.ma` +
+    `EAP_010_010_camAnim_v001.ma`/`.json`, and rebuilt in a fresh scene.
+    World position and rotation plus 148 shape attributes matched on all
+    48 frames; scale was 1 and locked.
+  - **v0 built (2026-10-12)**: `publishDev/publishTool_camera.py` + Publish
+    UI + Build tool. Choices made to get it testable (not yet agreed):
+    department **Camera**, code `cam`, offered only when the open scene is
+    a shot scene; keys baked over the playback range (the ShotSub frames
+    setting only affects ShotGrid); both files always `.ma`; one version
+    number covers camera + keys; ~~in the shot the camera is
+    `assets\camera\cam.ma` referenced as `cam:shotCam`~~ (superseded, see
+    below); ShotGrid Version on the Shot by name match (until
+    `shot.json`). Checks: a Camera row takes exactly one camera (not
+    persp/top/front/side); an asset row refuses anything containing a
+    camera. Camera Scale ≠ 1 gives a warning, not a change. Image planes
+    and anything parented under the camera are left out.
+    Tested end to end on throwaway drives (ShotGrid stubbed), 28 checks:
+    v001 + v002 published; Build Shot matches the layout camera every
+    frame, survives save + reopen, no double reference on rebuild, roll
+    back to v001 works with no leftover curves.
+  - **DECIDED: in the shot the camera is live, not referenced.** Build
+    Shot imports it, always named **`camera1`** (shape `cameraShape1`),
+    and connects its keys. An existing `camera1` is renamed
+    **`camera1_old`** first (then `camera1_old1`, ...); nothing is
+    deleted. A camera from before this change (referenced `cam:shotCam`)
+    is made live and renamed the same way.
+  - **DECIDED: the camera is locked** so an animator can't edit its keys by
+    accident. Tested 2026-10-12: locking only the channels is NOT enough,
+    because the Graph Editor can still move keys. So the build locks
+    three things: every keyable channel on camera1 and its shape, the
+    curves' key data, and the curve nodes. All accidental edits were
+    blocked (Graph Editor move, set key, delete keys, delete curve, typing
+    a value), the camera still plays, and the locks survive save + reopen.
+    camera1 is stamped `pipeShot` / `pipeCameraVersion`, which is how a
+    rebuild knows it's already up to date.
+  - Tested end to end (44 checks, throwaway drives): including a student's
+    own camera1 moved to camera1_old with its keys, rollback keeping the
+    previous camera as camera1_old1 (still protected), and an old
+    referenced camera converted.
+  - OPEN: image planes (frame offset); whether a hand-edited key in the
+    shot should be overwritten or warned about when keys are updated; the
+    shape's `cameraScale` attribute (different from transform scale).
+  - OPEN: which scene it's published from (previs/layout shot scene?);
+    file format (`.ma` now, Alembic/FBX later?); department/code (`cam`?
+    `previs`?). If it's
+    published from a shot scene, the Publish tool needs to learn shot
+    scenes, and the ShotGrid Version goes on the Shot, not an Asset.
+  - SUGGESTION: it lands in the shot's own `scenes\` on the H drive, e.g.
+    `F:\NWF_SHF\maya\sequences\EAP_010\EAP_010_010\scenes\EAP_010_010_cam_v001.ma`,
+    following "same folder as the work" above. Not agreed yet.
+  **Animation publish (started 2026-10-12)**
+  - **DECIDED: an anim publish hands on everything:** baked keys per
+    character/prop, Alembic caches per character/prop, the camera keys,
+    and the whole animation scene.
+  - **DECIDED: every anim publish records the exact version of every asset
+    used in the shot** (rigs, props, sets, camera), so that if an update
+    breaks something, the shot can be rolled back.
+  - SUGGESTION (not agreed): the tool knows what each thing in the scene
+    is from where it came from. Everything arrived by Build Shot as a
+    stamped reference (`publishInfo`), so a **Scan Scene** fills the
+    publish list automatically: rig → that character's anim in this shot;
+    camera → the shot camera keys; anything unstamped is flagged
+    "Unknown, not from Build Shot" for the student to decide. Destination
+    is always the shot.
+  - SUGGESTION (not agreed): the version record is read from the stamps
+    actually in the scene (the truth), cross-checked against
+    `build_manifest.json`, and saved next to the publish on the H drive
+    (e.g. `EAP_010_010_anim_v004.json`) and in the ShotGrid Version's
+    notes. Build Shot gets a "Restore versions from…" option that re-pulls
+    exactly those versions. This only works if published versions on the
+    H drive are never deleted or overwritten (already read-only).
+
 - **Setup tool**: **keep in mind, not built yet.** Lays down the film
   folder structure and links it to ShotGrid (the reusable version of the
   hand-built v1 skeleton; cf. tech notes §14 Class Project Setup Tool).
