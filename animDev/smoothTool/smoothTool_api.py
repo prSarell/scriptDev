@@ -986,25 +986,27 @@ class FaceSmoothCore:
     # ------------------------------------------------------------------
 
     def bake(self, to_layer=True, additive=True):
-        """Bake the smoothed/blended channels onto each target, each
-        getting its own uniquely-named anim layer (if enabled) since
-        different controls need independent layers for their own subset
-        of channels."""
+        """Bake the smoothed/blended channels onto every target. With
+        to_layer, all of them go on ONE shared anim layer: a layer can
+        hold any mix of attributes from any number of controls, so each
+        control's own free channels are simply added to it."""
         cmds.undoInfo(openChunk=True, chunkName='FaceSmooth_Bake')
         try:
-            for t in self.targets:
-                layer_name = None
-                if to_layer:
-                    layer_name = '{}_smooth'.format(t)
-                    idx = 1
-                    while cmds.animLayer(layer_name, q=True, exists=True):
-                        layer_name = '{}_smooth_{}'.format(t, idx)
-                        idx += 1
-                    layer_name = cmds.animLayer(layer_name, override=not additive)
+            layer_name = None
+            if to_layer and self.targets:
+                base = 'faceSmooth'
+                layer_name = base
+                idx = 1
+                while cmds.animLayer(layer_name, q=True, exists=True):
+                    layer_name = '{}_{}'.format(base, idx)
+                    idx += 1
+                layer_name = cmds.animLayer(layer_name, override=not additive)
+                for t in self.targets:
                     for a in self.channels[t]:
                         cmds.animLayer(layer_name, e=True,
                                        attribute='{}.{}'.format(t, a))
 
+            for t in self.targets:
                 for i, frame in enumerate(self.frames):
                     for a in self.channels[t]:
                         val = self.blended[t][a][i]
