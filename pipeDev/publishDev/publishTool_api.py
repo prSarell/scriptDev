@@ -111,13 +111,46 @@ def _same_path(a, b):
 def check_roots(h_root, scratch_root):
     """Both locations set, both exist, and not the same place."""
     for name, path in (("H drive", h_root), ("Scratch drive", scratch_root)):
-        if not path or not os.path.isdir(path):
-            raise PublishError("%s not found: %r\nSet the %s location first."
-                               % (name, path, name))
+        if not path:
+            raise PublishError("The %s location isn't set yet.\nSet it at the top of "
+                               "the tool (Browse...)." % name)
+        if not os.path.isdir(path):
+            # Students move between classrooms, so a saved drive may not
+            # exist on this machine (spec "Scratch drive follows the work").
+            raise PublishError(
+                "The %s is set to %s, but that isn't on this machine.\n"
+                "Pick where the %s is on this machine (Browse...), or open a "
+                "scene from your scratch drive and the tool will follow it."
+                % (name, path, name))
     if _same_path(h_root, scratch_root):
         raise PublishError(
             "The H drive and scratch drive are set to the same place (%s)."
             % h_root)
+
+
+def follow_open_scene(h_root, scratch_root):
+    """The scratch drive follows the work (spec §3i "Scratch drive follows
+    the work"): students move between classrooms and machines, so the drive
+    a scene was opened from beats the saved setting.
+
+    If the open scene is inside a film folder that isn't on the H drive,
+    and its drive differs from scratch_root, save that drive as the scratch
+    setting and return it. Otherwise return None (keep using scratch_root:
+    no scene open -> the saved setting; saved drive missing -> check_roots
+    explains)."""
+    scene = cmds.file(query=True, sceneName=True) or ""
+    if not scene:
+        return None
+    try:
+        root, _ = find_film_folder(scene)
+    except PublishError:
+        return None
+    if (h_root and _same_path(root, h_root)) or (scratch_root and _same_path(root, scratch_root)):
+        return None
+    if not os.path.isdir(root):
+        return None
+    set_root(SCRATCH, root)
+    return os.path.normpath(root)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +338,65 @@ class _NoNamespaces(object):
         return False
 
 
+# Every rig publish must contain this set, made by hand by the rigger: it
+# names the geometry a shot publish caches (spec §4 "What an animation
+# publish puts out" -> cache_SET).
+CACHE_SET = "cache_SET"
+RIG_CODE = "rig"
+GEOMETRY_TYPES = ("mesh", "nurbsSurface", "subdiv")
+
+
+def _under(node, roots):
+    """True if node is one of roots or below one of them."""
+    path = (cmds.ls(node, long=True) or [""])[0]
+    for root in roots:
+        root_path = (cmds.ls(root, long=True) or [""])[0]
+        if root_path and (path == root_path or path.startswith(root_path + "|")):
+            return True
+    return False
+
+
+def check_cache_set(objects):
+    """A Rigging publish needs exactly one cache_SET (made by the rigger,
+    never by the tool) holding geometry, all of it inside what's being
+    published. Returns the set's name; raises PublishError explaining what
+    to fix."""
+    how = ("\n\nRig publishes need a %s: an object set listing the geometry a "
+           "shot publish will cache. Create it by hand (select the render "
+           "geometry, Create > Sets > Set, name it %s), then publish again."
+           % (CACHE_SET, CACHE_SET))
+    sets = [s for s in cmds.ls(type="objectSet") or []
+            if s.split(":")[-1] == CACHE_SET
+            and not cmds.referenceQuery(s, isNodeReferenced=True)]
+    if not sets:
+        raise PublishError("This rig has no %s." % CACHE_SET + how)
+    if len(sets) > 1:
+        raise PublishError("This scene has more than one %s (%s). Keep just one."
+                           % (CACHE_SET, ", ".join(sets)))
+    cache_set = sets[0]
+    members = cmds.sets(cache_set, query=True) or []
+    if not members:
+        raise PublishError("%s is empty. Add the geometry to cache to it." % cache_set + how)
+    geometry = []
+    for m in members:
+        if cmds.nodeType(m) in GEOMETRY_TYPES:
+            geometry.append(m)
+        else:
+            geometry += cmds.listRelatives(m, allDescendents=True, fullPath=True,
+                                           type=GEOMETRY_TYPES) or []
+    if not geometry:
+        raise PublishError("%s has no geometry in it (only %s). Add the meshes to cache."
+                           % (cache_set, ", ".join(members[:5])) + how)
+    if objects:
+        outside = [m for m in members if not _under(m, objects)]
+        if outside:
+            raise PublishError(
+                "%s holds things that aren't in this publish: %s\n"
+                "Publish the whole rig (or include them), or take them out of the set."
+                % (cache_set, ", ".join(outside[:5])))
+    return cache_set
+
+
 def export_to_h_drive(objects, plan):
     """Export only the given objects (and their children) to plan['dest'].
     objects empty = the whole scene. Published files never carry a
@@ -323,6 +415,9 @@ def export_to_h_drive(objects, plan):
         with _NoNamespaces() as clean:
             if objects:
                 cmds.select(cmds.ls(uuids), replace=True)
+                if plan.get("cache_set_uuid"):
+                    # The set itself, not its members (a rig's cache_SET).
+                    cmds.select(cmds.ls(plan["cache_set_uuid"]), add=True, noExpand=True)
                 cmds.file(plan["dest"], exportSelected=True, type=file_type,
                           constructionHistory=True, channels=True, constraints=True,
                           expressions=True, shader=True, preserveReferences=True,
@@ -463,6 +558,52 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
 # One-click publish
 # ---------------------------------------------------------------------------
 
+def scene_audio(start_frame):
+    """(audio file, offset in seconds) for the publish movie, or (None, 0.0).
+
+    Lip sync needs sound in the review movie (spec §4 "Final publish movie
+    for the edit"), so it works the way shotSub does: the sound shown on
+    Maya's time slider, offset so it lines up with the first playblast
+    frame. Without the time slider (headless, later a farm), a scene with
+    exactly one sound node uses that one."""
+    node = None
+    if not cmds.about(batch=True):
+        try:
+            import maya.mel as mel
+            slider = mel.eval("$tmpVar=$gPlayBackSlider")
+            node = cmds.timeControl(slider, query=True, sound=True) if slider else None
+        except Exception:
+            node = None
+    if not node:
+        sounds = cmds.ls(type="audio") or []
+        node = sounds[0] if len(sounds) == 1 else None
+    if not node:
+        return None, 0.0
+    path = cmds.getAttr(node + ".filename") or ""
+    if path and not os.path.isabs(path):
+        path = cmds.workspace(expandName=path)
+    if not os.path.isfile(path):
+        return None, 0.0
+    offset_frames = cmds.getAttr(node + ".offset")
+    return path, (offset_frames - start_frame) / _scene_fps()
+
+
+def upload_with_audio(sg, plan, audio_path, audio_offset, *args, **kwargs):
+    """upload_playblast with the sound added when there is one. An older
+    installed shotgridConnect (before shotSub's audio support) doesn't take
+    audio: publish without it and warn, rather than failing the upload."""
+    if audio_path:
+        import inspect
+        params = inspect.signature(sg.upload_playblast).parameters
+        if "audio_path" in params:
+            kwargs.update(audio_path=audio_path, audio_offset_seconds=audio_offset)
+        else:
+            plan.setdefault("warnings", []).append(
+                "The ShotGrid movie has no sound: this machine's shotgridConnect is "
+                "older than shotSub's audio support. Reinstall mpToolSet to fix.")
+    return sg.upload_playblast(*args, **kwargs)
+
+
 def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
             objects=None, target=None):
     """Playblast -> H drive -> ShotGrid Version on the Asset.
@@ -478,6 +619,10 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     h_root = resolve_root(h_root)
     plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
     plan["objects"] = list(objects or [])
+    if code == RIG_CODE:
+        # Checked before anything is made or uploaded.
+        plan["cache_set"] = check_cache_set(plan["objects"])
+        plan["cache_set_uuid"] = cmds.ls(plan["cache_set"], uuid=True)[0]
     plan["sg_asset"] = find_shotgrid_asset(plan, h_root)
     plan["frames_folder"], files = playblast_frames(plan, frame_count, plan["objects"])
 
@@ -505,8 +650,10 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
+    plan["audio"], audio_offset = scene_audio(int(cmds.playbackOptions(query=True, minTime=True)))
     try:
-        plan["sg_version"] = _shotgrid().upload_playblast(
+        plan["sg_version"] = upload_with_audio(
+            _shotgrid(), plan, plan["audio"], audio_offset,
             "Asset", plan["sg_asset"]["id"], plan["frames_folder"],
             files=files, notes=note, fps=_scene_fps(), rvio_path=rvio,
             machine_diagnostic=plan["movie_warning"])

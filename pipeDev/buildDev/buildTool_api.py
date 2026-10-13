@@ -9,8 +9,10 @@ Design: pipeDev/filmPipeline_spec.md §3e (Build owns scratch), §3h
 scratch management).
 
     H drive  F:\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\backpack_model_v002.ma
-    shot     D:\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\assets\\prop\\backpack\\backpack.ma
-    rig      ...\\assets\\prop\\backpack\\rig\\backpack.ma
+    scratch  D:\\NWF_SHF\\maya\\publish\\assets\\prop\\backpack\\scenes\\backpack_model_v002.ma
+             (one copy per version, shared by every shot; each shot's
+             assets\\build_manifest.json records the version it uses)
+    camera   ...\\sequences\\EAP_010\\EAP_010_010\\assets\\camera\\cam.ma  (stays in its shot)
 
 Shares drive settings, department codes and film-folder helpers with the
 Publish tool (pipeDev/publishDev/publishTool_api.py).
@@ -34,6 +36,7 @@ if os.path.isdir(_PUBLISH_DIR) and _PUBLISH_DIR not in sys.path:
 
 import publishTool_api as pub
 from publishTool_api import PublishError as BuildError   # same "student can fix" error
+import pipeEnv                                            # $PIPE_SCRATCH reference paths
 
 MANIFEST_NAME = "build_manifest.json"   # in <shot>/assets/, records what was pulled
 KEEP_FILES = ("workspace.mel",)          # never removed from scratch
@@ -169,18 +172,48 @@ def publish_time(path):
 
 
 # ---------------------------------------------------------------------------
-# Pulling into a shot
+# Pulling into the shared publish folder on scratch (spec §3i "One shared
+# publish folder on scratch"): one copy per version, used by every shot
 # ---------------------------------------------------------------------------
 
-def pulled_rel_path(asset_type, asset, code, ext):
-    """Where a department's copy lives inside the shot project, relative to
-    the shot root. Modeling sits at the asset folder root; every other
-    department gets its own subfolder (§3i)."""
+PUBLISH_FOLDER = "publish"      # <scratch>/<film>/maya/publish, mirrors the H drive's maya/
+
+
+def maya_dir_of_shot(shot_dir):
+    """<root>/<film>/maya for a shot folder <root>/<film>/maya/sequences/<seq>/<shot>."""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.normpath(shot_dir))))
+
+
+def publish_dir(maya_dir):
+    return os.path.join(maya_dir, PUBLISH_FOLDER)
+
+
+def _maya_rel(h_path):
+    """The part of an H-drive path below <film>/maya, e.g.
+    'assets/prop/backpack/scenes/backpack_model_v002.ma'."""
+    _, rel = pub.find_film_folder(h_path)
+    if len(rel) < 3 or rel[1] != "maya":
+        raise BuildError("Not inside a film's maya folder: %s" % h_path)
+    return "/".join(rel[2:])
+
+
+def legacy_rel_path(asset_type, asset, code, ext):
+    """Where Build Shot used to copy an asset inside the shot (fixed name,
+    before the shared publish folder). Only used to find and repoint old
+    references."""
     parts = ["assets", asset_type, asset]
     if code != "model":
         parts.append(code)
     parts.append(asset + ext)
     return "/".join(parts)
+
+
+def entry_path(shot_dir, entry):
+    """Full path of what a manifest entry points at: the shared publish
+    folder for assets, the shot itself for cameras (and old entries)."""
+    if entry.get("shared"):
+        return os.path.join(publish_dir(maya_dir_of_shot(shot_dir)), *entry["shared"].split("/"))
+    return os.path.join(shot_dir, *entry["file"].split("/"))
 
 
 def _manifest_path(shot_dir):
@@ -207,58 +240,96 @@ def manifest_key(asset_type, asset, code):
     return "%s/%s/%s" % (asset_type, asset, code)
 
 
+def copy_published(source, maya_dir):
+    """Copy one published file from the H drive into the shared publish
+    folder under the same path and name, unless an identical copy is
+    already there. Read-only, like the publish. Returns (dest, copied)."""
+    dest = os.path.join(publish_dir(maya_dir), *_maya_rel(source).split("/"))
+    if os.path.isfile(dest) and os.path.getsize(dest) == os.path.getsize(source):
+        return dest, False
+    if not os.path.isdir(os.path.dirname(dest)):
+        os.makedirs(os.path.dirname(dest))
+    if os.path.isfile(dest):
+        os.chmod(dest, stat.S_IWRITE)
+    shutil.copy2(source, dest)
+    os.chmod(dest, stat.S_IREAD)
+    return dest, True
+
+
 def pull(shot_dir, published, version):
-    """Copy one published version into the shot under its fixed name,
-    overwriting what's there (that's how an update works). Records it in
-    the shot's manifest. Returns (dest_path, warning or None)."""
+    """Make sure one published version is in the shared publish folder and
+    record that this shot uses it. Other shots' versions are untouched.
+    Returns the path in the publish folder."""
     if version not in published["versions"]:
         raise BuildError("v%03d of %s %s isn't on the H drive."
                          % (version, published["asset"], published["code"]))
     source = published["versions"][version]
-    ext = os.path.splitext(source)[1].lower()
-    rel = pulled_rel_path(published["asset_type"], published["asset"], published["code"], ext)
-    dest = os.path.join(shot_dir, *rel.split("/"))
-    if not os.path.isdir(os.path.dirname(dest)):
-        os.makedirs(os.path.dirname(dest))
+    dest, _ = copy_published(source, maya_dir_of_shot(shot_dir))
 
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     manifest = read_manifest(shot_dir)
-    warning = None
-    previous = manifest.get(key)
-    if previous and previous.get("file") != rel:
-        # e.g. v001 was .mb, v002 is .ma: the fixed name changes, so any
-        # reference to the old file won't pick this version up.
-        warning = ("The file type changed (%s -> %s), so scenes referencing "
-                   "the old file need re-pointing." % (previous.get("file"), rel))
-        old = os.path.join(shot_dir, *previous["file"].split("/"))
-        if os.path.isfile(old):
-            os.chmod(old, stat.S_IWRITE)
-            os.remove(old)
-
-    if os.path.isfile(dest):
-        os.chmod(dest, stat.S_IWRITE)
-    shutil.copy2(source, dest)
-    os.chmod(dest, stat.S_IWRITE)   # a working copy on scratch, not a locked publish
-
     manifest[key] = {
         "version": version,
-        "file": rel,
+        "shared": _maya_rel(source),
         "source": source,
         "pulled": datetime.now().isoformat(timespec="seconds"),
     }
     _write_manifest(shot_dir, manifest)
-    return dest, warning
+    return dest
+
+
+def scene_references():
+    """[(reference node, path as written, full path, resolved path)] for
+    the open scene's top-level references, loaded or not, including ones
+    whose file is missing. 'As written' is exactly what the scene stores
+    (e.g. '$PIPE_SCRATCH/NWF_SHF/...'); 'full path' is that with the
+    variable and any project-relative part filled in."""
+    found = []
+    for node in cmds.ls(type="reference") or []:
+        if node == "sharedReferenceNode" or "_UNKNOWN_REF_NODE_" in node:
+            continue
+        try:
+            if cmds.referenceQuery(node, parent=True, referenceNode=True):
+                continue    # nested: it comes with its parent's file
+            written = cmds.referenceQuery(node, filename=True, unresolvedName=True,
+                                          withoutCopyNumber=True)
+            resolved = cmds.referenceQuery(node, filename=True, withoutCopyNumber=True)
+        except RuntimeError:
+            continue
+        found.append((node, written, _absolute(written), _absolute(resolved)))
+    return found
+
+
+def _absolute(path):
+    """Fill in $PIPE_SCRATCH, and resolve project-relative reference paths
+    (e.g. 'assets/prop/backpack/backpack.ma', as older builds wrote them)
+    against the current Maya project."""
+    path = os.path.expandvars(path) if path else path
+    if path and not os.path.isabs(path):
+        workspace = cmds.workspace(query=True, rootDirectory=True) or ""
+        return os.path.normpath(os.path.join(workspace, path))
+    return path
 
 
 def referenced_nodes(path):
     """Reference nodes in the open scene that point at path."""
     target = os.path.normcase(os.path.normpath(path))
-    nodes = []
-    for ref_file in cmds.file(query=True, reference=True) or []:
-        resolved = cmds.referenceQuery(ref_file, filename=True, withoutCopyNumber=True)
-        if os.path.normcase(os.path.normpath(resolved)) == target:
-            nodes.append(cmds.referenceQuery(ref_file, referenceNode=True))
-    return nodes
+    return [node for node, _, full, resolved in scene_references()
+            if target in (os.path.normcase(os.path.normpath(resolved)),
+                          os.path.normcase(os.path.normpath(full)))]
+
+
+def written_path(ref_node):
+    """The reference's path exactly as the scene stores it."""
+    return cmds.referenceQuery(ref_node, filename=True, unresolvedName=True,
+                               withoutCopyNumber=True)
+
+
+def repoint_reference(ref_node, path):
+    """Swap a reference to another file ("Replace Reference"). Keys and
+    other changes made on top of it carry over where node names match.
+    path may use $PIPE_SCRATCH."""
+    cmds.file(path, loadReference=ref_node)
 
 
 def reload_references_to(path):
@@ -276,40 +347,159 @@ def namespace_for(asset, code):
     return asset if code == "model" else "%s_%s" % (asset, code)
 
 
+def _old_paths(shot_dir, published, entry):
+    """Files an existing reference to this asset might point at: the
+    version the shot had, and the fixed-name copy Build Shot used to keep
+    inside the shot (so old scenes get repointed too)."""
+    paths = [entry_path(shot_dir, entry)] if entry else []
+    for ext in (".ma", ".mb"):
+        paths.append(os.path.join(shot_dir, *legacy_rel_path(
+            published["asset_type"], published["asset"], published["code"], ext).split("/")))
+    return paths
+
+
 def build_asset(shot_dir, published, version):
-    """One click for one asset: pull it into the shot if it isn't there (or
-    a different version is wanted), then make sure the open scene references
-    it, reloading if the file was just updated. Never references twice.
-    Returns (list of what was done, warning or None)."""
+    """One click for one asset: make sure the chosen version is in the
+    shared publish folder, then make sure the open scene references it.
+    A reference to another version (or to an old copy in the shot) is
+    repointed, never referenced twice. Only this shot changes.
+
+    Returns (list of what was done, warning or None, replaced) where
+    replaced is the path of a version this shot no longer uses, or None."""
     if published.get("kind") == "camera":
-        return build_camera(shot_dir, published, version)
+        done, warning = build_camera(shot_dir, published, version)
+        return done, warning, None
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    namespace = namespace_for(published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
-    current = os.path.join(shot_dir, *entry["file"].split("/")) if entry else None
-    done, warning = [], None
+    previous = entry_path(shot_dir, entry) if entry else None
+    done = []
 
-    if not entry or entry["version"] != version or not os.path.isfile(current):
-        dest, warning = pull(shot_dir, published, version)
-        done.append(("updated to v%03d" if entry else "pulled v%03d") % version)
-        pulled = True
-    else:
-        dest, pulled = current, False
+    restored = bool(entry and entry["version"] == version and entry.get("shared")
+                    and not os.path.isfile(previous))
+    dest = pull(shot_dir, published, version)
+    if not entry:
+        done.append("pulled v%03d" % version)
+    elif entry["version"] != version:
+        done.append("v%03d -> v%03d" % (entry["version"], version))
+    elif restored:
+        done.append("v%03d pulled again (it was missing)" % version)
+    replaced = previous if previous and not pub._same_path(previous, dest) else None
 
-    if referenced_nodes(dest):
-        old_ns = use_clean_namespace(dest, namespace_for(published["asset"], published["code"]))
+    # References are written with $PIPE_SCRATCH so the shot opens from any
+    # drive (spec "Reference paths that work on any drive"). Point the
+    # variable at this shot's drive first.
+    pipeEnv.set_from_path(shot_dir)
+    ref_path = pipeEnv.to_var_path(dest)
+
+    nodes = referenced_nodes(dest)
+    if nodes:
+        old_ns = use_clean_namespace(dest, namespace)
         if old_ns:
-            done.append("renamed %s: to %s:" % (old_ns, namespace_for(published["asset"],
-                                                                     published["code"])))
-        if pulled:
+            done.append("renamed %s: to %s:" % (old_ns, namespace))
+        rewritten = False
+        for node in nodes:
+            if not pipeEnv.uses_var(written_path(node)) and pipeEnv.uses_var(ref_path):
+                repoint_reference(node, ref_path)   # full D:\... path -> $PIPE_SCRATCH
+                rewritten = True
+        if rewritten:
+            done.append("reference path made drive-independent")
+        elif restored:
             reload_references_to(dest)
             done.append("reloaded in scene")
-        elif not old_ns:
+        if not done:
             done.append("already up to date")
-    else:
-        rel = read_manifest(shot_dir)[key]["file"]
-        reference_into_scene(shot_dir, rel, namespace_for(published["asset"], published["code"]))
-        done.append("referenced into scene")
-    return done, warning
+        return done, None, replaced
+
+    for path in _old_paths(shot_dir, published, entry):
+        nodes = referenced_nodes(path)
+        if nodes:
+            for node in nodes:
+                repoint_reference(node, ref_path)
+            use_clean_namespace(dest, namespace)
+            done.append("scene reference switched to v%03d" % version)
+            return done, None, replaced
+
+    reference_into_scene(ref_path, namespace)
+    done.append("referenced into scene")
+    return done, None, replaced
+
+
+def shots_using(maya_dir):
+    """{full path of a pulled version: [shot, ...]} from every shot's
+    build manifest under one film's maya folder on scratch."""
+    used = {}
+    seq_dir = os.path.join(maya_dir, "sequences")
+    if not os.path.isdir(seq_dir):
+        return used
+    for seq in os.listdir(seq_dir):
+        for shot in os.listdir(os.path.join(seq_dir, seq)) if os.path.isdir(
+                os.path.join(seq_dir, seq)) else []:
+            shot_dir = os.path.join(seq_dir, seq, shot)
+            for entry in read_manifest(shot_dir).values():
+                if entry.get("shared"):
+                    path = os.path.normcase(os.path.normpath(entry_path(shot_dir, entry)))
+                    used.setdefault(path, []).append(shot)
+    return used
+
+
+def unused_versions(paths, maya_dir):
+    """The paths (pulled versions in the publish folder) that no shot's
+    manifest uses and the open scene doesn't reference."""
+    used = shots_using(maya_dir)
+    in_scene = set(os.path.normcase(os.path.normpath(r)) for _, _, _, r in scene_references())
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.normpath(path))
+        if os.path.isfile(path) and key not in used and key not in in_scene \
+                and key.startswith(os.path.normcase(publish_dir(maya_dir)) + os.sep):
+            result.append(path)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Repair: pull back anything the open scene references that's missing
+# ---------------------------------------------------------------------------
+
+def repair_scene(h_root):
+    """For every reference in the open scene whose file is missing: if it
+    points into a publish folder on scratch, copy that exact version back
+    from the H drive and load it. Old in-shot copies can't be repaired
+    this way (their version isn't known): Build Shot repoints those.
+
+    Returns (fixed, not_fixed) as lists of messages."""
+    fixed, not_fixed = [], []
+    for node, written, full, resolved in scene_references():
+        path = resolved if os.path.isfile(resolved) else full
+        if os.path.isfile(path):
+            continue
+        if pipeEnv.uses_var(written) and not pipeEnv.current():
+            not_fixed.append("%s: %s isn't set, so this scene can't tell which drive to "
+                             "look on. Is mpPipe installed? Reopen the scene after "
+                             "installing." % (os.path.basename(written), pipeEnv.VAR))
+            continue
+        name = os.path.basename(path)
+        try:
+            root, rel = pub.find_film_folder(path)
+        except BuildError:
+            not_fixed.append("%s: not in a film folder, can't tell where it came from." % name)
+            continue
+        if len(rel) > 3 and rel[1] == "maya" and rel[2] == PUBLISH_FOLDER:
+            source = os.path.join(h_root, rel[0], "maya", *rel[3:])
+            if not os.path.isfile(source):
+                not_fixed.append("%s: not on the H drive either (%s)." % (name, source))
+                continue
+            dest, _ = copy_published(source, os.path.join(root, rel[0], "maya"))
+            # Keep the path as the scene wrote it ($PIPE_SCRATCH stays).
+            cmds.file(written if pipeEnv.uses_var(written) else dest, loadReference=node)
+            fixed.append("%s: pulled again from the H drive and loaded." % name)
+        elif len(rel) > 5 and rel[1] == "maya" and rel[2] == "sequences" and rel[5] == "assets":
+            not_fixed.append("%s: an old copy kept inside the shot. Add %s in Build Shot "
+                             "and build to switch it to a published version."
+                             % (name, rel[7] if len(rel) > 8 else os.path.splitext(name)[0]))
+        else:
+            not_fixed.append("%s: missing, and not a pulled publish (%s)." % (name, path))
+    return fixed, not_fixed
 
 
 # ---------------------------------------------------------------------------
@@ -538,17 +728,11 @@ def use_clean_namespace(path, namespace):
     return None
 
 
-def reference_into_scene(shot_dir, rel, namespace):
+def reference_into_scene(path, namespace):
     """Reference a pulled file into the open scene under its clean
-    namespace. Uses the project-relative path when the shot is the current
-    Maya project (§3g rule 2), so the reference resolves wherever the shot
-    project is."""
+    namespace. path is normally a $PIPE_SCRATCH path (see pipeEnv), since
+    the shared publish folder is outside the shot project."""
     free_namespace(namespace)
-    workspace = cmds.workspace(query=True, rootDirectory=True)
-    if workspace and pub._same_path(workspace, shot_dir):
-        path = rel
-    else:
-        path = os.path.join(shot_dir, *rel.split("/"))
     cmds.file(path, reference=True, namespace=namespace, mergeNamespacesOnClash=False)
     return path
 
@@ -632,7 +816,7 @@ def scratch_items(scratch_root, h_root, film):
         manifest = read_manifest(folder)
         pulled = set(os.path.normcase(os.path.join(folder, *rel.split("/")))
                      for e in manifest.values()
-                     for rel in [e["file"]] + e.get("extra_files", []))
+                     for rel in ([e["file"]] if "file" in e else []) + e.get("extra_files", []))
         pulled.add(os.path.normcase(_manifest_path(folder)))
         risky = [f for f in files if os.path.normcase(f) not in pulled]
         status = SAFE if not risky else UNPUBLISHED

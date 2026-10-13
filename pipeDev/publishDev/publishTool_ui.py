@@ -249,6 +249,12 @@ class PublishToolUI(QtWidgets.QDialog):
         return scene, None
 
     def refresh(self):
+        # The scratch drive follows the open scene (spec "Scratch drive
+        # follows the work"); the saved setting is only the fallback.
+        moved = api.follow_open_scene(*self._roots())
+        if moved:
+            self.root_edits[api.SCRATCH].setText(moved)
+            self.status.show_message("Scratch drive set to %s, where the open scene is." % moved)
         scene, ctx = self._scene_context()
         self.scene_lbl.setText(scene or "(unsaved scene)")
         h_root = self._roots()[0]
@@ -378,6 +384,12 @@ class PublishToolUI(QtWidgets.QDialog):
         if cameras:
             return ("Cameras are published to their shot, not to an asset: %s\n"
                     "Open the shot scene and use a Camera row." % ", ".join(cameras))
+        if code == api.RIG_CODE:
+            # Rigs must carry a hand-made cache_SET (spec "cache_SET").
+            try:
+                api.check_cache_set(objects)
+            except api.PublishError as e:
+                return str(e)
         return None
 
     def _set_objects(self):

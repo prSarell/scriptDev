@@ -20,6 +20,22 @@ import maya.mel as mel
 _MANIFEST_NAME = "mpPipe_manifest.txt"
 _TITLE = "mpPipe Installer"
 
+# Startup block in the user's scripts/userSetup.py: sets up $PIPE_SCRATCH
+# (pipeEnv.py) before any scene opens, so shot references load from
+# whichever drive the shot is on (spec §3i "Reference paths that work on
+# any drive"). Marked so it can be replaced on reinstall and removed by
+# uninstall.py without touching anything else in the file (mpToolSet and
+# mpInstaller keep their own lines there).
+_US_START = "# -- mpPipe BEGIN --"
+_US_END = "# -- mpPipe END --"
+_US_BLOCK = (
+    _US_START + "\n"
+    "try:\n"
+    "    import pipeEnv; pipeEnv.install()\n"
+    "except Exception as _mpPipe_error:\n"
+    "    print('mpPipe: PIPE_SCRATCH not set up: %s' % _mpPipe_error)\n"
+    + _US_END + "\n")
+
 
 def _scripts_dir():
     return os.path.join(cmds.internalVar(userAppDir=True), "scripts").replace("\\", "/")
@@ -67,6 +83,25 @@ def _build_shelf(config_path):
     return name, len(config["BUTTONS"])
 
 
+def _patch_usersetup():
+    """Add (or replace) the mpPipe block at the end of userSetup.py, then
+    run it now so this session is set up without restarting Maya."""
+    import re
+    path = os.path.join(_scripts_dir(), "userSetup.py").replace("\\", "/")
+    content = ""
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    content = re.sub(r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
+                     "\n", content, flags=re.DOTALL)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content.rstrip("\n") + ("\n\n" if content.strip() else "") + _US_BLOCK)
+    import importlib
+    import pipeEnv
+    importlib.reload(pipeEnv)
+    return path, pipeEnv.install()
+
+
 def _check_dependencies():
     """What the tools need from mpToolSet / the machine. Returns warnings."""
     warnings = []
@@ -95,9 +130,11 @@ def _install(root):
     scripts = _copy_all(os.path.join(root, "scripts"), _scripts_dir(), ".py")
     icons = _copy_all(os.path.join(root, "icons"), _icons_dir(), ".png")
     shelf, buttons = _build_shelf(os.path.join(root, "shelf_config.py"))
+    usersetup, scratch_var = _patch_usersetup()
 
     with open(os.path.join(_prefs_dir(), _MANIFEST_NAME), "w", encoding="utf-8") as f:
         f.write("shelf:%s\n" % shelf)
+        f.write("usersetup:%s\n" % usersetup)
         for path in scripts + icons:
             f.write("file:%s\n" % path)
 
@@ -113,8 +150,10 @@ def _install(root):
         "  Scripts: %d -> %s\n"
         "  Icons:   %d -> %s\n"
         "  Shelf:   %s (%d buttons)\n"
+        "  Startup: userSetup.py sets PIPE_SCRATCH (now: %s)\n"
         % (" (build %s)" % version if version else "", len(scripts), _scripts_dir(),
-           len(icons), _icons_dir(), shelf, buttons))
+           len(icons), _icons_dir(), shelf, buttons,
+           scratch_var or "set when you open a scene"))
     if warnings:
         summary += "\nCheck before publishing:\n" + "\n".join("  - " + w for w in warnings) + "\n"
     summary += ("\nFirst run: set the H drive and Scratch drive in the tool.\n"

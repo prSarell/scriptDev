@@ -12,8 +12,8 @@ Dev launch (Script Editor, Python tab):
     for p in (r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\publishDev",
               r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\buildDev"):
         if p not in sys.path: sys.path.insert(0, p)
-    import publishTool_api, buildTool_api, buildTool_ui
-    for m in (publishTool_api, buildTool_api, buildTool_ui): importlib.reload(m)
+    import publishTool_api, pipeEnv, buildTool_api, buildTool_ui
+    for m in (publishTool_api, pipeEnv, buildTool_api, buildTool_ui): importlib.reload(m)
     buildTool_ui.show()
 """
 
@@ -140,18 +140,24 @@ class BuildShotTab(QtWidgets.QWidget):
         refresh_btn = QtWidgets.QPushButton("Refresh")
         refresh_btn.setToolTip("Look at the H drive again for new publishes. "
                                "Your list and version choices are kept.")
-        refresh_btn.clicked.connect(self._refresh_list)
+        refresh_btn.clicked.connect(self._on_refresh_clicked)
+        repair_btn = QtWidgets.QPushButton("Repair")
+        repair_btn.setToolTip("Find references in the open scene whose files are "
+                              "missing, and pull those exact versions back from the H drive.")
+        repair_btn.clicked.connect(self._repair)
         list_btns = QtWidgets.QHBoxLayout()
         list_btns.addWidget(refresh_btn)
+        list_btns.addWidget(repair_btn)
         list_btns.addStretch(1)
         list_btns.addWidget(remove_btn)
 
         build_btn = QtWidgets.QPushButton("Build Shot")
         build_btn.setMinimumHeight(36)
         build_btn.setToolTip(
-            "For every asset in the list: pull it from the H drive into the "
-            "shot's assets folder and reference it into the open scene. Assets "
-            "already there are updated to the chosen version and reloaded.")
+            "For every asset in the list: pull the chosen version from the H "
+            "drive into your scratch publish folder and reference it into the "
+            "open scene. A different version already in the scene is switched "
+            "over; other shots are not changed.")
         build_btn.clicked.connect(self._build_shot)
 
         self.status = StatusLabel()
@@ -251,6 +257,17 @@ class BuildShotTab(QtWidgets.QWidget):
         self.status.show_message(
             "" if self._published else "Nothing has been published for %s yet." % film,
             ok=bool(self._published))
+
+    def _on_refresh_clicked(self):
+        # A scene opened from another drive since the tool opened: follow it.
+        window = self.window()
+        moved = window.follow_open_scene() if hasattr(window, "follow_open_scene") else None
+        if moved:
+            self.refresh()
+            self.status.show_message("Scratch drive set to %s, where the open scene is."
+                                     % moved)
+            return
+        self._refresh_list()
 
     def _refresh_list(self):
         """Re-read the H drive without losing the list: rows added but not
@@ -382,7 +399,7 @@ class BuildShotTab(QtWidgets.QWidget):
             if answer != QtWidgets.QMessageBox.Yes:
                 return
 
-        lines, warnings = [], []
+        lines, warnings, replaced = [], [], []
         if api.ensure_maya_project(shot_dir):
             lines.append("Maya project set to %s" % os.path.basename(shot_dir))
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
@@ -390,13 +407,16 @@ class BuildShotTab(QtWidgets.QWidget):
             for p in self._rows:
                 label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
                 try:
-                    done, warning = api.build_asset(shot_dir, p, p.get("chosen", p["latest"]))
+                    done, warning, old = api.build_asset(shot_dir, p,
+                                                         p.get("chosen", p["latest"]))
                 except Exception as e:
                     warnings.append("%s: %s" % (label, e))
                     continue
                 lines.append("%s: %s" % (label, ", ".join(done)))
                 if warning:
                     warnings.append("%s: %s" % (label, warning))
+                if old:
+                    replaced.append(old)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self._render_table()
@@ -404,6 +424,44 @@ class BuildShotTab(QtWidgets.QWidget):
         if warnings:
             text += "\n\n" + "\n".join(warnings)
         self.status.show_message(text, ok=not warnings)
+        self._offer_removal(replaced, shot_dir)
+
+    def _offer_removal(self, replaced, shot_dir):
+        """After an update: versions no shot uses any more can go to the
+        Recycle Bin, but only if the student says so (spec "Clearing old
+        versions")."""
+        unused = api.unused_versions(replaced, api.maya_dir_of_shot(shot_dir))
+        if not unused:
+            return
+        names = "\n".join("  " + os.path.basename(p) for p in unused)
+        answer = QtWidgets.QMessageBox.question(
+            self, "Old versions",
+            "No longer used by any of your shots:\n\n%s\n\nRemove them from your "
+            "scratch drive? They go to the Recycle Bin, and can always be pulled "
+            "again from the H drive." % names)
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        if api.send_to_recycle_bin(unused):
+            self.status.show_message(self.status._text + "\n\nRemoved %d old version(s)."
+                                     % len(unused), ok=True)
+        else:
+            self.status.show_message(self.status._text + "\n\nCouldn't remove some old "
+                                     "versions (open in another program?).", ok=False)
+
+    def _repair(self):
+        h_root, _ = self._get_roots()
+        if not h_root or not os.path.isdir(h_root):
+            self.status.show_message("Set the H drive first.", ok=False)
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            fixed, not_fixed = api.repair_scene(h_root)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        if not fixed and not not_fixed:
+            self.status.show_message("Repair: nothing missing in this scene.")
+            return
+        self.status.show_message("Repair:\n" + "\n".join(fixed + not_fixed), ok=not not_fixed)
 
 
 # ---------------------------------------------------------------------------
@@ -597,9 +655,22 @@ class BuildToolUI(QtWidgets.QDialog):
             self._on_root_edited(key)
 
     def refresh(self):
+        moved = self.follow_open_scene()
         self.build_tab.refresh()
         if self.tabs.currentWidget() is self.scratch_tab:
             self.scratch_tab.refresh()
+        if moved:
+            self.build_tab.status.show_message(
+                "Scratch drive set to %s, where the open scene is." % moved)
+
+    def follow_open_scene(self):
+        """The scratch drive follows the open scene (spec "Scratch drive
+        follows the work"); the saved setting is only the fallback.
+        Returns the new scratch drive if it changed, else None."""
+        moved = pub.follow_open_scene(*self._roots())
+        if moved:
+            self.root_edits[pub.SCRATCH].setText(moved)
+        return moved
 
     def _on_tab_changed(self, index):
         # Scanning scratch walks every file, so only do it when the tab is shown.

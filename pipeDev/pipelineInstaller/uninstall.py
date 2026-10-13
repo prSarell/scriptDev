@@ -4,21 +4,47 @@ mpPipe Uninstaller (staff testing)
 Drag and drop this file onto the Maya viewport to remove the files and
 the mpPipe shelf that install.py put in place.
 
+Also takes the mpPipe startup block (PIPE_SCRATCH) out of userSetup.py.
 Left alone: the drive settings (pipeline_config.json in Maya prefs),
 mpToolSet and its ShotGrid connection, and anything on the scratch and
 H drives.
 """
 
 import os
+import re
+import sys
 import maya.cmds as cmds
 
 
 _MANIFEST_NAME = "mpPipe_manifest.txt"
 _TITLE = "mpPipe Uninstaller"
+_US_START = "# -- mpPipe BEGIN --"     # must match install.py
+_US_END = "# -- mpPipe END --"
 
 
 def _prefs_dir():
     return cmds.internalVar(userPrefDir=True).replace("\\", "/")
+
+
+def _strip_usersetup(path):
+    """Take the mpPipe startup block (PIPE_SCRATCH) out of userSetup.py,
+    leaving everything else in the file, and stop it in this session."""
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        new = re.sub(r"\n?" + re.escape(_US_START) + r".*?" + re.escape(_US_END) + r"\n?",
+                     "\n", content, flags=re.DOTALL)
+        if new != content:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(new.rstrip("\n") + "\n" if new.strip() else "")
+    callback = getattr(sys, "_pipeEnv_callback_id", None)
+    if callback is not None:
+        try:
+            import maya.api.OpenMaya as om
+            om.MMessage.removeCallback(callback)
+        except Exception:
+            pass
+        del sys._pipeEnv_callback_id
 
 
 def _uninstall():
@@ -46,6 +72,8 @@ def _uninstall():
                 for name in os.listdir(cache):
                     if name.startswith(stem):
                         os.remove(os.path.join(cache, name))
+        elif kind == "usersetup":
+            _strip_usersetup(value)
         elif kind == "shelf":
             if cmds.shelfLayout(value, exists=True):
                 cmds.deleteUI(value, layout=True)

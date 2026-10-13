@@ -369,8 +369,11 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
+    # Sound in the movie, for lip sync (same as shotSub).
+    plan["audio"], audio_offset = api.scene_audio(start)
     try:
-        plan["sg_version"] = api._shotgrid().upload_playblast(
+        plan["sg_version"] = api.upload_with_audio(
+            api._shotgrid(), plan, plan["audio"], audio_offset,
             "Shot", plan["sg_shot"]["id"], plan["frames_folder"],
             files=files, notes=note, fps=api._scene_fps(), rvio_path=rvio,
             machine_diagnostic=plan["movie_warning"])

@@ -22,8 +22,8 @@ BUTTONS = [
         "tooltip": "Build Tool: build shots from published assets, and manage your scratch drive.",
         "icon": "iconPipeBuild.png",
         "command": (
-            "import importlib, publishTool_api, publishTool_camera, buildTool_api, buildTool_ui\n"
-            "for _m in (publishTool_api, publishTool_camera, buildTool_api, buildTool_ui): importlib.reload(_m)\n"
+            "import importlib, publishTool_api, publishTool_camera, pipeEnv, buildTool_api, buildTool_ui\n"
+            "for _m in (publishTool_api, publishTool_camera, pipeEnv, buildTool_api, buildTool_ui): importlib.reload(_m)\n"
             "buildTool_ui.show()"
         ),
     },
