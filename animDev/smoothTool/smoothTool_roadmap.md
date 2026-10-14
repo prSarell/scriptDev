@@ -1,5 +1,172 @@
 # Smooth Tool — Future Development Notes
 
+## Face Smooth redesign + MetaHuman import timing (planned 2026-10-14)
+
+Not started — design only. Needs a real test file before building (see
+"What's needed to start" at the end).
+
+### Where Face Smooth stands today
+
+Checked headlessly in mayapy 2025:
+
+- **Bake is correct.** Baked values exactly match the smoothed result in
+  every mode: additive layer (default), override layer and base. Also
+  with the control already on another layer, another layer selected,
+  namespaced MetaHuman-style names, and non-unique names.
+- **Performance** at 60 controls × 600 frames: sample 0.2s, Create Curves
+  0.1s, **one slider tick 0.6s**, Bake 4.4s. Sliders recompute and redraw
+  every curve on each `valueChanged`, so dragging lags on a full face
+  board. On a real MetaHuman, sampling will be slower too (`currentTime`
+  per frame evaluates the whole face rig).
+
+### Why the current approach is wrong for face controls
+
+1. **The viewport trajectory curves can't show the jitter.** Most face
+   board controls are single-translate sliders. Their "trajectory" is one
+   line drawn over itself many times, and the jitter is in the spacing of
+   frames along that line, not the shape. Even on 2-axis controls it's
+   mostly timing. Value over time is what matters, and the Graph Editor
+   already shows that.
+2. **The smoothing is weak and blunt.**
+   - `_strength_to_cutoff` maps strength to a cutoff relative to Nyquist
+     of the *sampled frames*, not to real time. The default (strength 1)
+     is a cutoff of 0.46 × Nyquist. On 60fps capture that only removes
+     motion faster than about 14Hz, and most of the jitter is slower.
+   - The 2nd-order Butterworth (4th order effective with filtfilt) has a
+     soft rolloff. Pushing it hard enough to kill jitter also rounds off
+     peaks and accents (smile apexes, brow hits) before the noise is gone.
+   - It treats everything as one signal. Jitter is small and fast; blinks,
+     lip contacts and plosives are fast but large. A low-pass can't tell
+     them apart.
+3. **It samples on whole frames,** throwing away native-rate data (see the
+   import section below), and **a base-layer bake leaves the subframe keys
+   in place** between the new whole-frame keys. You don't see them at 24fps
+   playback, but the jitter is still in the curve: it shows in the Graph
+   Editor and in anything that evaluates between frames, like motion blur.
+
+### Design goal
+
+Strike a balance between keeping the **flow and overall character** of the
+curves and pulling out jitter, so the feel of the performance survives.
+It also needs to be **much more powerful** than the current smooth. Think
+of the motion in three layers:
+
+| Layer | What it is | Treatment |
+|---|---|---|
+| Flow | Overall shape and timing of the performance | Always kept |
+| Character | Accents, holds, micro-expressions | Kept; optional softening |
+| Jitter | Small, fast frame-to-frame noise | Removed |
+
+### Proposed Face tab
+
+1. **Drop the viewport curves. Preview on the rig through a temporary anim
+   layer.**
+   - Create Curves becomes Preview: it writes the result to a preview
+     layer, so you judge the feel by watching the face.
+   - **Blend = layer weight.** Instant, no recompute. This works for both
+     additive (delta × w) and override (orig + w(s − orig)) layers.
+   - Strength/Falloff recompute on slider release (or a short debounce
+     timer), not on every tick.
+   - Keys are written in bulk through `maya.api.OpenMaya` (`MFnAnimCurve`),
+     not one `setKeyframe` per value.
+   - A "Show original" toggle mutes the layer, and a button frames the
+     controls in the Graph Editor for comparison.
+   - Bake keeps or merges that layer, so there's no second pass.
+2. **Jitter slider: an edge-preserving (temporal bilateral) filter.** It
+   smooths small frame-to-frame wobble and leaves large, fast moves alone.
+   The threshold is estimated per control from its own noise level (e.g. the
+   median absolute deviation of its frame-to-frame second difference), so the
+   default is sensible per control. This is where the extra power comes from:
+   it can be aggressive on noise without touching accents.
+3. **Flow slider: gentle overall softening.** Use a steeper low-pass (higher
+   order Butterworth) set in **Hz**, from the scene/source frame rate, so it
+   behaves the same at 24, 30 or 60fps. A steep filter removes what's above
+   the cutoff without dulling what's below it.
+4. **Clamp to each control's translate limits.** Bilateral filters can
+   overshoot, which would push a 0–1 board slider past its range.
+5. Later: per-region strength (eyes vs mouth usually want different
+   amounts).
+
+Keep the existing Smooth and FK Chain tabs as they are.
+
+### Tuning method
+
+Prototype the filters headlessly on real capture, and compare them with
+numbers before building UI: jitter removed (high-band energy), and peak
+height and timing kept on accents, blinks and lip contacts. Build the tab
+around whichever approach holds the character best.
+
+### Frame rate: 60fps capture into 24fps scenes
+
+The iPhone/MetaHuman capture is 60fps, but the shots are 24fps. 60/24 = 2.5,
+so the subframe keys seen after import (0, 2.5, 5, 7.5…) are the original
+60fps samples sitting at their real times. Nothing has been lost at that
+point.
+
+Converting badly is what causes the problems:
+
+- **Nearest-frame picking** alternates 2- and 3-capture-frame gaps. That's
+  ±1/120s of timing error every other frame, which shows up as a
+  frame-to-frame spacing zigzag on moving sections. It's created by the
+  conversion, and it's worst where the face moves most.
+- **Sampling on whole frames without filtering first** folds 12–30Hz noise
+  down into slower wobble that looks like real motion. No 24fps smoothing
+  can cleanly separate that from the performance afterwards.
+- **Lip sync timing is not off.** Subframe keys sit at their true times, so
+  every 24fps frame shows the mouth exactly where it was at that moment.
+  The real risk is **contacts**: 24fps frames are about 42ms apart, and a
+  B/P/M closure can last 17–33ms (1–2 capture frames). If it falls
+  between frames, no rendered frame shows the lips fully closed, which
+  *feels* like bad sync. (Separately, if a performance feels uniformly early
+  or late, check start frame/timecode alignment with the audio. That's a
+  constant offset, not a frame-rate issue.)
+
+**Decision: the 60 → 24 conversion belongs in the import tool, not in Face
+Smooth.** Face Smooth then works on clean 24fps data and only has to
+handle jitter vs character.
+
+### Import tool changes (`metahuman_facial_transfer/metahuman_api_25.py`)
+
+The importer works from `metahuman_facial_transfer/` (dev-direct; synced to
+`mpToolSet/mpAnim/scripts/` and `studio4AnimToolset/studio4Anim/scripts/`).
+Current timing behaviour in `retarget_metahuman_animation_sequence`:
+
+1. Imports with `FBXImportSetMayaFrameRate False`, then sets the scene to
+   `timeunit='ntsc'`, which is **30fps**, not 24. Maya keeps keys at their
+   real times through unit changes, so after switching to 24 the 60fps keys
+   land 2.5 frames apart.
+2. **Controls are handled inconsistently:**
+   - Single-expression controls are copied with `copyKey`/`pasteKey`, so they
+     **keep native 60fps subframe keys**.
+   - Multi-expression controls (combined through `blendWeighted`, e.g.
+     bidirectional sliders) are baked with `bakeResults(sampleBy=1)` on
+     whole frames, **with no filtering first**. That's the bad conversion
+     described above.
+
+Planned "Convert to scene rate" step at the end of the transfer:
+
+- A **target frame rate** option, defaulting to 24 for classes, replacing the
+  hard-coded `ntsc`.
+- **Bake the multi-expression controls at native rate** (sample at the
+  source key spacing, or evaluate the curves at the native key times), so
+  every control starts from true 60fps data.
+- For every face control: read native key times/values, **detect the source
+  rate** from the key spacing, **filter out what 24fps can't represent** (low-pass
+  below the target Nyquist), then sample on whole frames with **contact
+  protection**: find the real extremes in the mouth/jaw channels (closures,
+  peaks) and make sure each lands on a whole frame. Write whole-frame keys and
+  **remove the subframe keys**.
+- Make it runnable on its own on keys already in a scene, so shots that
+  have already been imported can be fixed without re-importing.
+
+### What's needed to start
+
+- An Unreal FBX export (Animation Sequence route), ideally with dialogue,
+  blinks and a stretch of bad jitter.
+- The Maya MetaHuman file it imports into, or at least the face board
+  controls. A 60fps original as well as a 24fps result is ideal for
+  comparison.
+
 ## Next session: multiple concurrent smooths in one scene
 
 Requirement: the tool only ever processes one control at a time (no
