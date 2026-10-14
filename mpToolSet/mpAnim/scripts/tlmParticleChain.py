@@ -1982,7 +1982,10 @@ class SimParticleRig():
 
 		cmds.rowLayout('hairColWidth_rowLayout', nc=3, adjustableColumn=2, p='settings_frameLayout')
 		cmds.text('Collision Thickness:')
-		cmds.floatSliderGrp('hairColWidth_slider', f=True, min=0, max=10, value=0, step=.1, dc=self.hairCollisionWidthSlider)
+		# Slider drags 0-10 for fine control; the field takes bigger values
+		# (hairSystem.collideWidthOffset has no hard max, only a soft max).
+		cmds.floatSliderGrp('hairColWidth_slider', f=True, min=0, max=10, fieldMaxValue=1000, value=0, step=.1,
+		                    dc=self.hairCollisionWidthSlider, cc=self.hairCollisionWidthSlider)
 		cmds.frameLayout('hairDisplay_frameLayout', lv=False, bv=False, p='hairColWidth_rowLayout')
 		cmds.palettePort('hairDisplay_palette', dim=(1, 1), ed=True, ced=True, rgb=[0, 1, .8, 0], ce=self.hairDisplayColor)
 
