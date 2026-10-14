@@ -258,7 +258,7 @@ class SimParticleRig():
 
 			cmds.optionMenu('colliders_list', e=True, v=sel)
 			colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
-			thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
+			thickValue = "%.2f" % cmds.getAttr(self._collider_shape(colliderObj) + '.thickness')
 			cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 		else:
 			cmds.warning('Create a Particle Rig first.')
@@ -269,21 +269,33 @@ class SimParticleRig():
 			if itemToDelete:
 				cmds.deleteUI(itemToDelete + '_collider')
 				for i in cmds.listRelatives('passiveColliders_grp') or []:
-					if itemToDelete in i:
+					if i.rpartition('_')[0] == itemToDelete:
 						cmds.delete(i)
 				if cmds.listRelatives('passiveColliders_grp', ad=True) is None:
 					cmds.textField('pc_colliderColThickness_textField', e=True, tx='')
 				else:
 					colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
-					thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
+					thickValue = "%.2f" % cmds.getAttr(self._collider_shape(colliderObj) + '.thickness')
 					cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 		except Exception:
 			pass
 
+	def _collider_shape(self, colliderObj):
+		"""nRigid shape for a collider listed as colliderObj. Its transform
+		is '<colliderObj>_nRigid<N>' under passiveColliders_grp -- N is
+		whatever Maya numbered it, so the shape can't be assumed to be
+		'<colliderObj>_nRigidShape1' (that broke from the 2nd collider on)."""
+		for t in cmds.listRelatives('passiveColliders_grp', type='transform') or []:
+			if t.rpartition('_')[0] == colliderObj:
+				shapes = cmds.listRelatives(t, shapes=True) or []
+				if shapes:
+					return shapes[0]
+		return None
+
 	def colliderCollisionThickness(self, *args):
 		colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 		value = float(cmds.textField('pc_colliderColThickness_textField', q=True, tx=True))
-		cmds.setAttr(colliderObj + '_nRigidShape1.thickness', value)
+		cmds.setAttr(self._collider_shape(colliderObj) + '.thickness', value)
 
 	# ------------------------------------------------------------------
 	# Proxy geo authoring -- copied verbatim from tlmClothChain.py.
@@ -535,6 +547,7 @@ class SimParticleRig():
 		# into it.
 		goalCurve = cmds.curve(d=1, p=restPositions, name=rigName + '_goalCurve')
 		goalCurveShape = cmds.listRelatives(goalCurve, shapes=True)[0]
+		refs, cons = [], []
 		for i, joint in enumerate(orderedJoints):
 			ref = cmds.spaceLocator(name=rigName + '_jointRef_%02d' % i)[0]
 			# Stashed so refreshGoalAnimation() can re-bake from the
@@ -545,9 +558,12 @@ class SimParticleRig():
 			# locator came from.
 			cmds.addAttr(ref, ln='sourceJoint', dt='string')
 			cmds.setAttr(ref + '.sourceJoint', joint, type='string')
-			con = cmds.pointConstraint(joint, ref, mo=False)[0]
-			cmds.bakeResults(ref, t=(start_fr, end_fr), simulation=True, at=['tx', 'ty', 'tz'])
-			cmds.delete(con)
+			cons.append(cmds.pointConstraint(joint, ref, mo=False)[0])
+			refs.append(ref)
+		# One bake for every locator -- a bake per locator stepped the
+		# whole timeline once per joint, which crawled on long chains.
+		self._bakeJointRefs(rigName, refs, cons, start_fr, end_fr)
+		for i, ref in enumerate(refs):
 			cmds.parent(ref, rigName + '_hairSystem_grp')
 			dm = cmds.createNode('decomposeMatrix', name=rigName + '_goalDM_%02d' % i)
 			cmds.connectAttr(ref + '.worldMatrix[0]', dm + '.inputMatrix')
@@ -593,6 +609,15 @@ class SimParticleRig():
 		autoOutputGrp = hairSystemTformShort + 'OutputCurves'
 		outCurveShapes = cmds.listRelatives(autoOutputGrp, ad=True, type='nurbsCurve') if cmds.objExists(autoOutputGrp) else None
 		outCurveTform = cmds.listRelatives(outCurveShapes[0], parent=True)[0] if outCurveShapes else None
+		if not outCurveTform:
+			# Everything downstream samples the output curve -- without it
+			# the build died further on, leaving a half-built rig behind.
+			leftovers = [hairSystemTform, follicleTform, rigName + '_particleRig_grp']
+			if not sharedNucleus:
+				leftovers.append(nucleus)
+			cmds.delete([n for n in leftovers + [autoFolliclesGrp, autoOutputGrp] if cmds.objExists(n)])
+			cmds.warning('Make Curves Dynamic did not create an output curve -- nothing was built.')
+			return
 
 		cmds.parent(hairSystemTform, rigName + '_hairSystem_grp')
 		# createHairCurveNode.mel reparents the follicle to sit alongside
@@ -721,6 +746,7 @@ class SimParticleRig():
 		end_fr = int(cmds.playbackOptions(q=True, maxTime=True))
 		segCount = self._get_segment_count(rigName)
 
+		refs, cons = [], []
 		for i in range(segCount):
 			ref = rigName + '_jointRef_%02d' % i
 			if not cmds.objExists(ref):
@@ -729,11 +755,27 @@ class SimParticleRig():
 			if not joint or not cmds.objExists(joint):
 				cmds.warning('Source joint for %s not found -- skipped.' % ref)
 				continue
-			con = cmds.pointConstraint(joint, ref, mo=False)[0]
-			cmds.bakeResults(ref, t=(start_fr, end_fr), simulation=True, at=['tx', 'ty', 'tz'])
-			cmds.delete(con)
+			cons.append(cmds.pointConstraint(joint, ref, mo=False)[0])
+			refs.append(ref)
+		if refs:
+			self._bakeJointRefs(rigName, refs, cons, start_fr, end_fr)
 
 		cmds.currentTime(start_fr)
+
+	def _bakeJointRefs(self, rigName, refs, cons, start_fr, end_fr):
+		"""Bake the jointRef locators off their (already constrained)
+		joints in one pass, drop the constraints, and record the baked range
+		on the rig group so Preview can tell when the timeline has since
+		grown past it -- outside that range the goal just holds still."""
+		try:
+			cmds.bakeResults(refs, t=(start_fr, end_fr), simulation=True, at=['tx', 'ty', 'tz'])
+		finally:
+			cmds.delete(cons)
+		grp = rigName + '_particleRig_grp'
+		for attr, value in (('goalStart', start_fr), ('goalEnd', end_fr)):
+			if not cmds.attributeQuery(attr, node=grp, exists=True):
+				cmds.addAttr(grp, ln=attr, at='long')
+			cmds.setAttr(grp + '.' + attr, value)
 
 	def _wireSimPoints(self, rigName, curveInfo, segCount):
 		"""Live per-segment position locators, sourced from curveInfo's
@@ -874,7 +916,7 @@ class SimParticleRig():
 		self.loadSegmentsList()
 
 	def loadSegmentsList(self, *args):
-		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
 		hairSystem = self._get_hairSystem(rigName)
 		total = self._get_segment_count(rigName)
 		for i in range(total):
@@ -940,7 +982,10 @@ class SimParticleRig():
 				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
 
 	def applyStrength(self, segmentNumber, *args):
-		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
+		# The rig the Set Influence window was opened on, not the main
+		# dropdown -- switching rigs with the window open otherwise wrote
+		# these values onto the other rig.
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
 		value = float(cmds.textField('segment_' + segmentNumber + '_textField', q=True, tx=True))
 		hairSystem = self._get_hairSystem(rigName)
 		idx = int(segmentNumber) - 1
@@ -1174,7 +1219,7 @@ class SimParticleRig():
 					cmds.menuItem(i.rpartition('_')[0] + '_collider', l=i.rpartition('_')[0], p='colliders_list')
 			colliderObj = cmds.optionMenu('colliders_list', q=True, v=True)
 			if colliderObj:
-				thickValue = "%.2f" % cmds.getAttr(colliderObj + '_nRigidShape1.thickness')
+				thickValue = "%.2f" % cmds.getAttr(self._collider_shape(colliderObj) + '.thickness')
 				cmds.textField('pc_colliderColThickness_textField', e=True, tx=thickValue)
 
 		hairSystem = self._get_hairSystem(rigName)
@@ -1185,7 +1230,30 @@ class SimParticleRig():
 			cmds.palettePort('hairDisplay_palette', e=True, rgb=[0, color[0], color[1], color[2]], redraw=True)
 
 		self.loadHairSettings()
+		self._loadRigStateUI(rigName)
 		self.cacheCheckUI(rigName)
+
+	def _loadRigStateUI(self, rigName):
+		"""Per-rig widgets loadSettings didn't use to touch -- switching rigs
+		left the On/Off toggle and Hunt row showing the previous rig."""
+		follicle = self._get_follicle(rigName)
+		if follicle and cmds.checkBox('particleRig_checkBox', exists=True):
+			on = cmds.getAttr(follicle + '.simulationMethod') != 0
+			cmds.checkBox('particleRig_checkBox', e=True, v=on, bgc=(.2, .4, .2) if on else (.4, .2, .2), l='On ' if on else 'Off ')
+		huntGrp = (rigName or '') + '_huntLocators_grp'
+		hasHunt = cmds.objExists(huntGrp)
+		target = ''
+		if hasHunt and cmds.attributeQuery('huntTarget', node=huntGrp, exists=True):
+			target = cmds.getAttr(huntGrp + '.huntTarget') or ''
+		if cmds.textField('huntTarget_textField', exists=True):
+			cmds.textField('huntTarget_textField', e=True, tx=target)
+		if cmds.button('clearHunt_button', exists=True):
+			cmds.button('clearHunt_button', e=True, en=hasHunt)
+		# The tip segment's scale is exactly Hunt Weight (see
+		# _huntSegmentWeight), so read the weight back off that node.
+		tipScale = '%s_huntScale_%02d' % (rigName, self._get_segment_count(rigName) - 1)
+		if hasHunt and cmds.objExists(tipScale) and cmds.floatSliderGrp('huntWeight_slider', exists=True):
+			cmds.floatSliderGrp('huntWeight_slider', e=True, v=cmds.getAttr(tipScale + '.input2'))
 
 	# ------------------------------------------------------------------
 	# Optional goal-hunting attractor target.
@@ -1209,7 +1277,9 @@ class SimParticleRig():
 			cmds.warning('Hunt target already set on this rig.')
 			return
 		self._wireHuntTarget(rigName, huntTransform)
-		cmds.button('clearHunt_button', e=True, en=True)
+		# Only if it actually wired -- _wireHuntTarget bails with a warning
+		# (and no marker group) when the goal curve is missing its drivers.
+		cmds.button('clearHunt_button', e=True, en=cmds.objExists(rigName + '_huntLocators_grp'))
 
 	def _huntSegmentWeight(self, segIndex, total, huntWeight):
 		"""Share of the full aim-at-target rotation that segment segIndex
@@ -1250,7 +1320,10 @@ class SimParticleRig():
 			cmds.warning('Goal curve is missing its joint drivers -- try Refresh Goal first.')
 			return
 		# Marker group -- its existence is what Set/Clear/Hunt Weight check.
-		cmds.group(empty=True, name=rigName + '_huntLocators_grp', p=rigName + '_particleRig_grp')
+		huntGrp = cmds.group(empty=True, name=rigName + '_huntLocators_grp', p=rigName + '_particleRig_grp')
+		# Remembered so the UI can show it again when switching rigs.
+		cmds.addAttr(huntGrp, ln='huntTarget', dt='string')
+		cmds.setAttr(huntGrp + '.huntTarget', huntTransform, type='string')
 		huntWeight = 1.0
 		if cmds.floatSliderGrp('huntWeight_slider', exists=True):
 			huntWeight = cmds.floatSliderGrp('huntWeight_slider', q=True, v=True)
@@ -1356,11 +1429,7 @@ class SimParticleRig():
 			cmds.button('reactivate_button', e=True, en=False)
 			return
 		if cmds.objExists(rigName + '_preview_grp'):
-			controlsList = []
-			if cmds.objExists(rigName + '_controlNames'):
-				for i in cmds.listAttr(rigName + '_controlNames') or []:
-					if len(i) == 1:
-						controlsList.append(cmds.getAttr(rigName + '_controlNames.' + i))
+			controlsList = self._previewControls(rigName)
 			if controlsList and cmds.textScrollList('controls_scrollList', q=True, ai=True) is None:
 				cmds.textScrollList('controls_scrollList', e=True, append=controlsList)
 			cmds.setAttr(rigName + '_hairSystem_grp.visibility', 0)
@@ -1376,30 +1445,103 @@ class SimParticleRig():
 			cmds.button('presets_list', e=True, en=True)
 			cmds.paneLayout('pane_layout2', e=True, en=True)
 
-	def _orderControlsAlongChain(self, rigName, controlsList):
-		"""Reorder controlsList by where each control actually sits along
-		the rig's rest-pose spine (nearest-rest-point arc-length), rather
-		than trusting the order they were selected/added in. See
-		previewSim() for why this matters.
+	def _jointDrivenByControl(self, ctrl, chainJoints, maxDepth=8):
+		"""Segment index of the chain joint ctrl actually drives, found by
+		walking the dependency graph downstream from ctrl (breadth-first,
+		so the nearest-by-wiring joint wins) -- constraints, direct
+		connections and matrix-node rigs all show up as a path of
+		connections from the control to its joint. Walks through
+		non-chain joints too, so an FK/driver chain sitting between the
+		controls and the chain joints still resolves. None if ctrl isn't
+		wired to any chain joint.
+
+		Skips the joint-to-child scale -> inverseScale link: it connects
+		every joint to the next one down, and following it would hand a
+		control its joint's children as well.
 		"""
-		goalCurveShape = self._get_goal_curve_shape(rigName)
+		chainIndex = {j: i for i, j in enumerate(chainJoints)}
+		seen = {ctrl}
+		frontier = [ctrl]
+		for _ in range(maxDepth):
+			found, nextFrontier = [], []
+			for node in frontier:
+				conns = cmds.listConnections(node, source=False, destination=True, plugs=True, connections=True,
+				                             skipConversionNodes=True) or []
+				for dst in conns[1::2]:
+					if dst.endswith('.inverseScale'):
+						continue
+					dstNode = cmds.ls(dst.split('.')[0], long=True)
+					if not dstNode or dstNode[0] in seen:
+						continue
+					dstNode = dstNode[0]
+					seen.add(dstNode)
+					if dstNode in chainIndex:
+						found.append(chainIndex[dstNode])
+					elif cmds.nodeType(dstNode) not in ('objectSet', 'animLayer', 'hyperLayout', 'nodeGraphEditorInfo'):
+						nextFrontier.append(dstNode)
+			if found:
+				# One control wired into several chain joints at the same
+				# depth (e.g. driving a whole spline section): it belongs
+				# with the base-most of them.
+				return min(found)
+			frontier = nextFrontier
+			if not frontier:
+				break
+		return None
+
+	def _matchControlsToSegments(self, rigName, controlsList):
+		"""Pair each control with the joint (segment) it drives -- not by
+		list order or count. Any subset of the chain's controls can be
+		previewed/baked this way (skip the base, skip the tip, base-to-
+		middle only...); the rest are left with their own animation.
+		Selection order never matters: with enough controls it's very easy
+		to add them out of sequence, which used to pair the wrong control
+		with the wrong aim group and looked exactly like an exploding bake
+		even though the sim itself was fine.
+
+		Wiring first: the control -> joint constraints/connections already
+		say exactly which joint each control owns (see
+		_jointDrivenByControl), unaffected by controls sitting off their
+		joints or close together. Only a control with no path to any chain
+		joint falls back to the nearest joint position at the current
+		frame. Positions come from the jointRef locators (the joints' own
+		baked motion) rather than the goal curve, whose CVs a Hunt Target
+		bends away from the joints.
+
+		Returns [(ctrl, segmentIndex)] base to tip, or raises RuntimeError
+		if two controls land on the same joint.
+		"""
 		segCount = self._get_segment_count(rigName)
-		restPts = [cmds.xform(goalCurveShape + '.cv[%d]' % i, q=True, ws=True, t=True) for i in range(segCount)]
+		goalCurveShape = self._get_goal_curve_shape(rigName)
+		chainJoints, restPts = [], []
+		for i in range(segCount):
+			ref = rigName + '_jointRef_%02d' % i
+			joint = None
+			if cmds.objExists(ref) and cmds.attributeQuery('sourceJoint', node=ref, exists=True):
+				joint = cmds.getAttr(ref + '.sourceJoint')
+			found = cmds.ls(joint, long=True) if joint and cmds.objExists(joint) else []
+			chainJoints.append(found[0] if found else None)
+			if cmds.objExists(ref):
+				restPts.append(cmds.xform(ref, q=True, ws=True, t=True))
+			else:
+				restPts.append(cmds.xform(goalCurveShape + '.cv[%d]' % i, q=True, ws=True, t=True))
 
-		cumLen = [0.0]
-		for a, b in zip(restPts[:-1], restPts[1:]):
-			cumLen.append(cumLen[-1] + math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b))))
-
-		def arcParam(ctrl):
-			p = cmds.xform(ctrl, q=True, ws=True, t=True)
-			bestIdx, bestDist = 0, None
-			for i, rp in enumerate(restPts):
-				d = sum((x - y) ** 2 for x, y in zip(p, rp))
-				if bestDist is None or d < bestDist:
-					bestDist, bestIdx = d, i
-			return cumLen[bestIdx]
-
-		return sorted(controlsList, key=arcParam)
+		bySegment, how = {}, {}
+		for ctrl in controlsList:
+			idx = self._jointDrivenByControl(ctrl, chainJoints)
+			method = 'wired to'
+			if idx is None:
+				p = cmds.xform(ctrl, q=True, ws=True, t=True)
+				idx = min(range(segCount), key=lambda i: sum((x - y) ** 2 for x, y in zip(p, restPts[i])))
+				method = 'nearest to'
+			if idx in bySegment:
+				raise RuntimeError('"%s" (%s) and "%s" (%s) both map to joint %d -- only one control per joint.' % (
+					bySegment[idx], how[idx], ctrl, method, idx + 1))
+			bySegment[idx], how[idx] = ctrl, method
+		guessed = [bySegment[i] for i in sorted(bySegment) if how[i] == 'nearest to']
+		if guessed:
+			print('tlmParticleChain: no wiring to the chain found for %s -- matched by nearest joint instead.' % ', '.join(guessed))
+		return [(bySegment[i], i) for i in sorted(bySegment)]
 
 	def previewSim(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
@@ -1416,23 +1558,29 @@ class SimParticleRig():
 			cmds.warning('Add controls first.')
 			return
 
+		# The goal only carries the joints' motion over the range it was
+		# baked at (Build / Refresh Goal) -- widen the timeline afterwards
+		# and the goal just holds still outside it. Rigs from before this
+		# was recorded have no goalStart/goalEnd and skip the check.
+		grp = rigName + '_particleRig_grp'
+		if cmds.attributeQuery('goalStart', node=grp, exists=True):
+			goalStart, goalEnd = cmds.getAttr(grp + '.goalStart'), cmds.getAttr(grp + '.goalEnd')
+			if start_fr < goalStart or end_fr > goalEnd:
+				cmds.warning('Timeline %d-%d runs past the goal\'s baked range %d-%d -- click Refresh Goal to follow the joints over the full range.' % (
+					start_fr, end_fr, goalStart, goalEnd))
+		nucleus = self._get_nucleus(rigName)
+		if nucleus and cmds.getAttr(nucleus + '.startFrame') > start_fr:
+			cmds.warning('Nucleus Start Frame (%d) is after the timeline start (%d) -- the sim holds still until then.' % (
+				cmds.getAttr(nucleus + '.startFrame'), start_fr))
+
 		aimGroups = self._get_aimGroupList(rigName)
 		tipAnchor = rigName + '_tipAnchor_grp'
-		if len(self.controlsList) != len(aimGroups) + 1:
-			cmds.warning('Number of controls (%d) must match number of segments (%d).' % (
-				len(self.controlsList), len(aimGroups) + 1))
+		try:
+			self.controlMatches = self._matchControlsToSegments(rigName, self.controlsList)
+		except RuntimeError as e:
+			cmds.warning(str(e))
 			return
-
-		# controlsList order is whatever order they were selected/added in --
-		# nothing enforces that matches base-to-tip segment order the way
-		# joints get walked into a guaranteed order by _order_joint_chain.
-		# With enough controls it's very easy to select them out of sequence
-		# (marquee-select, scattered shift-clicks), which pairs the wrong
-		# control with the wrong aim group below -- looks exactly like an
-		# exploding bake even though the sim itself is fine. Re-sort by where
-		# each control actually sits along the rig's rest-pose spine instead
-		# of trusting selection order.
-		self.controlsList = self._orderControlsAlongChain(rigName, self.controlsList)
+		self.controlsList = [ctrl for ctrl, _ in self.controlMatches]
 
 		cmds.group(empty=True, name=rigName + '_preview_grp', p=rigName + '_particleRig_grp')
 		# Any failure from here on would leave a half-built preview (a
@@ -1454,10 +1602,19 @@ class SimParticleRig():
 		The new layer is found by before/after diff rather than assuming
 		Maya named it 'BakeResults' -- if a stray BakeResults layer is
 		already in the scene, Maya picks BakeResults1 and renaming the
-		fixed name grabbed the wrong layer."""
+		fixed name grabbed the wrong layer.
+
+		In a scene with no anim layers yet, the first bake creates TWO new
+		layers -- BaseAnimation as well as the bake layer -- and picking
+		new[0] out of an unordered set sometimes renamed BaseAnimation
+		itself (confirmed headlessly; it varies per Maya session with
+		Python's string hashing). Deleting that "preview layer" afterwards
+		then took the root and every layer under it, so the bake vanished.
+		Only ever take a layer that has a parent, i.e. never the root."""
 		before = set(cmds.ls(type='animLayer') or [])
 		cmds.bakeResults(controlsList, t=(start_fr, end_fr), sampleBy=sampleBy, bakeOnOverrideLayer=True, simulation=True)
-		new = list(set(cmds.ls(type='animLayer') or []) - before)
+		new = [l for l in set(cmds.ls(type='animLayer') or []) - before
+		       if cmds.animLayer(l, q=True, parent=True)]
 		return cmds.rename(new[0], layerName) if new else None
 
 	def _exitPreview(self, rigName, deleteLayer):
@@ -1480,19 +1637,23 @@ class SimParticleRig():
 		# snapshotting constraints onto it -- nucleus solvers evaluate
 		# lazily, so a frame nothing queries never actually gets solved
 		# (confirmed headlessly on the nParticle version of this tool: the
-		# whole chain sits frozen at rest without this). Querying the
-		# output curve's worldSpace every frame forces the solve to run in
-		# order, frame by frame.
-		outCurveShape = rigName + '_outCurveShape'
+		# whole chain sits frozen at rest without this). Querying the tip
+		# sim point every frame pulls the output curve through curveInfo and
+		# forces the solve to run in order, frame by frame. (Querying the
+		# curve's worldSpace directly did the same but printed a "data is
+		# not a numeric or string value" error for every frame.)
+		tipPoint = rigName + '_simPoint_%02d.translate' % (self._get_segment_count(rigName) - 1)
 		for f in range(start_fr, end_fr + 1):
 			cmds.currentTime(f)
-			cmds.getAttr(outCurveShape + '.worldSpace[0]')
+			cmds.getAttr(tipPoint)
 		cmds.currentTime(start_fr)
 
-		for i in range(len(self.controlsList) - 1):
-			ctrl = self.controlsList[i]
+		for ctrl, idx in self.controlMatches:
+			# Segment i is driven by aim group i; the tip joint has no
+			# segment of its own and borrows the tip anchor.
+			driver = aimGroups[idx] if idx < len(aimGroups) else tipAnchor
 			st, sr = self._locked_axes(ctrl)
-			cmds.parentConstraint(aimGroups[i], ctrl, sr=sr, st=st, mo=True)
+			cmds.parentConstraint(driver, ctrl, sr=sr, st=st, mo=True)
 			# Maya auto-creates blendParent1 only if ctrl already had
 			# incoming animation on translate/rotate before this constraint
 			# was added; when it exists, force it fully onto the sim so
@@ -1500,12 +1661,6 @@ class SimParticleRig():
 			# pre-existing animation.
 			if cmds.attributeQuery('blendParent1', node=ctrl, exists=True):
 				cmds.setAttr(ctrl + '.blendParent1', 1)
-
-		last_ctrl = self.controlsList[-1]
-		st, sr = self._locked_axes(last_ctrl)
-		cmds.parentConstraint(tipAnchor, last_ctrl, sr=sr, st=st, mo=True)
-		if cmds.attributeQuery('blendParent1', node=last_ctrl, exists=True):
-			cmds.setAttr(last_ctrl + '.blendParent1', 1)
 
 		# Preview must NOT stay live off the constraint -- nucleus only
 		# solves forward incrementally, so scrubbing while the controls are
@@ -1537,10 +1692,10 @@ class SimParticleRig():
 		cmds.spaceLocator(n=rigName + '_controlNames')
 		cmds.parent(rigName + '_controlNames', rigName + '_particleRig_grp')
 		cmds.setAttr(rigName + '_controlNames.visibility', 0)
-		for i in range(len(self.controlsList)):
-			attName = chr(i + ord('a')).upper()
-			cmds.addAttr(rigName + '_controlNames', ln=attName, dt='string')
-			cmds.setAttr(rigName + '_controlNames.' + attName, self.controlsList[i], type='string')
+		# One stringArray, not the old one-letter-attr-per-control (A..Z),
+		# which ran out of valid attribute names past 26 controls.
+		cmds.addAttr(rigName + '_controlNames', ln='controls', dt='stringArray')
+		cmds.setAttr(rigName + '_controlNames.controls', len(self.controlsList), *self.controlsList, type='stringArray')
 
 	def undoPreview(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
@@ -1552,6 +1707,41 @@ class SimParticleRig():
 		# own animation before Preview -- a case the old snapshot-based
 		# restore never handled correctly.
 		self._exitPreview(rigName, deleteLayer=True)
+
+	def _previewControls(self, rigName):
+		"""The controls Preview baked, in the order it stored them on
+		rigName + '_controlNames'. Falls back to the old one-letter attrs
+		for a scene saved mid-preview by an earlier version."""
+		node = rigName + '_controlNames'
+		if not cmds.objExists(node):
+			return []
+		if cmds.attributeQuery('controls', node=node, exists=True):
+			return list(cmds.getAttr(node + '.controls') or [])
+		names = sorted(a for a in cmds.listAttr(node, userDefined=True) or [] if len(a) == 1)
+		return [cmds.getAttr(node + '.' + a) for a in names]
+
+	def _revealBaseBake(self, rigName, controlsList):
+		"""A bake straight onto the base layer sits underneath every anim
+		layer still on these controls -- most commonly a Keep & Resim
+		pass, an override layer that hid the new bake completely
+		(confirmed headlessly). Mute this rig's own kept passes so the bake
+		is what plays back (muted, not deleted -- they're still there to
+		compare against), and warn about any other layer still on top."""
+		root = cmds.animLayer(q=True, root=True)
+		layers = cmds.animLayer(controlsList, q=True, affectedLayers=True) or []
+		muted, others = [], []
+		for layer in layers:
+			if layer == root or cmds.animLayer(layer, q=True, mute=True):
+				continue
+			if layer.startswith(rigName + '_previewKept'):
+				cmds.animLayer(layer, e=True, mute=True)
+				muted.append(layer)
+			else:
+				others.append(layer)
+		if muted:
+			cmds.warning('Muted kept pass(es) %s so the new bake shows -- unmute them to compare.' % ', '.join(muted))
+		if others:
+			cmds.warning('Anim layer(s) %s still affect these controls and play on top of the new bake.' % ', '.join(others))
 
 	def _uniqueKeptLayerName(self, rigName):
 		base = rigName + '_previewKept'
@@ -1580,13 +1770,28 @@ class SimParticleRig():
 
 	def bakeFinalSim(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
-		controlsList = cmds.textScrollList('controls_scrollList', q=True, ai=True)
 		start_fr = int(cmds.playbackOptions(q=True, minTime=True))
 		end_fr = int(cmds.playbackOptions(q=True, maxTime=True))
-		sampleByValue = int(cmds.textField('pc_sampleByValue_textField', q=True, tx=True))
+		try:
+			sampleByValue = int(float(cmds.textField('pc_sampleByValue_textField', q=True, tx=True)))
+		except ValueError:
+			sampleByValue = 0
+		if sampleByValue < 1:
+			cmds.warning('Sample by must be a whole number of 1 or more.')
+			return
 		animLayer = cmds.checkBox('bakeOnAnimLayer_checkBox', q=True, v=True)
 
 		if cmds.objExists(rigName + '_preview_grp'):
+			# Bake exactly the controls Preview baked (stored on
+			# _controlNames), not whatever the Controls list holds now --
+			# it can be edited or emptied mid-preview, which baked only
+			# some controls or failed outright.
+			controlsList = self._previewControls(rigName) or \
+				cmds.textScrollList('controls_scrollList', q=True, ai=True) or []
+			controlsList = [c for c in controlsList if cmds.objExists(c)]
+			if not controlsList:
+				cmds.warning('No controls to bake -- Undo Preview and Preview again.')
+				return
 			# previewSim already baked the constrained result onto
 			# rigName + '_previewLayer' at sampleBy=1 -- there's no live
 			# constraint left to sample here. Re-bake at the user's chosen
@@ -1609,6 +1814,8 @@ class SimParticleRig():
 			# sim visible, settings unlocked) -- the baked keys stay, and
 			# the rig is ready for another pass without relaunching.
 			self._exitPreview(rigName, deleteLayer=True)
+			if not animLayer:
+				self._revealBaseBake(rigName, controlsList)
 
 			if cmds.checkBox('deleteClothRig_checkBox', q=True, v=True):
 				# The nucleus lives under particleSimChain_grp, not under
@@ -1789,7 +1996,8 @@ class SimParticleRig():
 		cmds.text('Controls: ', al='left', p='copyFrom_rowLayout')
 		cmds.iconTextButton(w=30, image1='nudgeDown.png', ann='Click here to add the selected objects into the list.', c=partial(self.addObjs, 'controls_scrollList'), p='copyFrom_rowLayout')
 		cmds.iconTextButton(w=25, image1='SP_TrashIcon.png', ann='Click here to DELETE objects from the list.', c=partial(self.delObjs, 'controls_scrollList'), p='copyFrom_rowLayout')
-		cmds.textScrollList('controls_scrollList', allowMultiSelection=True, h=80, w=195, p='copyFrom_columnLayout')
+		cmds.textScrollList('controls_scrollList', allowMultiSelection=True, h=80, w=195, p='copyFrom_columnLayout',
+		                     ann='Controls to drive from the sim -- any subset, in any order. Each one follows the joint it sits on; controls left out keep their own animation.')
 
 		cmds.rowLayout('rigSimSwitch_rowLayout', nc=3, adjustableColumn=1, p='preview_frameLayout')
 		cmds.button(l='Preview on Rig', bgc=(.8, .8, .6), c=self.previewSim)
