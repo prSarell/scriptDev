@@ -250,7 +250,11 @@ class BuildShotTab(QtWidgets.QWidget):
         self._rows = []
         for p in self._published:
             if self._key(p) in manifest:
-                self._rows.append(dict(p, chosen=manifest[self._key(p)]["version"]))
+                # A version from before personal publishes isn't on the H
+                # drive any more: start the choice at the latest instead.
+                current = api.entry_version_id(manifest[self._key(p)])
+                self._rows.append(dict(p, chosen=current if current in p["versions"]
+                                       else p["latest"]))
             elif p.get("kind") == "camera":
                 self._rows.append(dict(p, chosen=p["latest"]))
         self._render_table()
@@ -296,8 +300,8 @@ class BuildShotTab(QtWidgets.QWidget):
                 self.dept_combo.setCurrentIndex(dept)
         self._render_table()
         manifest = api.read_manifest(self._shot_dir()) if self._shot_dir() else {}
-        newer = [r["asset"] for r in self._rows if self._key(r) in manifest
-                 and manifest[self._key(r)]["version"] < r["latest"]]
+        newer = [r["asset"] for r in self._rows
+                 if api.newer_available(r, manifest.get(self._key(r)))]
         self.status.show_message(
             "Refreshed. Newer versions available for: %s" % ", ".join(newer)
             if newer else "Refreshed. Everything in this shot is on its latest version.")
@@ -322,8 +326,8 @@ class BuildShotTab(QtWidgets.QWidget):
             self.table.setItem(row, 1, _cell(p["asset_type"]))
             self.table.setItem(row, 2, _cell(api.DEPT_LABELS.get(p["code"], p["code"])))
             combo = QtWidgets.QComboBox()
-            for v in sorted(p["versions"], reverse=True):
-                combo.addItem("v%03d%s" % (v, "  (latest)" if v == p["latest"] else ""), v)
+            for vid in api.sorted_versions(p):      # newest first, everyone's
+                combo.addItem(api.version_label(p, vid), vid)
             combo.setCurrentIndex(max(combo.findData(p.get("chosen", p["latest"])), 0))
             combo.currentIndexChanged.connect(
                 lambda i, c=combo, r=p: r.__setitem__("chosen", c.currentData()))
@@ -334,9 +338,14 @@ class BuildShotTab(QtWidgets.QWidget):
                 self.table.setItem(row, 4, _cell("-"))
                 self.table.setItem(row, 5, _cell("Ready to build", "#9fc5ff"))
             else:
-                self.table.setItem(row, 4, _cell("v%03d" % entry["version"]))
-                if entry["version"] < p["latest"]:
-                    self.table.setItem(row, 5, _cell("v%03d available" % p["latest"], "#e0a060"))
+                current = api.entry_version_id(entry)
+                self.table.setItem(row, 4, _cell(
+                    api.version_label(p, current, mark_latest=False)
+                    if current in p["versions"] else "v%03d (old)" % entry["version"]))
+                if api.newer_available(p, entry):
+                    self.table.setItem(row, 5, _cell(
+                        "%s available" % api.version_label(p, p["latest"], mark_latest=False),
+                        "#e0a060"))
                 else:
                     self.table.setItem(row, 5, _cell("Up to date", "#7fbf7f"))
         self.table.resizeColumnsToContents()

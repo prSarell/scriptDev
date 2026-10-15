@@ -259,6 +259,14 @@ where each location physically lives.
 |---|---|---|
 | Home machine, 2026-10-12 | `D:` (Bean): `D:\NWF_SHF\` | `F:` (One Touch), **today only**: `F:\NWF_SHF\` |
 | RMIT test install | lab scratch drive | lab H drive (setup may change) |
+| **T7, from 2026-10-15** (home + RMIT test machine) | `G:\scratch\NWF_SHF\` (seeded from `D:\NWF_SHF`) | `G:\H\NWF_SHF\` (copied from the One Touch, dates and read-only locks kept) |
+
+T7 setup checked 2026-10-15 (mayapy): Build lists backpack model
+v001–v003 and the EAP_010_010 camera from `G:\H`; `shotSetup_003.ma`
+opened from `G:\scratch` sets `PIPE_SCRATCH=G:/scratch` and loads the
+backpack v003 reference and `camera1`. `build_manifest.json` still holds
+`F:\` paths in `"source"`, which is a record only; the tools never read
+it back. Installer: `G:\mpPipe\mpPipe.zip`.
 
 Both `D:\NWF_SHF\` and `F:\NWF_SHF\` were seeded 2026-10-12 as exact copies
 of the full v1 skeleton (2,849 folders, 94 `workspace.mel`), so scratch and
@@ -929,6 +937,21 @@ The tools are developed side by side:
   H drive location. Until then, testing uses a single H drive (`F:` on the
   dev machine). If RMIT doesn't change it, this needs rethinking.
 
+  **Strategy (from the user, 2026-10-15):** building the pipeline is meant
+  to help shift RMIT to a less restrictive, shared server model. So the
+  tools are designed for the shared-server target, not around today's
+  per-login partitioning, and a working pipeline is part of the case for
+  that change.
+  - **Stand-in H drive (2026-10-15):** a Samsung T7 carried between home and
+    the RMIT test machine plays the shared H drive: `<T7>\H\NWF_SHF\` (H
+    drive setting `<T7>:\H`), with `<T7>\scratch\NWF_SHF\` as portable
+    scratch and `<T7>\mpPipe\` for the installer. Any drive letter works,
+    because references go through scratch `publish\` and `$PIPE_SCRATCH`,
+    never the H drive. The two film folders must sit in separate
+    top-level folders so the tools can tell H from scratch.
+  - Swapping the T7 for a real server should be a settings change only.
+    Keep any workaround for the partitioned setup out of the tools.
+
   Questions to settle:
   - **Who's at the machine (DECIDED 2026-10-13):** the RMIT Windows login
     matches the person's ShotGrid login ("yes the RMIT login matches their
@@ -953,10 +976,61 @@ The tools are developed side by side:
     H drive when a student publishes work from their scratch to the H
     drive." Publish is the only way in. There's no separate share step, and
     §1 still holds (nobody saves to the server by hand).
-    - OPEN: exactly what lands there. Does the versioned publish itself go
-      in `scenes\<login>\` (instead of `scenes\`)? Is the working file
-      copied alongside it? Is version numbering per asset (shared by the
-      group) or per person?
+    - ~~OPEN: exactly what lands there~~ — **DECIDED 2026-10-15** (the
+      user's answers):
+      - **Publishes are personal.** The versioned publish goes in
+        `scenes\<login>\` on the H drive, and the login is in the file
+        name: `EAP_010_010_s1234567_anim_v003.ma`. The user: this is
+        "mitigated by including the student number in the file name of
+        the publish and by the student # inside the scenes folder". So
+        **version numbers are per person**, and two people can't take the
+        same `v###`. No separate concurrency guard is needed.
+      - **Only the pipeline names published files.** "We are not locking
+        students into a name convention on the scratch drive." Working
+        files on scratch can be called anything and sit anywhere in the
+        asset/shot project; Publish renames on the way to the H drive (as
+        already decided in §3i).
+      - **Alembic caches go in a per-person folder too:**
+        `cache\alembic\<login>\`.
+      - **Asset publishes follow the same rule, for now:** model, rig etc.
+        go in `scenes\<login>\` with the login in the name. ("For now
+        yes.")
+      - **Latest = newest by time, across everyone (assets).** "Whoever's
+        is the most recent published asset (not shot). Time stamp of the
+        asset defines if it is the latest." Build Shot treats the most
+        recently published file of an asset + department as the latest,
+        whoever published it, and shows whose it is.
+      - **Who's publishing, for testing:** the Windows login ("whatever is
+        easiest for testing and moving between this machine and an RMIT
+        lab machine"). See the OPEN item above about `scout`.
+    - Is the working file copied alongside the publish? Not decided; the
+      default is no.
+    - **Built 2026-10-15** (asset and camera publishes; the shot publish
+      will follow the same rule):
+      - `publishTool_api.who()`: the Windows login, or `publish_as` in the
+        machine's `pipeline_config.json` (for staff testing on a machine
+        whose login isn't their RMIT one). Cleaned to lowercase letters and
+        digits, since it sits between underscores in file names. The
+        Publish window shows "Publishing as: <login>".
+      - Assets: `<asset>\scenes\<login>\<asset>_<login>_<code>_v###.ma`.
+        Cameras: `<shot>\scenes\<login>\<shot>_<login>_cam_v###.ma` +
+        `_camAnim_v###.ma/.json`. Version numbers are counted in the
+        person's own folder only.
+      - Build lists every person's publishes. A version is identified as
+        `<login>/v###` (e.g. `scout/v003`) and shown as "v003 (scout)".
+        The latest is the newest by the H-drive file's creation time,
+        whoever published it; the version menu lists newest first. A file
+        only counts if it sits in the folder of the login in its name.
+      - Each shot's `build_manifest.json` records `login` beside `version`.
+        Entries from before (no login) match nothing on the H drive, so
+        they show as "v003 (old)" with a newer version available, and
+        building switches them over. camera1 gets a `pipeCameraBy` stamp
+        beside `pipeCameraVersion`.
+      - Old-style publishes (`backpack_model_v003.ma`, no login) are
+        ignored by Build.
+      - Tests: `test_buildTool_mayapy.py` 76/76 (2026-10-15), including
+        two people's series, latest by time, `publish_as`, and a camera
+        published by Publish's own code and built by Build Shot.
   - **Overwriting (DECIDED 2026-10-13):** "People can overwrite their own
     work on the scratch drive but not on the H drive." The H drive is
     add-only: every publish is a new locked version, and nothing there is
@@ -964,10 +1038,9 @@ The tools are developed side by side:
     `_v###`, never reused).
   - Whether the tools only offer projects the person is assigned to in
     ShotGrid.
-  - SUGGESTION (Claude's, now in question given the publish decision
-    below): published files stay as they are (`scenes\<asset>_<dept>_v###`,
-    one version series per asset, not per person). ShotGrid already
-    records who published each version.
+  - ~~SUGGESTION (Claude's): published files stay as they are
+    (`scenes\<asset>_<dept>_v###`, one version series per asset, not per
+    person).~~ Superseded 2026-10-15: publishes are personal (above).
   - Effects on what's built: Publish works out the asset or shot from the
     scene's folder, so it must accept `scenes\<person>\`. My Scratch's
     "safe to remove" check assumes scenes sit directly in `scenes\`.
@@ -1211,40 +1284,67 @@ The tools are developed side by side:
               from a reference (default cameras and `camera1_old*` aside);
             - a reference the animator added by hand, from outside the
               pipeline, is neither, so Publish warns and names it.
-          - OPEN: whether every animated made-in-the-shot thing is
-            published automatically or the animator picks them; what each
-            one is called; and what happens to static things made in the
-            shot.
-        - **NEXT SESSION: confirm these defaults before building the shot
-          publish v0 (parked 2026-10-13, at the user's request: "ask me
-          these questions next time").** Nothing is built yet; today only
-          the shot camera can be published. Proposed v0 defaults:
+          - OPEN → DECIDED 2026-10-15, see "Shot (animation) publish v0"
+            below.
+        - **Shot (animation) publish v0 (DECIDED 2026-10-15).** The user
+          confirmed the proposed defaults from 2026-10-13 and answered the
+          remaining questions. Nothing is built yet; today only the shot
+          camera can be published.
           1. **One version number per publish:** everything from one
              animation publish shares a `v###` ("anim v003 of
              EAP_010_010").
-          2. **Pipeline rigs** (references from `publish\` with a
-             `cache_SET`): one Alembic per rig of the `cache_SET`, over the
-             whole timeline, plus a keys file and map that record the rig
-             version.
-          3. **Made in the shot:** every animated one is published
-             automatically, each as its own Alembic named after the object
-             (`EAP_010_010_bouncingBall_anim_v003.abc`). Static ones are
-             skipped in v0.
-          4. **Where files go on the H drive:** caches in the shot's
+          2. **The animator chooses, everything ticked:** Publish scans
+             the scene and lists every pipeline rig, made-in-shot item and
+             changed camera, all ticked. The animator can untick items
+             (e.g. a prop that didn't move).
+          3. **Pipeline rigs** (references from `publish\` with a
+             `cache_SET`): one Alembic per rig of its `cache_SET`, over the
+             whole timeline, plus a keys file and map (the camera way) that
+             record the rig version, so keys can be reapplied by control
+             name.
+          4. **Made in the shot:**
+             - animated ones: their own Alembic over the whole timeline;
+             - static ones: a **single-frame cache**, like a set (matches
+               the Alembic rule: keyframed assets get the full range, static
+               ones one frame);
+             - named from the object's name in the scene:
+               `<SHOT>_<object>_anim_v###.abc`, e.g.
+               `EAP_010_010_bouncingBall_anim_v003.abc`. Renaming the
+               object changes the file name.
+          5. **Where files go on the H drive:** caches in the shot's
              `cache\alembic\`; keys files and maps in `scenes\`, next to
              the camera publishes.
-          5. **ShotGrid and the edit:** a Version on the Shot with the movie
+          6. **ShotGrid and the edit:** a Version on the Shot with the movie
              (with sound), plus a copy in scratch
-             `premiere\shotgridMovs\EAP_010_010.mp4`.
-          6. **Not in v0:**
+             `premiere\shotgridMovs\EAP_010_010.mp4`, replaced on each
+             publish.
+          7. **Not in v0:**
              - Build Shot pulling animation back in;
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;
              - renaming items.
-
-          Also still to ask: all vs animator-chosen items, naming, and what
-          happens to static things made in the shot (above).
+          8. **Script-node check, for every publish (DECIDED 2026-10-15):**
+             Publish refuses a scene containing any script node other than
+             Maya's standard `uiConfigurationScriptNode` /
+             `sceneConfigurationScriptNode` (namespaced copies included),
+             names the node, and explains how to remove it. Applies to
+             asset, camera and shot publishes, not just animation. Why: on
+             2026-10-15 a student scene carried the `maya_secure_system`
+             scene virus (Defender: `Trojan:Python/Multiverze`), which hides
+             its code in script nodes. Publishing such a scene would spread
+             it to the shared H drive and into every shot that builds from
+             it.
+             - **Built 2026-10-15:** `publishTool_api.check_script_nodes()`
+               runs first in `publish()` and `publish_camera()`, and on
+               every Publish window refresh (which disables Publish). It
+               also refuses the two standard names when they hold Python,
+               `exec`, `base64`, `scriptJob`, `userSetup` and similar, and
+               it covers referenced files. Testing showed why that matters:
+               referencing a file runs its script node straight away.
+               `test_scriptNodeCheck_mayapy.py` 8/8, including 41 real
+               scenes (repo, T7, `D:`) that pass with their 68 standard
+               nodes.
         - **Shot-only items** (effects, caches, rigs made for one shot):
           - They belong to the shot (ID rule) and live in the shot's
             folder on the H drive, named

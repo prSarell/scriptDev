@@ -6,10 +6,11 @@ which curve drives which attribute). No UI, so it can be tested under mayapy.
 
 Design: pipeDev/filmPipeline_spec.md §3i "Cameras" and "The ID rule".
 
-    scratch  D:\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\layout_003.ma
-    H drive  F:\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\EAP_010_010_cam_v001.ma
-             F:\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\EAP_010_010_camAnim_v001.ma
-             F:\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\EAP_010_010_camAnim_v001.json
+    scratch  G:\\scratch\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\layout_003.ma
+    H drive  G:\\H\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\s1234567\\
+               EAP_010_010_s1234567_cam_v001.ma
+               EAP_010_010_s1234567_camAnim_v001.ma
+               EAP_010_010_s1234567_camAnim_v001.json
 
 Rules (DECIDED 2026-10-12):
 - A camera belongs to a shot; the ShotGrid Version goes on the Shot.
@@ -119,21 +120,19 @@ def check_camera(objects):
 # Versions on the H drive
 # ---------------------------------------------------------------------------
 
-def published_camera_versions(folder, shot):
-    """Version numbers already used by either camera file in folder."""
-    pattern = re.compile(r"^%s_(%s|%s)_v(\d{3})\.(ma|mb|json)$"
-                         % (re.escape(shot), CAM_CODE, KEYS_CODE), re.IGNORECASE)
-    if not os.path.isdir(folder):
-        return []
-    return sorted(set(int(m.group(2)) for m in
-                      (pattern.match(n) for n in os.listdir(folder)) if m))
+def published_camera_versions(folder, shot, login):
+    """Version numbers this person has already used for either camera file
+    in their folder."""
+    exts = ("ma", "mb", "json")
+    return sorted(set(api.published_versions(folder, shot, login, CAM_CODE, exts) +
+                      api.published_versions(folder, shot, login, KEYS_CODE, exts)))
 
 
-def camera_file_names(shot, version):
-    base = "%s_%%s_v%03d" % (shot, version)
-    return {"camera": base % CAM_CODE + ".ma",
-            "keys": base % KEYS_CODE + ".ma",
-            "map": base % KEYS_CODE + ".json"}
+def camera_file_names(shot, login, version):
+    """e.g. EAP_010_010_s1234567_cam_v001.ma, ..._camAnim_v001.ma/.json"""
+    return {"camera": api.published_name(shot, login, CAM_CODE, version, ".ma"),
+            "keys": api.published_name(shot, login, KEYS_CODE, version, ".ma"),
+            "map": api.published_name(shot, login, KEYS_CODE, version, ".json")}
 
 
 def plan_camera(scene_path, h_root, scratch_root, camera=None):
@@ -152,11 +151,13 @@ def plan_camera(scene_path, h_root, scratch_root, camera=None):
     if camera:
         check_camera([camera])
 
-    h_folder = os.path.join(h_root, *ctx["rel_folder"])
-    versions = published_camera_versions(h_folder, ctx["shot"])
+    login = api.who()
+    h_folder = api.personal_folder(h_root, ctx["rel_folder"][:5], login)
+    versions = published_camera_versions(h_folder, ctx["shot"], login)
     version = (versions[-1] + 1) if versions else 1
-    names = camera_file_names(ctx["shot"], version)
+    names = camera_file_names(ctx["shot"], login, version)
     ctx.update({
+        "login": login,
         "code": CAM_CODE,
         "asset": ctx["shot"],                # what playblast_frames names things by
         "asset_project": ctx["shot_project"],
@@ -291,6 +292,7 @@ def export_camera(camera, plan, start, end, scene_path):
         mapping = {
             "camera": PUBLISHED_CAMERA,
             "shot": plan["shot"],
+            "login": plan["login"],
             "version": plan["version"],
             "start": start,
             "end": end,
@@ -348,6 +350,7 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     can pass the asset setting without a special case)."""
     frame_count = None
     h_root = api.resolve_root(h_root)
+    api.check_script_nodes()
     camera = check_camera([camera])
     plan = plan_camera(scene_path, h_root, scratch_root)
     plan["objects"] = [cmds.ls(camera)[0]]

@@ -8,8 +8,8 @@ Design: pipeDev/filmPipeline_spec.md §3e (Build owns scratch), §3h
 (drives, 1:1 mirror) and §3i (Build Shot workflow, department codes,
 scratch management).
 
-    H drive  F:\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\backpack_model_v002.ma
-    scratch  D:\\NWF_SHF\\maya\\publish\\assets\\prop\\backpack\\scenes\\backpack_model_v002.ma
+    H drive  G:\\H\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\s1234567\\backpack_s1234567_model_v002.ma
+    scratch  G:\\scratch\\NWF_SHF\\maya\\publish\\assets\\prop\\backpack\\scenes\\s1234567\\backpack_s1234567_model_v002.ma
              (one copy per version, shared by every shot; each shot's
              assets\\build_manifest.json records the version it uses)
     camera   ...\\sequences\\EAP_010\\EAP_010_010\\assets\\camera\\cam.ma  (stays in its shot)
@@ -41,8 +41,10 @@ import pipeEnv                                            # $PIPE_SCRATCH refere
 MANIFEST_NAME = "build_manifest.json"   # in <shot>/assets/, records what was pulled
 KEEP_FILES = ("workspace.mel",)          # never removed from scratch
 
-PUBLISHED_RE = re.compile(r"^(?P<asset>.+)_(?P<code>[A-Za-z]+)_v(?P<version>\d{3})"
-                          r"\.(?P<ext>ma|mb)$", re.IGNORECASE)
+# <asset>_<login>_<code>_v###.<ext>, in <asset>\scenes\<login>\ (spec §4
+# "Personal work folders": publishes are personal, DECIDED 2026-10-15).
+PUBLISHED_RE = re.compile(r"^(?P<asset>.+)_(?P<login>[a-z0-9]+)_(?P<code>[A-Za-z]+)"
+                          r"_v(?P<version>\d{3})\.(?P<ext>ma|mb)$", re.IGNORECASE)
 DEPT_CODES = [code for _, code in pub.DEPARTMENTS]
 DEPT_LABELS = dict((code, label) for label, code in pub.DEPARTMENTS)
 DEPT_LABELS["cam"] = "Camera"
@@ -96,33 +98,94 @@ def shot_of_scene(scene_path, scratch_root):
 # Published assets on the H drive
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Version ids. Publishes are personal, so a version is a person + number
+# ("scout/v003"): two people can both have a v003. The latest is the most
+# recently published, whoever published it (spec §4 "Personal work
+# folders": "Time stamp of the asset defines if it is the latest").
+# ---------------------------------------------------------------------------
+
+def version_id(login, version):
+    return "%s/v%03d" % (login or "?", version)
+
+
+def entry_version_id(entry):
+    """The version id a manifest entry records. Entries from before personal
+    publishes have no login and match no current version."""
+    return version_id(entry.get("login"), entry["version"])
+
+
+def version_label(published, vid, mark_latest=True):
+    """'v003 (s1234567)', plus '  (latest)' for the newest."""
+    info = published.get("info", {}).get(vid)
+    if not info:
+        return vid
+    text = "v%03d (%s)" % (info["version"], info["login"])
+    if mark_latest and vid == published.get("latest"):
+        text += "  (latest)"
+    return text
+
+
+def newer_available(published, entry):
+    """True if the published entry has something newer than what the
+    manifest entry records."""
+    if not entry:
+        return False
+    current = entry_version_id(entry)
+    info = published.get("info", {})
+    if current not in info:
+        return True     # an old or removed version: anything on the H drive is newer
+    return info[published["latest"]]["time"] > info[current]["time"]
+
+
+def _add_version(entry, login, version, path, time_path=None):
+    vid = version_id(login, version)
+    entry["versions"][vid] = path
+    entry["info"][vid] = {"login": login, "version": version,
+                          "time": publish_time(time_path or path)}
+
+
+def _finish(entry):
+    entry["latest"] = max(entry["info"], key=lambda v: entry["info"][v]["time"])
+    return entry
+
+
+def sorted_versions(published):
+    """Version ids, newest first."""
+    return sorted(published["versions"], key=lambda v: published["info"][v]["time"],
+                  reverse=True)
+
+
 def list_published(h_root, film):
     """Every published asset on the H drive, grouped by asset + department.
 
     Returns a list of dicts sorted by type/asset/department:
-      {asset_type, asset, code, versions: {version: path}, latest}
+      {asset_type, asset, code, versions: {vid: path},
+       info: {vid: {login, version, time}}, latest: vid}
     """
     assets_dir = os.path.join(h_root, film, "maya", "assets")
     groups = {}
     for asset_type, asset in pub.list_h_assets(h_root, film):
         scenes = os.path.join(assets_dir, asset_type, asset, "scenes")
         for dirpath, _, filenames in os.walk(scenes):
+            login = os.path.basename(dirpath)
             for name in filenames:
                 m = PUBLISHED_RE.match(name)
-                if not m or m.group("asset").lower() != asset.lower():
+                # Only in the publisher's own folder, named for this asset.
+                if (not m or m.group("asset").lower() != asset.lower()
+                        or m.group("login").lower() != login.lower()):
                     continue
                 code = m.group("code")
                 key = (asset_type, asset, code)
                 entry = groups.setdefault(key, {
                     "asset_type": asset_type, "asset": asset, "code": code,
-                    "versions": {}})
-                entry["versions"][int(m.group("version"))] = os.path.join(dirpath, name)
+                    "versions": {}, "info": {}})
+                _add_version(entry, login.lower(), int(m.group("version")),
+                             os.path.join(dirpath, name))
     result = []
     for key in sorted(groups, key=lambda k: (k[0], k[1].lower(),
                                              DEPT_CODES.index(k[2]) if k[2] in DEPT_CODES else 99)):
-        entry = groups[key]
-        entry["latest"] = max(entry["versions"])
-        result.append(entry)
+        result.append(_finish(groups[key]))
     return result
 
 
@@ -136,32 +199,37 @@ CURVE_KEY_ATTRS = ("ktv", "kix", "kiy", "kox", "koy", "kit", "kot", "kwl", "tan"
 CAMERA_FILES = {"camera": "assets/camera/cam.ma",
                 "keys": "assets/camera/camAnim.ma",
                 "map": "assets/camera/camAnim.json"}
-CAMERA_RE = re.compile(r"^(?P<shot>.+)_(?P<code>cam|camAnim)_v(?P<version>\d{3})"
-                       r"\.(?P<ext>ma|json)$", re.IGNORECASE)
+BY_ATTR = "pipeCameraBy"            # who published the built camera
+CAMERA_RE = re.compile(r"^(?P<shot>.+)_(?P<login>[a-z0-9]+)_(?P<code>cam|camAnim)"
+                       r"_v(?P<version>\d{3})\.(?P<ext>ma|json)$", re.IGNORECASE)
 
 
 def list_shot_cameras(h_root, film, seq, shot):
-    """The shot's published cameras on the H drive, as a list with at most
-    one entry shaped like list_published()'s, plus 'kind': 'camera' and
-    'files': {version: {camera, keys, map}}. Only complete versions (all
-    three files) count."""
+    """The shot's published cameras on the H drive (everyone's, from each
+    person's scenes\\<login>\\), as a list with at most one entry shaped
+    like list_published()'s, plus 'kind': 'camera' and
+    'files': {vid: {camera, keys, map}}. Only complete versions (all three
+    files) count. The latest is the newest by publish time."""
     scenes = os.path.join(shot_folder(h_root, film, seq, shot), "scenes")
     found = {}
-    if os.path.isdir(scenes):
-        for name in os.listdir(scenes):
+    for dirpath, _, filenames in os.walk(scenes):
+        login = os.path.basename(dirpath).lower()
+        for name in filenames:
             m = CAMERA_RE.match(name)
-            if not m or m.group("shot").lower() != shot.lower():
+            if (not m or m.group("shot").lower() != shot.lower()
+                    or m.group("login").lower() != login):
                 continue
             part = ("camera" if m.group("code").lower() == "cam" else
                     "keys" if m.group("ext").lower() == "ma" else "map")
-            found.setdefault(int(m.group("version")), {})[part] = os.path.join(scenes, name)
-    files = dict((v, f) for v, f in found.items() if len(f) == 3)
-    if not files:
-        return []
-    return [{"kind": "camera", "asset_type": CAMERA_TYPE, "asset": shot,
-             "code": CAMERA_CODE, "files": files,
-             "versions": dict((v, f["camera"]) for v, f in files.items()),
-             "latest": max(files)}]
+            found.setdefault((login, int(m.group("version"))), {})[part] = \
+                os.path.join(dirpath, name)
+    entry = {"kind": "camera", "asset_type": CAMERA_TYPE, "asset": shot,
+             "code": CAMERA_CODE, "files": {}, "versions": {}, "info": {}}
+    for (login, version), files in found.items():
+        if len(files) == 3:
+            _add_version(entry, login, version, files["camera"])
+            entry["files"][version_id(login, version)] = files
+    return [_finish(entry)] if entry["files"] else []
 
 
 def publish_time(path):
@@ -256,20 +324,23 @@ def copy_published(source, maya_dir):
     return dest, True
 
 
-def pull(shot_dir, published, version):
-    """Make sure one published version is in the shared publish folder and
-    record that this shot uses it. Other shots' versions are untouched.
-    Returns the path in the publish folder."""
-    if version not in published["versions"]:
-        raise BuildError("v%03d of %s %s isn't on the H drive."
-                         % (version, published["asset"], published["code"]))
-    source = published["versions"][version]
+def pull(shot_dir, published, vid):
+    """Make sure one published version (a version id, e.g. 'scout/v003')
+    is in the shared publish folder and record that this shot uses it.
+    Other shots' versions are untouched. Returns the path in the publish
+    folder."""
+    if vid not in published["versions"]:
+        raise BuildError("%s of %s %s isn't on the H drive."
+                         % (vid, published["asset"], published["code"]))
+    source = published["versions"][vid]
     dest, _ = copy_published(source, maya_dir_of_shot(shot_dir))
 
+    info = published["info"][vid]
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     manifest = read_manifest(shot_dir)
     manifest[key] = {
-        "version": version,
+        "version": info["version"],
+        "login": info["login"],
         "shared": _maya_rel(source),
         "source": source,
         "pulled": datetime.now().isoformat(timespec="seconds"),
@@ -358,32 +429,36 @@ def _old_paths(shot_dir, published, entry):
     return paths
 
 
-def build_asset(shot_dir, published, version):
-    """One click for one asset: make sure the chosen version is in the
-    shared publish folder, then make sure the open scene references it.
-    A reference to another version (or to an old copy in the shot) is
-    repointed, never referenced twice. Only this shot changes.
+def build_asset(shot_dir, published, vid):
+    """One click for one asset: make sure the chosen version (a version id,
+    e.g. 'scout/v003') is in the shared publish folder, then make sure the
+    open scene references it. A reference to another version (or to an old
+    copy in the shot) is repointed, never referenced twice. Only this shot
+    changes.
 
     Returns (list of what was done, warning or None, replaced) where
     replaced is the path of a version this shot no longer uses, or None."""
     if published.get("kind") == "camera":
-        done, warning = build_camera(shot_dir, published, version)
+        done, warning = build_camera(shot_dir, published, vid)
         return done, warning, None
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     namespace = namespace_for(published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
     previous = entry_path(shot_dir, entry) if entry else None
+    label = version_label(published, vid, mark_latest=False)
     done = []
 
-    restored = bool(entry and entry["version"] == version and entry.get("shared")
-                    and not os.path.isfile(previous))
-    dest = pull(shot_dir, published, version)
+    same = bool(entry) and entry_version_id(entry) == vid
+    restored = bool(same and entry.get("shared") and not os.path.isfile(previous))
+    dest = pull(shot_dir, published, vid)
     if not entry:
-        done.append("pulled v%03d" % version)
-    elif entry["version"] != version:
-        done.append("v%03d -> v%03d" % (entry["version"], version))
+        done.append("pulled %s" % label)
+    elif not same:
+        done.append("%s -> %s" % (version_label(published, entry_version_id(entry), False)
+                                  if entry_version_id(entry) in published["info"]
+                                  else "v%03d" % entry["version"], label))
     elif restored:
-        done.append("v%03d pulled again (it was missing)" % version)
+        done.append("%s pulled again (it was missing)" % label)
     replaced = previous if previous and not pub._same_path(previous, dest) else None
 
     # References are written with $PIPE_SCRATCH so the shot opens from any
@@ -417,7 +492,7 @@ def build_asset(shot_dir, published, version):
             for node in nodes:
                 repoint_reference(node, ref_path)
             use_clean_namespace(dest, namespace)
-            done.append("scene reference switched to v%03d" % version)
+            done.append("scene reference switched to %s" % label)
             return done, None, replaced
 
     reference_into_scene(ref_path, namespace)
@@ -507,28 +582,30 @@ def repair_scene(h_root):
 # and locked (spec §3i "Cameras": camera and keys are stored separately)
 # ---------------------------------------------------------------------------
 
-def pull_camera(shot_dir, published, version):
+def pull_camera(shot_dir, published, vid):
     """Copy one camera version's three files into the shot under fixed
     names and record it in the manifest. Returns the camera file path."""
-    if version not in published["files"]:
-        raise BuildError("Camera v%03d of %s isn't on the H drive."
-                         % (version, published["asset"]))
+    if vid not in published["files"]:
+        raise BuildError("Camera %s of %s isn't on the H drive."
+                         % (vid, published["asset"]))
     for part, rel in CAMERA_FILES.items():
         dest = os.path.join(shot_dir, *rel.split("/"))
         if not os.path.isdir(os.path.dirname(dest)):
             os.makedirs(os.path.dirname(dest))
         if os.path.isfile(dest):
             os.chmod(dest, stat.S_IWRITE)
-        shutil.copy2(published["files"][version][part], dest)
+        shutil.copy2(published["files"][vid][part], dest)
         os.chmod(dest, stat.S_IWRITE)
 
     key = manifest_key(CAMERA_TYPE, published["asset"], CAMERA_CODE)
     manifest = read_manifest(shot_dir)
+    info = published["info"][vid]
     manifest[key] = {
-        "version": version,
+        "version": info["version"],
+        "login": info["login"],
         "file": CAMERA_FILES["camera"],
         "extra_files": [CAMERA_FILES["keys"], CAMERA_FILES["map"]],
-        "source": published["files"][version]["camera"],
+        "source": published["files"][vid]["camera"],
         "pulled": datetime.now().isoformat(timespec="seconds"),
     }
     _write_manifest(shot_dir, manifest)
@@ -536,11 +613,15 @@ def pull_camera(shot_dir, published, version):
 
 
 def shot_camera():
-    """The built shot camera in the open scene: (transform, version) or
-    (None, None). It's the top-level camera1 carrying the build stamp."""
+    """The built shot camera in the open scene: (transform, version id) or
+    (None, None). It's the top-level camera1 carrying the build stamp.
+    Cameras built before personal publishes have no BY_ATTR, so their id
+    matches no current version and a rebuild replaces them."""
     for node in cmds.ls(CAMERA_NAME, long=True, type="transform") or []:
         if node == "|" + CAMERA_NAME and cmds.attributeQuery(VERSION_ATTR, node=node, exists=True):
-            return node, cmds.getAttr("%s.%s" % (node, VERSION_ATTR))
+            by = (cmds.getAttr("%s.%s" % (node, BY_ATTR))
+                  if cmds.attributeQuery(BY_ATTR, node=node, exists=True) else None)
+            return node, version_id(by, cmds.getAttr("%s.%s" % (node, VERSION_ATTR)))
     return None, None
 
 
@@ -612,7 +693,7 @@ def _drop_namespace(ns):
         cmds.namespace(removeNamespace=":" + ns, mergeNamespaceWithRoot=True)
 
 
-def import_camera(shot_dir, version):
+def import_camera(shot_dir, version, login):
     """Import the pulled camera as a live camera1, connect its keys, stamp
     and lock it. Returns the transform."""
     cam_path = os.path.join(shot_dir, *CAMERA_FILES["camera"].split("/"))
@@ -643,7 +724,8 @@ def import_camera(shot_dir, version):
     _drop_namespace(ns)
 
     # Stamp: which shot and version this camera is (how a rebuild knows).
-    for attr, value in ((SHOT_ATTR, mapping.get("shot", "")), (VERSION_ATTR, version)):
+    for attr, value in ((SHOT_ATTR, mapping.get("shot", "")), (VERSION_ATTR, version),
+                        (BY_ATTR, login)):
         if not cmds.attributeQuery(attr, node=transform, exists=True):
             if attr == VERSION_ATTR:
                 cmds.addAttr(transform, longName=attr, attributeType="long")
@@ -658,7 +740,7 @@ def import_camera(shot_dir, version):
     return transform
 
 
-def build_camera(shot_dir, published, version):
+def build_camera(shot_dir, published, vid):
     """One click for the shot camera: pull (or update), then import it live
     as camera1 with its keys, locked. An existing camera1 is renamed
     camera1_old first. Returns (done, warning)."""
@@ -667,12 +749,13 @@ def build_camera(shot_dir, published, version):
     done = []
     files_there = all(os.path.isfile(os.path.join(shot_dir, *r.split("/")))
                       for r in CAMERA_FILES.values())
-    if not entry or entry["version"] != version or not files_there:
-        pull_camera(shot_dir, published, version)
-        done.append(("updated to v%03d" if entry else "pulled v%03d") % version)
+    label = version_label(published, vid, mark_latest=False)
+    if not entry or entry_version_id(entry) != vid or not files_there:
+        pull_camera(shot_dir, published, vid)
+        done.append(("updated to %s" if entry else "pulled %s") % label)
 
-    current, current_version = shot_camera()
-    if current and current_version == version:
+    current, current_vid = shot_camera()
+    if current and current_vid == vid:
         done.append("already up to date")
         return done, None
 
@@ -690,8 +773,9 @@ def build_camera(shot_dir, published, version):
     for node in cmds.ls(CAMERA_NAME, long=True, type="transform") or []:
         if node == "|" + CAMERA_NAME:
             done.append("existing camera1 renamed %s" % _move_out_of_the_way(node))
-    import_camera(shot_dir, version)
-    done.append("camera1 v%03d imported and locked" % version)
+    info = published["info"][vid]
+    import_camera(shot_dir, info["version"], info["login"])
+    done.append("camera1 %s imported and locked" % label)
     return done, None
 
 
@@ -793,9 +877,9 @@ def scratch_items(scratch_root, h_root, film):
                 newest = (t, p)
         if newest:
             t, p = newest
-            latest_text = "%s v%03d, %s" % (DEPT_LABELS.get(p["code"], p["code"]),
-                                             p["latest"],
-                                             datetime.fromtimestamp(t).strftime("%d %b %H:%M"))
+            latest_text = "%s %s, %s" % (DEPT_LABELS.get(p["code"], p["code"]),
+                                          version_label(p, p["latest"], mark_latest=False),
+                                          datetime.fromtimestamp(t).strftime("%d %b %H:%M"))
         scenes = os.path.normcase(os.path.join(folder, "scenes")) + os.sep
         risky = []
         for f in files:

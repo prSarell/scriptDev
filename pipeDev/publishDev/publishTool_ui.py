@@ -256,7 +256,12 @@ class PublishToolUI(QtWidgets.QDialog):
             self.root_edits[api.SCRATCH].setText(moved)
             self.status.show_message("Scratch drive set to %s, where the open scene is." % moved)
         scene, ctx = self._scene_context()
-        self.scene_lbl.setText(scene or "(unsaved scene)")
+        try:
+            login = api.who()
+        except api.PublishError:
+            login = "?"
+        # Publishes are personal: say whose folder and name they'll go under.
+        self.scene_lbl.setText("%s\nPublishing as: %s" % (scene or "(unsaved scene)", login))
         h_root = self._roots()[0]
         key = (scene, h_root)
         if key != self._picker_key:
@@ -309,6 +314,10 @@ class PublishToolUI(QtWidgets.QDialog):
         scene, ctx = self._scene_context()
         self.table.setRowCount(len(self._rows))
         problems = []
+        try:
+            api.check_script_nodes()    # also checked again on Publish
+        except api.PublishError as e:
+            problems.append(str(e))
         for r, row in enumerate(self._rows):
             self.table.setItem(r, 0, _cell(row["asset"]))
             self.table.setItem(r, 1, _cell(row["asset_type"]))
@@ -459,14 +468,15 @@ class PublishToolUI(QtWidgets.QDialog):
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
                     ok = False
                     continue
+                version = "v%03d (%s)" % (plan["version"], plan["login"])
                 if plan["sg_error"]:
-                    lines.append("%s: v%03d saved to the H drive, but the ShotGrid "
-                                 "upload failed:\n  %s" % (label, plan["version"], plan["sg_error"]))
+                    lines.append("%s: %s saved to the H drive, but the ShotGrid "
+                                 "upload failed:\n  %s" % (label, version, plan["sg_error"]))
                     ok = False
                 else:
                     entity = plan.get("sg_asset") or plan.get("sg_shot")
-                    lines.append("%s: published v%03d to the H drive and ShotGrid (%s)"
-                                 % (label, plan["version"], entity["code"]))
+                    lines.append("%s: published %s to the H drive and ShotGrid (%s)"
+                                 % (label, version, entity["code"]))
                 for warning in plan.get("warnings") or []:
                     lines.append("  " + warning)
                 if plan["movie_warning"]:

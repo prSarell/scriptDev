@@ -6,8 +6,12 @@ locked, versioned milestone. No UI, so it can be tested under mayapy.
 Design: pipeDev/filmPipeline_spec.md §3h (drives, 1:1 mirror) and §3i
 (tabs, department codes, where publishes land).
 
-    scratch  D:\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\backPackPrevis.mb
-    H drive  F:\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\backpack_model_v001.mb
+    scratch  G:\\scratch\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\anything\\backPackPrevis.mb
+    H drive  G:\\H\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\s1234567\\backpack_s1234567_model_v001.mb
+
+Publishes are personal (spec §4 "Personal work folders", 2026-10-15): each
+person's go in scenes\\<login>\\ with the login in the name, so everyone
+has their own version series. Working files can be called anything.
 
 One click publishes: playblast (shotSub-style, default 2 frames) ->
 copy to H drive -> ShotGrid Version on the matching Asset. The local
@@ -85,6 +89,34 @@ SCRATCH = "scratch_root"
 
 def get_root(key):
     return load_config().get(key, "")
+
+
+# Who is publishing. Publishes are personal (spec §4 "Personal work
+# folders", DECIDED 2026-10-15): they go in scenes\<login>\ with the login
+# in the file name, so everyone has their own version series. The login
+# is the Windows login (RMIT logins match ShotGrid logins). "publish_as"
+# in the machine's settings overrides it, for staff testing on a machine
+# whose Windows login isn't their RMIT one.
+PUBLISH_AS = "publish_as"
+
+
+def clean_login(name):
+    """Logins go in file names between underscores: letters and digits only."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def who():
+    """The login publishes are made under, e.g. 's1234567'."""
+    import getpass
+    login = clean_login(load_config().get(PUBLISH_AS, ""))
+    if not login:
+        try:
+            login = clean_login(getpass.getuser())
+        except Exception:
+            login = clean_login(os.environ.get("USERNAME", ""))
+    if not login:
+        raise PublishError("Couldn't tell who is logged in, so the publish can't be named.")
+    return login
 
 
 def set_root(key, path):
@@ -205,10 +237,12 @@ def asset_context(scene_path):
 # Versions on the H drive
 # ---------------------------------------------------------------------------
 
-def published_versions(folder, asset, code):
-    """Sorted version numbers of <asset>_<code>_v###.ma/.mb in folder."""
+def published_versions(folder, asset, login, code, exts=("ma", "mb")):
+    """Sorted version numbers of <asset>_<login>_<code>_v###.<ext> in
+    folder: one person's version series for one asset + department."""
     pattern = re.compile(
-        r"^%s_%s_v(\d{3})\.(ma|mb)$" % (re.escape(asset), re.escape(code)),
+        r"^%s_%s_%s_v(\d{3})\.(%s)$" % (re.escape(asset), re.escape(login),
+                                        re.escape(code), "|".join(exts)),
         re.IGNORECASE)
     if not os.path.isdir(folder):
         return []
@@ -217,11 +251,19 @@ def published_versions(folder, asset, code):
         m = pattern.match(name)
         if m:
             versions.append(int(m.group(1)))
-    return sorted(versions)
+    return sorted(set(versions))
 
 
-def published_name(asset, code, version, ext):
-    return "%s_%s_v%03d%s" % (asset, code, version, ext)
+def published_name(asset, login, code, version, ext):
+    """e.g. backpack_s1234567_model_v003.ma. Only the pipeline names
+    published files; working files on scratch can be called anything."""
+    return "%s_%s_%s_v%03d%s" % (asset, login, code, version, ext)
+
+
+def personal_folder(h_root, rel_project, login):
+    """<H>\\<film>\\maya\\...\\<asset or shot>\\scenes\\<login>: where one
+    person's publishes for an asset or shot go."""
+    return os.path.join(h_root, *(list(rel_project) + ["scenes", login]))
 
 
 def list_h_assets(h_root, film):
@@ -269,11 +311,16 @@ def plan_publish(scene_path, h_root, scratch_root, code, target=None):
             raise PublishError("No folder for asset '%s' on the H drive." % target[1])
     ctx["is_source_asset"] = (ctx["asset_type"], ctx["asset"]) == ctx["source_asset"]
 
-    h_folder = os.path.join(h_root, *ctx["rel_folder"])
-    versions = published_versions(h_folder, ctx["asset"], code)
+    # Wherever the working file sits on scratch, the publish goes in the
+    # person's own folder: <asset>\scenes\<login>\.
+    login = who()
+    h_folder = personal_folder(h_root, [ctx["film"], "maya", "assets",
+                                        ctx["asset_type"], ctx["asset"]], login)
+    versions = published_versions(h_folder, ctx["asset"], login, code)
     version = (versions[-1] + 1) if versions else 1
-    name = published_name(ctx["asset"], code, version, ctx["ext"])
+    name = published_name(ctx["asset"], login, code, version, ctx["ext"])
     ctx.update({
+        "login": login,
         "code": code,
         "h_folder": h_folder,
         "version": version,
@@ -395,6 +442,47 @@ def check_cache_set(objects):
                 "Publish the whole rig (or include them), or take them out of the set."
                 % (cache_set, ", ".join(outside[:5])))
     return cache_set
+
+
+# Script nodes run code when a scene opens, which is how Maya scene viruses
+# spread (spec §4 "Shot (animation) publish v0", item 8: on 2026-10-15 a
+# student scene carried maya_secure_system). A published file reaches the
+# shared H drive and every shot built from it, so publishing refuses any
+# script node but Maya's own two, and those two only with ordinary MEL in
+# them.
+STANDARD_SCRIPT_NODES = ("uiConfigurationScriptNode", "sceneConfigurationScriptNode")
+SUSPICIOUS_SCRIPT_TEXT = re.compile(
+    r"python\s*\(|\bimport\s+\w|exec\s*\(|eval\s*\(|base64|b64decode|zlib|"
+    r"userSetup|scriptJob|maya_secure_system|vaccine|leukocyte|fuckVirus",
+    re.IGNORECASE)
+
+
+def check_script_nodes():
+    """Refuse a scene with a script node that isn't Maya's own (in this
+    scene or in anything it references). Raises PublishError naming each
+    node and how to get rid of it."""
+    bad = []
+    for node in cmds.ls(type="script") or []:
+        short = node.split("|")[-1].split(":")[-1]
+        code = "%s\n%s" % (cmds.getAttr(node + ".before") or "",
+                           cmds.getAttr(node + ".after") or "")
+        if short in STANDARD_SCRIPT_NODES and not SUSPICIOUS_SCRIPT_TEXT.search(code):
+            continue
+        where = ""
+        if cmds.referenceQuery(node, isNodeReferenced=True):
+            where = " (from the reference %s)" % os.path.basename(
+                cmds.referenceQuery(node, filename=True, withoutCopyNumber=True))
+        bad.append(node + where)
+    if bad:
+        raise PublishError(
+            "This scene contains script nodes, which run code when the scene is "
+            "opened, so it can't be published:\n  %s\n\n"
+            "Scene viruses hide in script nodes, and a publish goes to the shared "
+            "H drive and into everyone's shots. If you didn't add these on purpose, "
+            "delete them (Windows > General Editors > Expression Editor > Select "
+            "Filter > By Script Node Name), save, and publish again. If one comes "
+            "from a reference, fix that file first. Ask your teacher if you're unsure."
+            % "\n  ".join(bad))
 
 
 def export_to_h_drive(objects, plan):
@@ -617,6 +705,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     'sg_version' and 'sg_error' (set if only the ShotGrid upload failed,
     after the H-drive write succeeded)."""
     h_root = resolve_root(h_root)
+    check_script_nodes()
     plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
     plan["objects"] = list(objects or [])
     if code == RIG_CODE:

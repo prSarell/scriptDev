@@ -10,7 +10,10 @@ old in-shot references get repointed.
 Covers spec §3i: "One shared publish folder on scratch", "Each version is
 its own file", "Clearing old versions", "Reference paths that work on any
 drive (PIPE_SCRATCH)", "Scratch drive follows the work".
-Last run 2026-10-13: 56/56 passed.
+Also covers spec §4 "Personal work folders" (2026-10-15): publishes in
+scenes\<login>\ named <asset>_<login>_<code>_v###, per-person version
+series, latest = newest by publish time across people, publish_as, and a
+camera published by Publish's own code and built by Build Shot.
 """
 import os, sys, json, stat, shutil, tempfile
 
@@ -41,8 +44,10 @@ def check(name, ok):
     print(("PASS " if ok else "FAIL ") + name)
 
 
-# H drive publishes: v001 and v002 of the backpack, a locator "ctrl" in both.
-scenes_h = os.path.join(H, FILM, "maya", "assets", "prop", "backpack", "scenes")
+# H drive publishes: v001 and v002 of the backpack by "anna", a locator
+# "ctrl" in both. Publishes are personal: scenes\<login>\.
+LOGIN = "anna"
+scenes_h = os.path.join(H, FILM, "maya", "assets", "prop", "backpack", "scenes", LOGIN)
 os.makedirs(scenes_h)
 for v in (1, 2):
     cmds.file(new=True, force=True)
@@ -50,7 +55,7 @@ for v in (1, 2):
     cmds.spaceLocator(name="ctrl")
     if v == 2:
         cmds.polySphere(name="strap_geo")
-    p = os.path.join(scenes_h, "backpack_model_v%03d.ma" % v)
+    p = os.path.join(scenes_h, "backpack_%s_model_v%03d.ma" % (LOGIN, v))
     cmds.file(rename=p); cmds.file(save=True, type="mayaAscii")
     os.chmod(p, stat.S_IREAD)
 
@@ -62,7 +67,11 @@ for shot in ("EAP_010_010", "EAP_010_020", "EAP_010_030"):
     shots[shot] = d
 maya_dir = os.path.join(S, FILM, "maya")
 published = [p for p in api.list_published(H, FILM) if p["code"] == "model"][0]
-v1_local = os.path.join(maya_dir, "publish", "assets", "prop", "backpack", "scenes", "backpack_model_v001.ma")
+V1, V2 = api.version_id(LOGIN, 1), api.version_id(LOGIN, 2)
+check("listing keys versions by person", sorted(published["versions"]) == [V1, V2])
+check("latest is the newest", published["latest"] == V2)
+v1_local = os.path.join(maya_dir, "publish", "assets", "prop", "backpack", "scenes", LOGIN,
+                        "backpack_%s_model_v001.ma" % LOGIN)
 v2_local = v1_local.replace("v001", "v002")
 
 
@@ -81,26 +90,27 @@ n = os.path.normcase
 
 # --- shot 010 builds v1 and keys the control
 open_shot("EAP_010_010")
-done, warn, old = api.build_asset(shots["EAP_010_010"], published, 1)
+done, warn, old = api.build_asset(shots["EAP_010_010"], published, V1)
 check("010 v1 pulled into publish folder", os.path.isfile(v1_local))
 check("publish copy is read-only", not os.access(v1_local, os.W_OK))
 check("010 references the publish copy", ref_paths() == [n(v1_local)])
 m = api.read_manifest(shots["EAP_010_010"])["prop/backpack/model"]
-check("manifest records shared path + version", m["version"] == 1 and m["shared"].endswith("backpack_model_v001.ma"))
+check("manifest records shared path + version + login", m["version"] == 1 and m["login"] == LOGIN
+      and m["shared"].endswith("scenes/anna/backpack_anna_model_v001.ma"))
 check("nothing copied into the shot's assets", not os.path.isdir(os.path.join(shots["EAP_010_010"], "assets", "prop")))
 cmds.setKeyframe("backpack:ctrl.tx", time=1, value=0); cmds.setKeyframe("backpack:ctrl.tx", time=10, value=5)
 s010 = os.path.join(shots["EAP_010_010"], "scenes", "shot010.ma")
 cmds.file(rename=s010); cmds.file(save=True, type="mayaAscii")
-done, warn, old = api.build_asset(shots["EAP_010_010"], published, 1)
+done, warn, old = api.build_asset(shots["EAP_010_010"], published, V1)
 check("rebuild same version: already up to date", done == ["already up to date"] and old is None)
 
 # --- shot 020 builds v1, keys, then updates to v2
 open_shot("EAP_010_020")
-api.build_asset(shots["EAP_010_020"], published, 1)
+api.build_asset(shots["EAP_010_020"], published, V1)
 cmds.setKeyframe("backpack:ctrl.ty", time=1, value=0); cmds.setKeyframe("backpack:ctrl.ty", time=20, value=3)
-done, warn, old = api.build_asset(shots["EAP_010_020"], published, 2)
+done, warn, old = api.build_asset(shots["EAP_010_020"], published, V2)
 check("020 update switched reference to v2", ref_paths() == [n(v2_local)])
-check("020 update reported", "scene reference switched to v002" in done)
+check("020 update reported", "scene reference switched to v002 (anna)" in done)
 check("020 keys survived the switch", cmds.keyframe("backpack:ctrl.ty", query=True, keyframeCount=True) == 2)
 check("020 sees new v2 content", cmds.objExists("backpack:strap_geo"))
 check("old v1 reported as replaced", old and n(old) == n(v1_local))
@@ -115,14 +125,14 @@ check("010 still references v1", ref_paths() == [n(v1_local)])
 check("010 keys intact", cmds.keyframe("backpack:ctrl.tx", query=True, keyframeCount=True) == 2)
 
 # --- 010 updates too: v1 now unused
-done, warn, old = api.build_asset(shots["EAP_010_010"], published, 2)
+done, warn, old = api.build_asset(shots["EAP_010_010"], published, V2)
 check("010 switched to v2", ref_paths() == [n(v2_local)])
 check("010 keys survived", cmds.keyframe("backpack:ctrl.tx", query=True, keyframeCount=True) == 2)
 check("v1 now unused by any shot", api.unused_versions([old], maya_dir) == [old])
 os.chmod(v1_local, stat.S_IWRITE); os.remove(v1_local)   # (the UI sends it to the Recycle Bin)
 
 # --- roll 010 back to v1: pulled again from H
-done, warn, old = api.build_asset(shots["EAP_010_010"], published, 1)
+done, warn, old = api.build_asset(shots["EAP_010_010"], published, V1)
 check("rollback pulled v1 again", os.path.isfile(v1_local))
 check("rollback switched reference to v1", ref_paths() == [n(v1_local)])
 check("rollback: v2 still used by 020", api.unused_versions([old], maya_dir) == [])
@@ -142,7 +152,7 @@ check("repair again: nothing to do", fixed == [] and not_fixed == [])
 shot30 = shots["EAP_010_030"]
 legacy = os.path.join(shot30, "assets", "prop", "backpack", "backpack.ma")
 os.makedirs(os.path.dirname(legacy))
-shutil.copy2(os.path.join(scenes_h, "backpack_model_v001.ma"), legacy)
+shutil.copy2(os.path.join(scenes_h, "backpack_anna_model_v001.ma"), legacy)
 os.chmod(legacy, stat.S_IWRITE)
 open_shot("EAP_010_030")
 cmds.file(legacy, reference=True, namespace="backpack")
@@ -153,7 +163,7 @@ os.remove(legacy)       # what we did to EAP_010_010 on the real scratch drive
 open_shot("EAP_010_030", s030)
 fixed, not_fixed = api.repair_scene(H)
 check("repair explains old in-shot copy", not fixed and len(not_fixed) == 1 and "Build Shot" in not_fixed[0])
-done, warn, old = api.build_asset(shot30, published, 2)
+done, warn, old = api.build_asset(shot30, published, V2)
 check("build repoints legacy reference to publish v2", ref_paths() == [n(v2_local)])
 check("legacy keys survived", cmds.keyframe("backpack:ctrl.tz", query=True, keyframeCount=True) == 2)
 check("only one reference (not doubled)", len(api.scene_references()) == 1)
@@ -170,7 +180,7 @@ if os.path.isfile(real):
     check("real scene: repair explains old copy", not fixed and len(not_fixed) == 1
           and "Build Shot" in not_fixed[0])
     print("   ", not_fixed)
-    done, warn, old = api.build_asset(shot10, published, 2)
+    done, warn, old = api.build_asset(shot10, published, V2)
     print("   ", done)
     check("real scene: relative legacy reference repointed to v2",
           ref_paths() == [n(v2_local)] and len(api.scene_references()) == 1)
@@ -186,7 +196,7 @@ check("variable holds only the drive root", pipeEnv.current() == S.replace("\\",
 # A reference written the old way (full path) is rewritten on rebuild.
 open_shot("EAP_010_020")
 cmds.file(v2_local, reference=True, namespace="backpack")
-done, warn, old = api.build_asset(shots["EAP_010_020"], published, 2)
+done, warn, old = api.build_asset(shots["EAP_010_020"], published, V2)
 check("full-path reference rewritten to $PIPE_SCRATCH",
       "reference path made drive-independent" in done
       and api.scene_references()[0][1].startswith("$PIPE_SCRATCH/"))
@@ -195,7 +205,7 @@ cmds.setKeyframe("backpack:ctrl.ty", time=1, value=0); cmds.setKeyframe("backpac
 cmds.file(rename=s020); cmds.file(save=True, type="mayaAscii")
 
 # Rebuild again: nothing to do.
-done, warn, old = api.build_asset(shots["EAP_010_020"], published, 2)
+done, warn, old = api.build_asset(shots["EAP_010_020"], published, V2)
 check("rebuild after rewrite: already up to date", done == ["already up to date"])
 
 # Install the startup callback, then move the whole film to another drive.
@@ -219,7 +229,7 @@ check("keys still there on the new drive",
       cmds.keyframe("backpack:ctrl.ty", query=True, keyframeCount=True) == 2)
 
 # Opening a published file on the H drive must not move the variable.
-cmds.file(os.path.join(scenes_h, "backpack_model_v001.ma"), open=True, force=True)
+cmds.file(os.path.join(scenes_h, "backpack_anna_model_v001.ma"), open=True, force=True)
 check("opening an H-drive file leaves the variable alone", pipeEnv.current() == S2.replace("\\", "/"))
 
 # Repair on the new drive: delete the v2 copy there, reopen, repair.
@@ -273,6 +283,87 @@ text = open(us).read()
 check("uninstall: block removed, rest kept", mp_install._US_START not in text and "print('hello')" in text)
 check("uninstall: callback removed", not hasattr(sys, "_pipeEnv_callback_id"))
 S = S2   # for the listing below
+
+# =========================================================================
+# Personal publishes (spec §4 "Personal work folders", 2026-10-15)
+# =========================================================================
+import time
+pub = api.pub
+
+# Who: the Windows login, unless publish_as overrides it (cleaned for file names).
+check("who() is the Windows login by default", pub.who() == pub.clean_login(os.environ.get("USERNAME")))
+pub.save_config(dict(pub.load_config(), publish_as="Ben.Smith"))
+check("publish_as overrides, cleaned", pub.who() == "bensmith")
+
+# A working file anywhere in the asset, called anything: the publish goes to
+# the person's own folder, with their own version numbers.
+wip = os.path.join(S, FILM, "maya", "assets", "prop", "backpack", "scenes", "my stuff", "Final FINAL 2.ma")
+os.makedirs(os.path.dirname(wip))
+cmds.file(new=True, force=True); cmds.polyCube(name="backPack_geo")
+cmds.file(rename=wip); cmds.file(save=True, type="mayaAscii")
+plan = pub.plan_publish(wip, H, S, "model")
+check("ben's first publish is his v001, in his folder",
+      plan["version"] == 1 and n(plan["dest"]) == n(os.path.join(
+          H, FILM, "maya", "assets", "prop", "backpack", "scenes", "bensmith",
+          "backpack_bensmith_model_v001.ma")))
+pub.save_config(dict(pub.load_config(), publish_as=LOGIN))
+check("anna's next publish is her v003", pub.plan_publish(wip, H, S, "model")["version"] == 3)
+pub.save_config(dict(pub.load_config(), publish_as="bensmith"))
+
+# Ben publishes after anna: his v001 is now the latest, by time.
+time.sleep(1.5)
+plan = pub.plan_publish(wip, H, S, "model")
+pub.copy_to_h_drive(wip, plan)
+published = [p for p in api.list_published(H, FILM) if p["code"] == "model"][0]
+BEN1 = api.version_id("bensmith", 1)
+check("both people's versions listed", sorted(published["versions"]) == [V1, V2, BEN1])
+check("latest = newest by time, not highest number", published["latest"] == BEN1)
+check("newest first in the version menu", api.sorted_versions(published)[0] == BEN1)
+check("label says whose", api.version_label(published, BEN1) == "v001 (bensmith)  (latest)")
+entry = api.read_manifest(shots["EAP_010_020"].replace(base + os.sep + "S", base + os.sep + "S2", 1)
+                          )["prop/backpack/model"]
+check("a shot on anna v002 sees ben's v001 as newer", api.newer_available(published, entry))
+check("an old-style entry (no login) counts as older",
+      api.newer_available(published, {"version": 9}))
+
+# A file in the wrong person's folder, or named for another login, is ignored.
+stray = os.path.join(H, FILM, "maya", "assets", "prop", "backpack", "scenes", LOGIN,
+                     "backpack_bensmith_model_v007.ma")
+shutil.copy2(wip, stray)
+published = [p for p in api.list_published(H, FILM) if p["code"] == "model"][0]
+check("file named for another login in anna's folder ignored",
+      api.version_id("bensmith", 7) not in published["versions"])
+
+# --- Camera: published by Publish's own code, built by Build Shot.
+sys.path.insert(0, os.path.join(DEV, "publishDev"))
+import publishTool_camera as pcam
+os.makedirs(os.path.join(H, FILM, "maya", "sequences", "EAP_010", "EAP_010_010", "scenes"))
+shot10 = os.path.join(S, FILM, "maya", "sequences", "EAP_010", "EAP_010_010")
+layout = os.path.join(shot10, "scenes", "layout.ma")
+cmds.file(new=True, force=True)
+cmds.playbackOptions(minTime=1, maxTime=10)
+cam_tr = cmds.camera(name="layoutCam")[0]
+cmds.setKeyframe(cam_tr + ".tx", time=1, value=0); cmds.setKeyframe(cam_tr + ".tx", time=10, value=10)
+cmds.file(rename=layout); cmds.file(save=True, type="mayaAscii")
+cplan = pcam.plan_camera(layout, H, S, camera=cam_tr)
+check("camera publish goes to the person's folder, login in the name",
+      os.path.basename(cplan["dest"]) == "EAP_010_010_bensmith_cam_v001.ma"
+      and os.path.basename(os.path.dirname(cplan["dest"])) == "bensmith")
+pcam.export_camera(cam_tr, cplan, 1, 10, layout)
+cams = api.list_shot_cameras(H, FILM, "EAP_010", "EAP_010_010")
+check("Build lists the camera by person", cams and cams[0]["latest"] == BEN1)
+cmds.file(new=True, force=True)
+api.ensure_maya_project(shot10)
+done, warn, old = api.build_asset(shot10, cams[0], BEN1)
+check("camera built as camera1", cmds.objExists("|camera1") and
+      "camera1 v001 (bensmith) imported and locked" in done)
+check("camera1 stamped with who + version", api.shot_camera()[1] == BEN1)
+cmds.currentTime(10)
+check("camera1 keys play", abs(cmds.getAttr("camera1.tx") - 10) < 1e-3)
+done, warn, old = api.build_asset(shot10, cams[0], BEN1)
+check("camera rebuild: already up to date", done[-1] == "already up to date")
+check("camera manifest records login",
+      api.read_manifest(shot10)["camera/EAP_010_010/cam"]["login"] == "bensmith")
 
 # --- scratch listing still works with shared entries
 items = api.scratch_items(S, H, FILM)
