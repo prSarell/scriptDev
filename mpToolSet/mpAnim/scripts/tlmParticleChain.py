@@ -35,8 +35,13 @@ class SimParticleRig():
 		# it leaves an nHair sim bit-for-bit identical, while bendResistance
 		# is what actually stiffens the strand. Old saved presets that only
 		# carry 'stiffness' just skip it on load (it never did anything).
-		self.hairSettingsName = ['bendResistance', 'drag', 'damp', 'mass', 'stretchResistance', 'stretchDamp', 'dynamicsWeight']
-		self.customPreset = [1.0, 0.05, 0.0, 1.0, 10.0, 0.10, 1.0]
+		# compressionResistance / extraBendLinks / attractionDamp /
+		# motionDrag were added later -- each verified headlessly to
+		# actually change an nHair sim (unlike stiffness above); their
+		# customPreset values are again the node's own defaults.
+		self.hairSettingsName = ['bendResistance', 'drag', 'damp', 'mass', 'stretchResistance', 'stretchDamp', 'dynamicsWeight',
+		                         'compressionResistance', 'extraBendLinks', 'attractionDamp', 'motionDrag']
+		self.customPreset = [1.0, 0.05, 0.0, 1.0, 10.0, 0.10, 1.0, 10.0, 0, 0.0, 0.0]
 		# 'tentacle' mirrors tlmClothChain.py's own named preset in spirit --
 		# a tuned starting point for a muscular chain rather than a floppy one:
 		# higher bendResistance/stretchResistance so it holds its shape and resists
@@ -89,7 +94,11 @@ class SimParticleRig():
 			('uniform', 'Uniform'),
 			('closeFollow', 'Close Follow'),
 			('baseOnly', 'Base Only'),
+			('muscularBase', 'Muscular Base'),
 		]
+		# Share of the chain (from the base) muscularBase holds at Close
+		# Follow strength before dropping into the Base to Tip falloff.
+		self.muscularBaseFraction = 0.25
 	# ------------------------------------------------------------------
 	# Copied verbatim from tlmClothChain.py -- sim-backend-agnostic.
 	# ------------------------------------------------------------------
@@ -150,7 +159,7 @@ class SimParticleRig():
 			cmds.filterCurve(curves, filter='euler')
 
 	def _constraintProfileStrength(self, profile, index, total):
-		"""Same 5 named falloff curves as tlmClothChain.py, by 1-indexed
+		"""The 5 named falloff curves from tlmClothChain.py (plus muscularBase), by 1-indexed
 		segment number and total segment count. See tlmClothChain.py for the
 		original rationale -- reused verbatim here, just feeding an
 		attractionScale ramp entry instead of dynamicConstraint.strength.
@@ -178,6 +187,20 @@ class SimParticleRig():
 			return base - (base - floor) * (index - 1) / float(total - 1)
 		if profile == 'baseOnly':
 			return 1.0 if index == 1 else 0.0
+		if profile == 'muscularBase':
+			# Bottom quarter follows the goal closely (the same 0.9 -> 0.3
+			# line closeFollow uses, so it reads as that profile's start);
+			# everything past it falls off like baseToTip's interior/tip,
+			# restarting from its index-2 value. The strong base drives the
+			# swing and the loose remainder whips around behind it -- a
+			# muscular root flinging a tail.
+			muscle = max(1, int(round(total * self.muscularBaseFraction)))
+			if index <= muscle:
+				return self._constraintProfileStrength('closeFollow', index, total)
+			if index == total:
+				return 0.01
+			# Floored at the tip's 0.01 so long chains don't dip below it.
+			return max((1.0 / float(index - muscle + 1)) * 0.1, 0.01)
 		raise ValueError('Unknown constraint profile: %r' % profile)
 
 	def feedOptionMenu(self, mode, *args):
@@ -719,6 +742,9 @@ class SimParticleRig():
 
 		self.loadSettings()
 		self._applyConstraintProfile(rigName, 'baseToTip')
+		# Stiffness at full Bend Resistance on every segment, laid out one
+		# entry per segment so the Stiffness column can edit/key it.
+		self._applyRampProfile(rigName, 'stiffnessScale', 'full')
 
 		cmds.textScrollList('joints_scrollList', e=True, ra=True)
 		cmds.textScrollList('controls_scrollList', e=True, ra=True)
@@ -873,73 +899,230 @@ class SimParticleRig():
 	# Constraint (attractionScale ramp) profiles + Set Influence window.
 	# ------------------------------------------------------------------
 
-	def _applyConstraintProfile(self, rigName, profile):
+	# Two per-segment ramps live in the Set Influence window, side by side:
+	# attractionScale (Influence -- pull toward the goal curve) and
+	# stiffnessScale (Stiffness -- multiplies Bend Resistance along the
+	# strand). Same one-entry-per-segment layout, profiles and keying for
+	# both; only the field/button names differ.
+	_rampUI = {
+		'attractionScale': ('segment_%d_textField', 'segmentKey_%d_button'),
+		'stiffnessScale': ('stiffness_%d_textField', 'stiffnessKey_%d_button'),
+	}
+
+	def _rampPlug(self, hairSystem, ramp, i):
+		return '%s.%s[%d].%s_FloatValue' % (hairSystem, ramp, i, ramp)
+
+	def _isRampKeyed(self, hairSystem, ramp, i):
+		return bool(cmds.keyframe(self._rampPlug(hairSystem, ramp, i), q=True, kc=True))
+
+	def _setRampValue(self, hairSystem, ramp, i, value):
+		"""Write one segment's ramp value. A segment that's already keyed
+		gets keyed at the current frame instead -- a plain setAttr on an
+		animated plug is silently overwritten by its curve on the next
+		frame change. (Ramp entries aren't channel-box keyable, but
+		setKeyframe on them works and the hairSystem re-reads the animated
+		value every frame -- verified headlessly in mayapy.)"""
+		plug = self._rampPlug(hairSystem, ramp, i)
+		if self._isRampKeyed(hairSystem, ramp, i):
+			cmds.setKeyframe(plug, v=value)
+		else:
+			cmds.setAttr(plug, value)
+
+	def _setRampEntry(self, hairSystem, ramp, i, total, value):
+		pos = float(i) / float(total - 1) if total > 1 else 0.0
+		cmds.setAttr('%s.%s[%d].%s_Position' % (hairSystem, ramp, i, ramp), pos)
+		self._setRampValue(hairSystem, ramp, i, value)
+		cmds.setAttr('%s.%s[%d].%s_Interp' % (hairSystem, ramp, i, ramp), 1)
+
+	def _applyRampProfile(self, rigName, ramp, profile):
 		hairSystem = self._get_hairSystem(rigName)
 		total = self._get_segment_count(rigName)
 		result = {}
 		for i in range(total):
-			index = i + 1
-			strength = self._constraintProfileStrength(profile, index, total)
-			pos = float(i) / float(total - 1) if total > 1 else 0.0
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_Position' % (hairSystem, i), pos)
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i), strength)
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_Interp' % (hairSystem, i), 1)
-			result[index] = strength
+			if profile == 'full':
+				strength = 1.0
+			else:
+				strength = self._constraintProfileStrength(profile, i + 1, total)
+			self._setRampEntry(hairSystem, ramp, i, total, strength)
+			result[i + 1] = strength
 		return result
 
-	def applyConstraintProfilePreset(self, profile, *args):
+	def _applyConstraintProfile(self, rigName, profile):
+		return self._applyRampProfile(rigName, 'attractionScale', profile)
+
+	def _ensureSegmentRamp(self, rigName, ramp):
+		"""Make sure the ramp has exactly one entry per segment at the
+		segment's position. stiffnessScale ships as Maya's own default
+		(flat 1.0, not per-segment), and rigs built before the Stiffness
+		column existed still have that -- resample whatever is there onto
+		the segments so the column shows (and edits) real values without
+		changing the ramp's shape."""
+		hairSystem = self._get_hairSystem(rigName)
+		total = self._get_segment_count(rigName)
+		if not hairSystem:
+			return
+		indices = cmds.getAttr(hairSystem + '.' + ramp, multiIndices=True) or []
+		if indices == list(range(total)):
+			positions = [cmds.getAttr('%s.%s[%d].%s_Position' % (hairSystem, ramp, i, ramp)) for i in indices]
+			wanted = [float(i) / float(total - 1) if total > 1 else 0.0 for i in indices]
+			if all(abs(p - w) < 1e-4 for p, w in zip(positions, wanted)):
+				return
+		self._applyRampPoints(rigName, ramp, self._captureRamp(hairSystem, ramp) or [[0.0, 1.0]])
+
+	def applyRampProfilePreset(self, ramp, profile, *args):
 		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
-		strengths = self._applyConstraintProfile(rigName, profile)
-		for index, strength in strengths.items():
-			textFieldName = 'segment_%d_textField' % index
-			if cmds.textField(textFieldName, exists=True):
-				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
+		cmds.undoInfo(openChunk=True, chunkName='tlmParticleChain_rampProfile')
+		try:
+			self._applyRampProfile(rigName, ramp, profile)
+		finally:
+			cmds.undoInfo(closeChunk=True)
+		self._refreshInfluenceUI()
 
 	def segmentOffsetUI(self, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		if cmds.window("particleSegmentOffset_window", exists=True):
 			cmds.deleteUI("particleSegmentOffset_window")
-		cmds.window("particleSegmentOffset_window", tlb=1, sizeable=True, mxb=False, title="Set Influence")
+		self._ensureSegmentRamp(rigName, 'attractionScale')
+		self._ensureSegmentRamp(rigName, 'stiffnessScale')
+		cmds.window("particleSegmentOffset_window", tlb=1, sizeable=True, mxb=False, title="Set Influence / Stiffness")
 		cmds.frameLayout('particleSegmentOffset_frameLayout', bv=False, lv=False, mw=7, mh=7)
 		cmds.text('particleRig_text', l='Particle Rig: ' + rigName, h=16, bgc=(.22, .22, .22), al='center', fn="boldLabelFont", p='particleSegmentOffset_frameLayout')
 
-		cmds.rowLayout('particleProfile_rowLayout', nc=2, p='particleSegmentOffset_frameLayout')
-		cmds.button('constraintProfile_button', l='Profile*', w=60,
-		            ann='Apply a named attraction-strength distribution across all segments.')
+		cmds.rowLayout('particleProfile_rowLayout', nc=3, p='particleSegmentOffset_frameLayout')
+		cmds.button('constraintProfile_button', l='Influence*', w=70,
+		            ann='Apply a named attraction-strength distribution across all segments -- how hard each segment is pulled back to the animated goal.')
 		cmds.popupMenu('constraintProfile_popupMenu', b=1)
 		for profileId, profileLabel in self.constraintProfiles:
-			cmds.menuItem(profileLabel, c=partial(self.applyConstraintProfilePreset, profileId))
+			cmds.menuItem(label=profileLabel, c=partial(self.applyRampProfilePreset, 'attractionScale', profileId))
+		cmds.button('stiffnessProfile_button', l='Stiffness*', w=70,
+		            ann='Apply a named stiffness distribution across all segments. Each value multiplies Bend Resistance on that segment -- 1.0 is the full Bend Resistance.')
+		cmds.popupMenu('stiffnessProfile_popupMenu', b=1)
+		cmds.menuItem(label='Full (1.0)', c=partial(self.applyRampProfilePreset, 'stiffnessScale', 'full'))
+		for profileId, profileLabel in self.constraintProfiles:
+			cmds.menuItem(label=profileLabel, c=partial(self.applyRampProfilePreset, 'stiffnessScale', profileId))
+		cmds.button('keyAllInfluence_button', l='Key All', w=60, c=self.keyAllStrengths,
+		            ann="Key every segment's influence and stiffness at the current frame. Right-click for Delete All Keys.")
+		cmds.popupMenu('keyAllInfluence_popupMenu')
+		cmds.menuItem('Delete All Keys', c=self.deleteAllStrengthKeys)
 
-		cmds.rowColumnLayout('particleSegmentOffset_rowColumnLayout', numberOfColumns=2, p='particleSegmentOffset_frameLayout')
+		cmds.rowColumnLayout('particleSegmentOffset_rowColumnLayout', numberOfColumns=5, p='particleSegmentOffset_frameLayout')
 		cmds.showWindow("particleSegmentOffset_window")
 		cmds.window('particleSegmentOffset_window', e=True, w=40, h=40)
 		self.loadSegmentsList()
+		# Keyed segments change value as the timeline moves -- keep the
+		# fields (and their red on-a-key highlight) in step, same as
+		# tlmClothChain.py's Set Influence window. Dies with the window.
+		cmds.scriptJob(e=['timeChanged', self._refreshInfluenceUI], p='particleSegmentOffset_window')
 
 	def loadSegmentsList(self, *args):
 		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
-		hairSystem = self._get_hairSystem(rigName)
 		total = self._get_segment_count(rigName)
+		layout = 'particleSegmentOffset_rowColumnLayout'
+		for label in ('', 'Influence', '', 'Stiffness', ''):
+			cmds.text(l=label, fn='smallBoldLabelFont', p=layout)
 		for i in range(total):
 			index = i + 1
-			cmds.text('Influence %d  ' % index, p='particleSegmentOffset_rowColumnLayout')
-			value = "%.3f" % cmds.getAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i))
-			cmds.textField('segment_%d_textField' % index, w=50, bgc=(.15, .15, .15), tx=value,
-			                alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyStrength, str(index)),
-			                p='particleSegmentOffset_rowColumnLayout')
+			cmds.text('Segment %d  ' % index, p=layout)
+			for ramp, (fieldFmt, buttonFmt) in sorted(self._rampUI.items()):
+				cmds.textField(fieldFmt % index, w=50, bgc=(.15, .15, .15),
+				                alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyStrength, ramp, index),
+				                p=layout)
+				cmds.iconTextButton(buttonFmt % index, w=20, h=20, style='iconOnly',
+				                    image1='autoKeyframeOff.png', c=partial(self.keyStrength, ramp, index),
+				                    ann='Key this value at the current frame. Right-click to delete its keys.',
+				                    p=layout)
+				cmds.popupMenu(p=buttonFmt % index)
+				cmds.menuItem('Delete Keys', c=partial(self.deleteStrengthKeys, ramp, index))
+		self._refreshInfluenceUI()
 
-	def _captureInfluence(self, hairSystem):
-		"""Every attractionScale ramp entry as sorted [position, value] pairs.
-		Stored by normalized ramp position rather than segment number so a
-		preset saved on one rig can be loaded onto a rig with a different
-		segment count (see _applyInfluence)."""
+	def _refreshInfluenceUI(self, *args):
+		"""Re-read every segment row of the Set Influence window off the
+		rig: values, key button state, and red field when the current frame
+		sits on one of that value's keys."""
+		if not cmds.text('particleRig_text', exists=True):
+			return
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		if not hairSystem or not cmds.objExists(hairSystem):
+			return
+		currTime = cmds.currentTime(q=True)
+		for ramp, (fieldFmt, buttonFmt) in self._rampUI.items():
+			for i in range(self._get_segment_count(rigName)):
+				field = fieldFmt % (i + 1)
+				if not cmds.textField(field, exists=True):
+					continue
+				plug = self._rampPlug(hairSystem, ramp, i)
+				keys = cmds.keyframe(plug, q=True) or []
+				onKey = any(abs(k - currTime) < 1e-4 for k in keys)
+				cmds.textField(field, e=True, tx="%.3f" % cmds.getAttr(plug),
+				               bgc=(.85, .4, .4) if onKey else (.15, .15, .15))
+				button = buttonFmt % (i + 1)
+				if cmds.iconTextButton(button, exists=True):
+					cmds.iconTextButton(button, e=True, image1='autoKeyframeOn.png' if keys else 'autoKeyframeOff.png')
+
+	def _fieldValue(self, hairSystem, ramp, index):
+		# The typed value, so a number entered without pressing Enter still
+		# gets keyed; falls back to the live value if the field is junk.
+		try:
+			return float(cmds.textField(self._rampUI[ramp][0] % index, q=True, tx=True))
+		except (ValueError, RuntimeError):
+			return cmds.getAttr(self._rampPlug(hairSystem, ramp, index - 1))
+
+	def keyStrength(self, ramp, index, *args):
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		cmds.setKeyframe(self._rampPlug(hairSystem, ramp, index - 1), v=self._fieldValue(hairSystem, ramp, index))
+		self._refreshInfluenceUI()
+
+	def keyAllStrengths(self, *args):
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		cmds.undoInfo(openChunk=True, chunkName='tlmParticleChain_keyAllInfluence')
+		try:
+			for ramp in self._rampUI:
+				for i in range(self._get_segment_count(rigName)):
+					cmds.setKeyframe(self._rampPlug(hairSystem, ramp, i), v=self._fieldValue(hairSystem, ramp, i + 1))
+		finally:
+			cmds.undoInfo(closeChunk=True)
+		self._refreshInfluenceUI()
+
+	def deleteStrengthKeys(self, ramp, index, *args):
+		# Removing the anim curve leaves the plug at whatever value it was
+		# showing on the current frame.
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		cmds.cutKey(self._rampPlug(hairSystem, ramp, index - 1), clear=True)
+		self._refreshInfluenceUI()
+
+	def deleteAllStrengthKeys(self, *args):
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		cmds.undoInfo(openChunk=True, chunkName='tlmParticleChain_deleteAllInfluenceKeys')
+		try:
+			for ramp in self._rampUI:
+				for i in range(self._get_segment_count(rigName)):
+					cmds.cutKey(self._rampPlug(hairSystem, ramp, i), clear=True)
+		finally:
+			cmds.undoInfo(closeChunk=True)
+		self._refreshInfluenceUI()
+
+	def _captureRamp(self, hairSystem, ramp):
+		"""Every ramp entry as sorted [position, value] pairs. Stored by
+		normalized ramp position rather than segment number so a preset
+		saved on one rig can be loaded onto a rig with a different segment
+		count (see _applyRampPoints). Keyed segments are captured at the
+		current frame's value -- presets hold a shape, not animation."""
 		points = []
-		for i in cmds.getAttr(hairSystem + '.attractionScale', multiIndices=True) or []:
-			pos = cmds.getAttr('%s.attractionScale[%d].attractionScale_Position' % (hairSystem, i))
-			val = cmds.getAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i))
+		for i in cmds.getAttr(hairSystem + '.' + ramp, multiIndices=True) or []:
+			pos = cmds.getAttr('%s.%s[%d].%s_Position' % (hairSystem, ramp, i, ramp))
+			val = cmds.getAttr('%s.%s[%d].%s_FloatValue' % (hairSystem, ramp, i, ramp))
 			points.append([pos, val])
 		return sorted(points)
 
-	def _applyInfluence(self, rigName, points):
+	def _captureInfluence(self, hairSystem):
+		return self._captureRamp(hairSystem, 'attractionScale')
+
+	def _applyRampPoints(self, rigName, ramp, points):
 		"""Resample saved [position, value] pairs onto this rig's segments
 		(linear interpolation, clamped at the ends) -- the exact saved values
 		when the segment count matches, a proportional fit when it doesn't."""
@@ -947,10 +1130,13 @@ class SimParticleRig():
 		total = self._get_segment_count(rigName)
 		if not points or not hairSystem:
 			return {}
-		# Clear first: a ramp left with more entries than this rig has
-		# segments would otherwise keep stale points past the last one.
-		for i in cmds.getAttr(hairSystem + '.attractionScale', multiIndices=True) or []:
-			cmds.removeMultiInstance('%s.attractionScale[%d]' % (hairSystem, i), b=True)
+		# Clear entries past the last segment only: a ramp left with more
+		# entries than this rig has segments would otherwise keep stale
+		# points past the tip. Entries 0..total-1 are all rewritten below,
+		# and removing those too would drop any keys on them.
+		for i in cmds.getAttr(hairSystem + '.' + ramp, multiIndices=True) or []:
+			if i >= total:
+				cmds.removeMultiInstance('%s.%s[%d]' % (hairSystem, ramp, i), b=True)
 		result = {}
 		for i in range(total):
 			pos = float(i) / float(total - 1) if total > 1 else 0.0
@@ -964,32 +1150,30 @@ class SimParticleRig():
 						t = (pos - p0) / (p1 - p0) if p1 > p0 else 0.0
 						strength = v0 + (v1 - v0) * t
 						break
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_Position' % (hairSystem, i), pos)
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, i), strength)
-			cmds.setAttr('%s.attractionScale[%d].attractionScale_Interp' % (hairSystem, i), 1)
+			self._setRampEntry(hairSystem, ramp, i, total, strength)
 			result[i + 1] = strength
 		return result
 
-	def _refreshInfluenceFields(self, rigName, strengths):
+	def _applyInfluence(self, rigName, points):
+		return self._applyRampPoints(rigName, 'attractionScale', points)
+
+	def _refreshInfluenceFields(self, rigName, strengths=None):
 		# Only if the Set Influence window is open on this same rig.
 		if not cmds.text('particleRig_text', exists=True):
 			return
 		if cmds.text('particleRig_text', q=True, l=True).partition(': ')[2] != rigName:
 			return
-		for index, strength in strengths.items():
-			textFieldName = 'segment_%d_textField' % index
-			if cmds.textField(textFieldName, exists=True):
-				cmds.textField(textFieldName, e=True, tx="%.3f" % strength)
+		self._refreshInfluenceUI()
 
-	def applyStrength(self, segmentNumber, *args):
+	def applyStrength(self, ramp, index, *args):
 		# The rig the Set Influence window was opened on, not the main
 		# dropdown -- switching rigs with the window open otherwise wrote
 		# these values onto the other rig.
 		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
-		value = float(cmds.textField('segment_' + segmentNumber + '_textField', q=True, tx=True))
+		value = float(cmds.textField(self._rampUI[ramp][0] % index, q=True, tx=True))
 		hairSystem = self._get_hairSystem(rigName)
-		idx = int(segmentNumber) - 1
-		cmds.setAttr('%s.attractionScale[%d].attractionScale_FloatValue' % (hairSystem, idx), value)
+		self._setRampValue(hairSystem, ramp, index - 1, value)
+		self._refreshInfluenceUI()
 
 	# ------------------------------------------------------------------
 	# nucleus / hairSystem settings.
@@ -1020,14 +1204,18 @@ class SimParticleRig():
 		hairSystem = self._get_hairSystem(rigName)
 		if hairSystem:
 			for nm in self.hairSettingsName:
-				value = "%.2f" % cmds.getAttr(hairSystem + '.' + nm)
-				cmds.textField('pc_' + nm + '_textField', e=True, tx=value)
+				value = cmds.getAttr(hairSystem + '.' + nm)
+				# extraBendLinks is an int attr -- show it as one.
+				text = str(value) if isinstance(value, int) else "%.2f" % value
+				cmds.textField('pc_' + nm + '_textField', e=True, tx=text)
 
 	def applyHairSettings(self, option, *args):
 		rigName = cmds.optionMenu('particleRig_list', q=True, v=True)
 		value = float(cmds.textField('pc_' + option + '_textField', q=True, tx=True))
 		hairSystem = self._get_hairSystem(rigName)
 		if hairSystem:
+			if cmds.getAttr(hairSystem + '.' + option, type=True) in ('long', 'short'):
+				value = int(round(value))
 			cmds.setAttr(hairSystem + '.' + option, value)
 
 	def hairCollisionWidthSlider(self, *args):
@@ -1071,6 +1259,9 @@ class SimParticleRig():
 		elif vals.get('influence'):
 			strengths = self._applyInfluence(rigName, vals['influence'])
 			self._refreshInfluenceFields(rigName, strengths)
+		if vals.get('stiffness'):
+			self._applyRampPoints(rigName, 'stiffnessScale', vals['stiffness'])
+			self._refreshInfluenceFields(rigName)
 		# Note a shared nucleus (Nucleus: <rig> at build) means these also
 		# change every other rig on it -- same as editing the fields by hand.
 		nucleus = self._get_nucleus(rigName)
@@ -1098,6 +1289,7 @@ class SimParticleRig():
 		hairSystem = self._get_hairSystem(rigName)
 		vals = {nm: cmds.getAttr(hairSystem + '.' + nm) for nm in self.hairSettingsName}
 		vals['influence'] = self._captureInfluence(hairSystem)
+		vals['stiffness'] = self._captureRamp(hairSystem, 'stiffnessScale')
 		nucleus = self._get_nucleus(rigName)
 		if nucleus:
 			vals['nucleus'] = {nm: cmds.getAttr(nucleus + '.' + nm) for nm in self.presetNucleusAttrs}
@@ -1965,18 +2157,31 @@ class SimParticleRig():
 		# short-name lookup could read/write the cloth tool's field instead.
 		cmds.paneLayout('pane_layout2', cn='vertical2', p='settings_frameLayout')
 		cmds.columnLayout('particleRigSettings_columnLayout', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('bendResistance', 'Bend Resistance'), ('drag', 'Drag'), ('damp', 'Damp'), ('mass', 'Mass')]:
-			row = 'row_' + nm
-			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout')
-			cmds.textField('pc_' + nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
-			cmds.text(label)
-
-		cmds.columnLayout('particleRigSettings_columnLayout2', adj=1, cat=['right', 0], p='pane_layout2')
-		for nm, label in [('stretchResistance', 'Stretch Resistance'), ('stretchDamp', 'Stretch Damp'), ('dynamicsWeight', 'Dynamics Weight')]:
-			row = 'row_' + nm
-			cmds.rowLayout(row, h=19, nc=2, p='particleRigSettings_columnLayout2')
-			cmds.textField('pc_' + nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm))
-			cmds.text(label)
+		# Left column shapes the strand (how it holds/bends/stretches),
+		# right column is how it moves (weight, air, damping).
+		shapeSettings = [
+			('bendResistance', 'Bend Resistance', 'How hard the strand resists bending -- the main stiffness control. Scale it per segment with the Stiffness column in Set Influence.'),
+			('extraBendLinks', 'Extra Bend Links', 'Spreads bend resistance across more neighbouring segments (whole number) -- a stiffer, smoother arc instead of kinking at single joints.'),
+			('stretchResistance', 'Stretch Resistance', 'How hard the strand resists getting longer.'),
+			('compressionResistance', 'Compression Resist.', 'How hard the strand resists getting shorter / bunching up.'),
+			('stretchDamp', 'Stretch Damp', 'Damps springy length oscillation.'),
+		]
+		motionSettings = [
+			('mass', 'Mass', 'Heavier strands carry more momentum -- more fling, slower to settle.'),
+			('drag', 'Drag', 'Air resistance against world-space motion.'),
+			('motionDrag', 'Motion Drag', 'Drags the strand along with the base motion, 0-1 -- higher reads as a stiffer, more connected limb.'),
+			('damp', 'Damp', 'Damps motion relative to neighbouring segments -- calms jitter and wobble.'),
+			('attractionDamp', 'Attraction Damp', 'Damps the pull toward the goal, 0-1 -- stops strong Influence values springing/overshooting.'),
+			('dynamicsWeight', 'Dynamics Weight', 'Overall amount of simulation in effect.'),
+		]
+		for column, settings in (('particleRigSettings_columnLayout', shapeSettings), ('particleRigSettings_columnLayout2', motionSettings)):
+			if column == 'particleRigSettings_columnLayout2':
+				cmds.columnLayout(column, adj=1, cat=['right', 0], p='pane_layout2')
+			for nm, label, tip in settings:
+				row = 'row_' + nm
+				cmds.rowLayout(row, h=19, nc=2, p=column)
+				cmds.textField('pc_' + nm + '_textField', w=55, h=18, alwaysInvokeEnterCommandOnReturn=True, ec=partial(self.applyHairSettings, nm), ann=tip)
+				cmds.text(label, ann=tip)
 
 		self.feedOptionMenu('particleRig')
 
