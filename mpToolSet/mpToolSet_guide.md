@@ -141,6 +141,12 @@ Creates versioned JPEG playblast sequences with frame burn-ins.
 - After playblast, opens the sequence in the system viewer
 - Optional keep/delete workflow for reviewing takes
 
+### Shot Submit (shotSub)
+
+Playblasts your shot and publishes it to ShotGrid for review.
+
+- **If shotSub says RV isn't signed in:** open RV, sign in to ShotGrid with your RMIT login when it asks, close RV, then try again. RV makes the review movie, and it can't do that while it's signed out — ShotGrid would only get a thumbnail.
+
 ### Camera Preset Manager (WIP Testing)
 
 Saves and applies named camera and viewport presets to JSON files on disk.
