@@ -1,0 +1,4 @@
+# The Mac launcher must keep Unix line endings or bash can't run it; the
+# Windows one wants Windows line endings.
+*.command text eol=lf
+*.bat text eol=crlf

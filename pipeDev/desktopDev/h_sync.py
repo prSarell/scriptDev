@@ -90,7 +90,19 @@ def find_config(explicit=None):
                      "api_key) next to h_sync.py or in ~/.mpPipe/." % CONFIG_NAMES[0])
 
 
+def _find_shotgun_api3():
+    """Make shotgun_api3 importable: a copy next to this script, else the
+    one mpToolSet installs into Maya's scripts folder (Windows / macOS)."""
+    home = os.path.expanduser("~")
+    for folder in (os.path.dirname(os.path.abspath(__file__)),
+                   os.path.join(home, "Documents", "maya", "scripts"),
+                   os.path.join(home, "Library", "Preferences", "Autodesk", "maya", "scripts")):
+        if os.path.isdir(os.path.join(folder, "shotgun_api3")) and folder not in sys.path:
+            sys.path.append(folder)
+
+
 def connect(config_path=None):
+    _find_shotgun_api3()
     try:
         import shotgun_api3
     except ImportError:
@@ -254,23 +266,50 @@ def report(plan, log=print):
             log("  %s" % path)
 
 
+def films_on(h_root):
+    """Film folders on the H drive that know their ShotGrid project."""
+    return sorted(n for n in os.listdir(h_root)
+                  if os.path.isfile(os.path.join(h_root, n, FILM_CONFIG)))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Build H-drive folders for new ShotGrid "
                                                  "assets and shots. Never overwrites.")
     parser.add_argument("--h-root", required=True, help="folder holding the film folders")
-    parser.add_argument("--film", required=True, help="film folder, e.g. NWF_SHF")
+    parser.add_argument("--film", help="film folder, e.g. NWF_SHF (default: every film)")
     parser.add_argument("--config", help="ShotGrid settings JSON")
     parser.add_argument("--apply", action="store_true", help="build them (default: just list)")
+    parser.add_argument("--ask", action="store_true",
+                        help="list, then ask whether to build (for the double-click launchers)")
     args = parser.parse_args(argv)
+    if not os.path.isdir(args.h_root):
+        raise SystemExit("Can't find the H drive at %s. Is it connected?" % args.h_root)
+    films = [args.film] if args.film else films_on(args.h_root)
+    if not films:
+        raise SystemExit("No film folders with a %s in %s." % (FILM_CONFIG, args.h_root))
     sg = connect(args.config)
-    shots, assets = shotgrid_contents(sg, film_project_id(args.h_root, args.film))
-    plan = plan_sync(args.h_root, args.film, shots, assets)
-    report(plan)
-    if args.apply and plan["build"]:
+    plans = []
+    for film in films:
+        print("\n=== %s ===" % film)
+        shots, assets = shotgrid_contents(sg, film_project_id(args.h_root, film))
+        plan = plan_sync(args.h_root, film, shots, assets)
+        report(plan)
+        plans.append((film, plan))
+    total = sum(len(p["build"]) for _, p in plans)
+    print("")
+    if not total:
+        print("Nothing new: the H drive already has a folder for everything in ShotGrid.")
+        return
+    build = args.apply
+    if args.ask and not build:
+        build = input("Build these %d folder(s) now? (y/n) " % total).strip().lower() in ("y", "yes")
+    if build:
         print("Building...")
-        apply_sync(args.h_root, args.film, plan)
-    elif plan["build"]:
-        print("(Dry run: nothing built. Add --apply to build.)")
+        for film, plan in plans:
+            apply_sync(args.h_root, film, plan)
+        print("Done.")
+    else:
+        print("Nothing built." if args.ask else "(Dry run: nothing built. Add --apply to build.)")
 
 
 if __name__ == "__main__":
