@@ -971,6 +971,34 @@ The tools are developed side by side:
       that would rule one out later.
     - OPEN: testing on the dev machine, whose Windows login (`scout`) isn't
       an RMIT/ShotGrid login. Under the rule above the tools would refuse.
+    - **Staff problem (user, 2026-10-19):** "this is an issue for all
+      staff". Staff have an RMIT ID like students, but their ShotGrid login
+      is their email, which can't be worked out from the ID. Using the
+      staff ID number would be "super helpful". Checked 2026-10-19: active
+      ShotGrid users are 45 students on `s#######@student.rmit.edu.au`
+      (derivable from the Windows login), 11 staff on `...@rmit.edu.au`
+      emails, and 16 other logins (personal Gmail etc.). HumanUser has no
+      ID field today.
+      - **Direction agreed in principle (user, 2026-10-19):** add a field
+        to ShotGrid's person (HumanUser) data that records **staff and
+        student numbers**, and identify people by that **instead of their
+        emails**. (Student emails contain the number; staff emails don't.)
+        Tools find the person by `number == Windows login`. Not created
+        yet.
+      - SUGGESTION (not agreed): field name "RMIT ID" (`sg_rmit_id`),
+        text; fill every student's from their email automatically, staff
+        by hand once (later the Class Project Setup Tool). The dev
+        machine's existing `publish_as` setting would then just hold an
+        RMIT ID.
+      - **Staff number format (user, 2026-10-19):** `e` + digits (e.g.
+        `e123456`), vs. students' `s` + digits.
+      - **Created 2026-10-19:** HumanUser text field **RMIT ID**
+        (`sg_rmit_id`), site-wide. Filled for 46 people: every
+        `s#######@student.rmit.edu.au` student (from the email) plus the
+        user (`e` number). Staff and students on non-RMIT logins still need
+        theirs entered. Tools don't read it yet.
+      - ~~OPEN: go-ahead to create the field~~ (given 2026-10-19) (site-wide schema
+        change, may need admin rights for the script user).
   - **How work reaches a personal folder on the H drive (DECIDED
     2026-10-13):** "the working files get into the personal folder on the
     H drive when a student publishes work from their scratch to the H
@@ -1288,12 +1316,88 @@ The tools are developed side by side:
             below.
         - **Shot (animation) publish v0 (DECIDED 2026-10-15).** The user
           confirmed the proposed defaults from 2026-10-13 and answered the
-          remaining questions. Nothing is built yet; today only the shot
-          camera can be published.
+          remaining questions.
+          - **Built 2026-10-19** (`publishTool_anim.py`, Publish window's
+            **Animation** department in shot scenes; shotSub **Task** menu).
+            The user OK'd the defaults: shotSub has a Task dropdown (from the
+            linked shot's ShotGrid tasks, remembers the last one per shot in
+            `shotgrid_link.json`) and sets `Version.sg_task`; keys files use
+            the camera's `.ma` + `.json` map format, but hold the animator's
+            own curves (not baked). Approval gate via
+            `publishTool_api.approved_tasks()`; the camera publish now needs
+            an approved Layout and links its Version to the Layout task.
+            Playblast through `camera1`; movie copied to scratch
+            `premiere\shotgridMovs\<SHOT>.mp4`. All-or-nothing H-drive write.
+            `test_animPublish_mayapy.py` 25/25 (ShotGrid faked; real
+            ShotGrid read checked separately).
+            - **Shot publish UI (user, 2026-10-19):** no dropdown for *what*
+              is published: the student selects everything and adds it in
+              one click, and the tool sorts each thing by its id/type
+              (built: Add Selected). But a dropdown **is** needed for which
+              **stage** the publish is: **Layout** or **Animation**, with
+              **Lighting** and **FX** to come later (shown as coming soon
+              for now).
+              - **Layout publish (DECIDED 2026-10-19):** "publishes the
+                same thing as animation, just has no cache requirements":
+                keys + the full file (and the camera), approved on the
+                Layout task, never caches. Own version series
+                (`<SHOT>_<login>_layout_v###`).
+              - **Iterative vs for approval (user, 2026-10-19, later the
+                same day): CHANGES "no pipe publish before approval".**
+                "We need to not block iterative publishes like this ... the
+                artist needs to define if the publish is iterative or for
+                review. A simple check system box should do it with
+                'iterative' and 'for approval'. Otherwise it's too hard to
+                populate the pipe with assets. This new rule would not apply
+                to a final publish where the cache is triggered." So: an
+                iterative publish isn't blocked by approval; caches still
+                need an approved Final.
+                - **Settled the same day: no checkboxes.** "The lecturer
+                  can mark a publish approved so the student can republish
+                  and trigger the cache. This communication can just be
+                  handled in the publish notes by the students. Please
+                  approve for lighting etc." And: "every publish always
+                  makes a shotgrid submission."
+                - So: no shot publish (Layout, Animation, camera) is
+                  blocked by approval. Every one makes a ShotGrid Version
+                  for review: Layout publishes on the Layout task,
+                  Animation publishes (and cameras from Animation) on the
+                  Final task. Once a Version on the Final task is Approved,
+                  the next Animation publish makes the caches. Approved
+                  Blocking still doesn't cache; Layout never caches.
+                - Built 2026-10-19 (`publish_stage()` replaces the gate);
+                  `test_animPublish_mayapy.py` 32/32.
+              - **Camera from Animation (DECIDED 2026-10-19):** allowed,
+                but "we should know it came from animation": every camera
+                publish is stamped like the model group, with
+                `pipe_publishedFrom` (`layout` / `anim`) plus shot id, shot,
+                department, version, artist, date and source scene, locked.
+                The stamp is on the camera node itself, not a group, because
+                Build makes it the live `camera1` at the top of the scene;
+                the keys map also records `published_from`.
+              - **Build in a blank scene = latest (DECIDED + built
+                2026-10-19):** "if the student is building in a blank scene
+                the build tool should always load the latest published
+                assets." Blank = nothing referenced yet. In a scene that
+                already has the shot's assets, rows still start at the
+                version the shot has. `test_blankSceneLatest_mayapy.py` 2/2.
+                (Same day the user had a successful build of a shot from a
+                published animation.)
+              - Built 2026-10-19: the **Publish for** dropdown (Layout,
+                Animation; Lighting/FX coming soon) and Add Selected in shot
+                scenes. `test_shotAddSelected_mayapy.py` 11/11 (real window,
+                offscreen), `test_animPublish_mayapy.py` 33/33.
+            - Known v0 limits: constraints, expressions and driven keys
+              aren't in the keys file; Alembic names have no login
+              (`<SHOT>_<item>_anim_v###.abc`, as decided), so two people's
+              same-numbered finals would clash (the second is refused, not
+              overwritten); ShotGrid Version codes (`<SHOT>_anim_v###`) can
+              also repeat between people (existing issue for all publishes).
           1. **One version number per publish:** everything from one
              animation publish shares a `v###` ("anim v003 of
              EAP_010_010").
-          2. **The animator chooses, everything ticked:** Publish scans
+          2. *(Superseded 2026-10-19 by 6a: the list starts empty,
+             select and add.)* **The animator chooses, everything ticked:** Publish scans
              the scene and lists every pipeline rig, made-in-shot item and
              changed camera, all ticked. The animator can untick items
              (e.g. a prop that didn't move).
@@ -1318,6 +1422,171 @@ The tools are developed side by side:
              (with sound), plus a copy in scratch
              `premiere\shotgridMovs\EAP_010_010.mp4`, replaced on each
              publish.
+          6a. **Publish works out what each item is (DECIDED
+             2026-10-19):** the animator only selects objects and adds
+             them; there is no asset type or department to pick. Publish
+             recognises "this is a camera", "this is a model with
+             keyframes", "this is a rig" (and made-in-shot items) by itself.
+             Came from testing on the T7: a keyframed reference of
+             `backpack_scout_model_v003` couldn't be added because the shot
+             scene only offered Camera.
+             - **Made in the shot = not a published asset (DECIDED
+               2026-10-19).** The test is "does this exist as a published
+               asset?", not "is it none of the other kinds". Being animated
+               is a separate question that applies to every kind: a
+               made-in-shot item can have keys (item 4 already has animated
+               and static made-in-shot items).
+             - **A published asset has a ShotGrid id (DECIDED
+               2026-10-19).** That is the cleanest definition: published =
+               it carries a ShotGrid Asset id; no id = made in the shot.
+               Today every asset publish already looks up its ShotGrid Asset
+               (`find_shotgrid_asset`) but doesn't write the id into the
+               published file.
+             - **Stamping: DECIDED 2026-10-19, "we need it".** How it's
+               stored was already decided in principle on 2026-10-12 (§3,
+               "ShotGrid asset ID"): a `publishInfo` network node made at
+               publish time, tested to survive selected and whole-scene
+               exports and to read back through a reference, so **no
+               top-group rule**. (On 2026-10-19 Claude wrongly proposed
+               top-group attributes instead; that suggestion is withdrawn.)
+             - **Model publish clean-up + pipe group (user proposal,
+               2026-10-19, details OPEN):** when publishing a model (e.g.
+               the backpack) the tool should **freeze transforms and delete
+               history**, and "perhaps the pipe parents the model into a
+               group with the appropriate name", the group storing the
+               **ShotGrid id** and anything else needed, e.g. **date created
+               and the artist** who created it.
+               - Changes the 2026-10-12 choice of a separate `publishInfo`
+                 node with no top group: that "no top-group rule" was about
+                 not making *students* build a group; here the **pipe**
+                 makes it, so students still don't have to.
+               - **DECIDED 2026-10-19** (user answered each):
+                 1. The pipe group **replaces the `publishInfo` node**.
+                 2. Clean-up happens in the **published file only**; the
+                    working scene is untouched.
+                 3. Freeze transforms + delete history: **models only**
+                    (rigs keep history/deformers).
+                 4. Group name **`<asset>_<department>_GRP`**, e.g.
+                    `backpack_model_GRP`.
+                 5. The group stores: ShotGrid Asset id, asset name and
+                    type, department, version, the artist's RMIT ID and
+                    name, the **date the publish was created**, and the
+                    scene it was published from.
+                 - The user is aware freezing zeroes translate/rotate in
+                   the published file; animators key the pipe group.
+                 - **Built 2026-10-19 for models**
+                   (`publishTool_api.export_model_to_h_drive`): works on
+                   duplicates, so the working scene ends exactly as it was;
+                   attributes `pipe_sgAssetId`, `pipe_asset`,
+                   `pipe_assetType`, `pipe_department`, `pipe_version`,
+                   `pipe_artistId`, `pipe_artistName` (from ShotGrid),
+                   `pipe_published`, `pipe_sourceScene`, all locked.
+                   Whole-scene model publishes are now exported too (no
+                   more plain file copy). Republishing from a file that
+                   already has the group replaces it rather than nesting.
+                   `test_modelGroup_mayapy.py` 13/13. Not built yet: the
+                   group for rigs and other departments (a rig can't be
+                   duplicated, so it needs a different approach).
+             - **Unassigned shaders (DECIDED 2026-10-19):** "this rule will
+               need to apply to all publishes": no published file carries
+               unassigned shaders. Models are cleaned before rigging gets
+               them; rigging publishes may need their own custom clean-up
+               (OPEN).
+               - Built: `publishTool_api.unused_shading_nodes()`, narrow
+                 so it's safe for rigs (empty shading groups, materials
+                 used only by those, textures/utilities feeding only those;
+                 never DAG nodes, anim curves or referenced nodes). Model
+                 publishes already left them out (export of the pipe group).
+                 Whole-scene publishes of other departments now export
+                 without them (deleted for the export, put back with undo).
+                 **Build** deletes unassigned shaders sitting in the asset's
+                 namespace instead of stopping (the `shotSetup_001`
+                 `backpack:lambert7` case) and says so; real nodes there
+                 still stop it. `test_unusedShading_mayapy.py` 14/14.
+             - **Blocking and Final tasks created 2026-10-19** on all 75
+               NWF shots (Animation step; `EAP_010_FULL_CUT` left out). The
+               ShotGrid side is tracked in `shotgridTemplate_requirements.md`.
+             - **Keyframed model reference (DECIDED 2026-10-19):** its keys
+               are published separately from the model, plus a full version
+               of the file.
+             - **The list starts empty (DECIDED 2026-10-19).** The animator
+               selects and adds; this replaces item 2's "scan the scene,
+               everything ticked".
+             - **Caches only on a final publish (DECIDED 2026-10-19).**
+               Ordinary shot publishes put out keys + the full file, no
+               Alembic. This changes items 3 and 4: their Alembics happen
+               only on a final publish. A shot may have **more than one
+               final**.
+               - **How the tool knows (DECIDED 2026-10-19):** the shot is
+                 marked final in ShotGrid. If it is published again after
+                 that, the most recent final publish is the true source.
+                 Related: "final publish checkboxes" in item 7.
+               - **"Final" = Approved in ShotGrid, for now (DECIDED
+                 2026-10-19):** the Version status `apr` (Approved) in
+                 project 157. Not the Shot or Task `fin` status. Newest
+                 final publish wins (confirmed).
+               - **The cache rule (DECIDED 2026-10-19):** approved
+                 **Blocking** = no cache; approved **Final** = cache. Told
+                 apart by the Version's task (Blocking / Final tasks on
+                 every shot, created 2026-10-19). Earlier note, kept for
+                 history: "final" has to be told apart from an
+                 approved block, e.g. with tasks (Blocking vs. Final).
+                 What project 157 had at the time (read 2026-10-19):
+                 Animation step (id 106) exists; only two Shot tasks
+                 ("blocking" and "Blocking", both Animation, wtg); 738
+                 Versions, none linked to a Task (`sg_task` empty), 2
+                 Approved; Version `sg_version_type` list field exists with
+                 no values yet. Options put to the user: Blocking/Final
+                 tasks per shot under Animation, Version linked to its
+                 task (final = Approved Version on the Final task); or
+                 Blocking/Final values on the Version Type field.
+               - **Review then publish (DECIDED 2026-10-19):** the student
+                 submits review versions with **shotSub** until the shot is
+                 Approved (any number of rounds). Once it's flagged
+                 Approved, the student **republishes the shot with the pipe
+                 Publish tool**, and that publish makes the caches (if it's
+                 the Final task). This settles the timing: the cache comes
+                 from the next pipe publish, not from the approved review
+                 Version itself.
+                 - Implication: the review Versions come from shotSub, so
+                   shotSub is what must link each Version to its Blocking
+                   or Final task. Publish then checks "does this shot have
+                   an Approved Version on its Final task?".
+                 - **No pipe publish before approval (DECIDED
+                   2026-10-19):** Publish refuses a shot that has no
+                   Approved Version. Approved Blocking → publish keys + full
+                   file, no cache; approved Final → keys + full file +
+                   caches. The shot camera follows the same rule via a
+                   **Layout** task (Layout step): Approved Layout → camera
+                   publish. Layout tasks created on all 75 NWF shots
+                   2026-10-19. Open details in
+                   `shotgridTemplate_requirements.md`.
+               - SUGGESTION (superseded by the line above, kept for
+                 history): since approval lands on a Version
+                 that was already published without caches, the *next*
+                 publish of a shot with an Approved Version is the final
+                 one (caches made then); any later publish is also final and
+                 replaces it as the true source. This matches the
+                 "post-approval publish" idea in the original design.
+             - SUGGESTION (not agreed): the asset publish stamps the
+               ShotGrid Asset id (plus department and version) onto the
+               published file's top nodes. Then the id travels with the
+               nodes, so an **imported** copy is still recognised, which
+               closes the import question raised earlier the same day.
+               Existing publishes (e.g. `backpack_scout_model_v001-v003`)
+               have no stamp: republish them, or fall back to the
+               reference's file name.
+             - SUGGESTION (not agreed): camera = a camera shape under the
+               transform; kind (`model`, `rig`, ...) from the stamped
+               department; animated = keys on it or on anything in its
+               reference.
+             - OPEN: select-and-add here vs. item 2's "scan the scene, list
+               everything ticked". Possibly both (list starts full, Add
+               Selected for anything missed).
+             - OPEN: how a keyframed **model** reference (no rig, no
+               `cache_SET`) is cached. Options put to the user 2026-10-19:
+               cache the whole reference / refuse ("animate a rig") / allow
+               with a warning.
           7. **Not in v0:**
              - Build Shot pulling animation back in;
              - the camera fingerprint;

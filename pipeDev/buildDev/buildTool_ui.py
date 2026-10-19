@@ -248,13 +248,18 @@ class BuildShotTab(QtWidgets.QWidget):
         # what's already in its assets folder (at the version it has), plus
         # anything published for the shot itself, e.g. its camera, ready to build.
         self._rows = []
+        # Building into a blank scene (nothing referenced yet): always start
+        # from the latest published versions, whatever the shot used before
+        # (user, 2026-10-19). In a scene that already has the shot's assets,
+        # each row starts at the version the shot has.
+        blank = not api.scene_references()
         for p in self._published:
             if self._key(p) in manifest:
                 # A version from before personal publishes isn't on the H
                 # drive any more: start the choice at the latest instead.
                 current = api.entry_version_id(manifest[self._key(p)])
                 self._rows.append(dict(p, chosen=current if current in p["versions"]
-                                       else p["latest"]))
+                                       and not blank else p["latest"]))
             elif p.get("kind") == "camera":
                 self._rows.append(dict(p, chosen=p["latest"]))
         self._render_table()

@@ -259,6 +259,17 @@ class ShotSub(object):
                        "to ShotGrid with the selected version."
         )
         cmds.separator(h=6, style="none")
+        # Which ShotGrid Task this publish is for (e.g. Layout / Blocking /
+        # Final): an approval only counts for the task it's on.
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnAttach=[(1, "right", 4)])
+        cmds.text(label="Task:")
+        self.widgets["task_menu"] = cmds.optionMenu(
+            annotation="The ShotGrid task this version is for. Your teacher approves "
+                       "it on that task (e.g. Blocking or Final).",
+            changeCommand=lambda *_: self.on_task_changed())
+        cmds.menuItem(label="(link the shot first)")
+        cmds.setParent("..")
+        cmds.separator(h=6, style="none")
         cmds.button(label="Publish Selected Version", h=30, c=lambda *_: self.publish_selected_version())
         cmds.setParent("..")
         cmds.setParent("..")
@@ -517,7 +528,68 @@ class ShotSub(object):
         link_text = "{0} / {1}".format(link["sg_project_name"], link["sg_entity_code"]) if link else "<not linked>"
         cmds.textField(self.widgets["link_status_field"], e=True, text=link_text)
 
+        self.refresh_task_menu(link)
         self.populate_version_list()
+
+    # --------------------------------------------------------
+    # Task picker
+    # --------------------------------------------------------
+    _tasks_for = None      # which linked entity the task menu was filled for
+    _tasks = ()
+
+    def refresh_task_menu(self, link=None, force=False):
+        """Fill the Task menu from the linked Shot/Asset's ShotGrid Tasks,
+        picking the one last used for it (saved in shotgrid_link.json),
+        else the first. Only asks ShotGrid when the link changes."""
+        menu = self.widgets.get("task_menu")
+        if not menu:
+            return
+        link = link if link is not None else self.read_shotgrid_link()
+        key = (link.get("sg_entity_type"), link.get("sg_entity_id")) if link else None
+        if key == self._tasks_for and not force:
+            return
+        self._tasks_for, self._tasks = key, ()
+        labels = []
+        if not link:
+            labels = ["(link the shot first)"]
+        else:
+            sgc = self._quiet_shotgridConnect()
+            try:
+                self._tasks = tuple(sgc.list_tasks(*key)) if sgc and hasattr(sgc, "list_tasks") else ()
+            except Exception as exc:
+                cmds.warning("shotSub: couldn't read this shot's ShotGrid tasks — {0}".format(exc))
+                self._tasks_for = None      # try again next refresh
+            labels = [t["content"] for t in self._tasks] or ["(no tasks on this shot)"]
+        for item in cmds.optionMenu(menu, q=True, itemListLong=True) or []:
+            cmds.deleteUI(item)
+        for label in labels:
+            cmds.menuItem(label=label, parent=menu)
+        cmds.optionMenu(menu, e=True, enable=bool(self._tasks))
+        saved = (link or {}).get("task_id")
+        for i, task in enumerate(self._tasks):
+            if task["id"] == saved:
+                cmds.optionMenu(menu, e=True, select=i + 1)
+                break
+
+    def get_selected_task(self):
+        """The chosen ShotGrid Task as {"id", "content", "step"}, or None."""
+        if not self._tasks:
+            return None
+        index = cmds.optionMenu(self.widgets["task_menu"], q=True, select=True) - 1
+        return self._tasks[index] if 0 <= index < len(self._tasks) else None
+
+    def on_task_changed(self):
+        """Remember the task for this shot, so it's picked next time."""
+        task = self.get_selected_task()
+        link = self.read_shotgrid_link()
+        if not (task and link):
+            return
+        link["task_id"], link["task_name"] = task["id"], task["content"]
+        try:
+            with open(self.get_link_file_path(), "w") as f:
+                json.dump(link, f, indent=2)
+        except OSError as exc:
+            cmds.warning("shotSub: couldn't remember the task — {0}".format(exc))
 
     # --------------------------------------------------------
     # ShotGrid link + publish-log (local marker files only -- no
@@ -1701,6 +1773,11 @@ class ShotSub(object):
         # Only used if upload_playblast() has to encode frames itself.
         audio_path, audio_offset_seconds = self.get_scene_audio_for_encode(self.get_frame_range()[0])
 
+        self.refresh_task_menu(link)
+        task = self.get_selected_task()
+        if task:
+            self.on_task_changed()      # remember it even if it was never changed
+
         machine_diagnostic = None
         if not movie_path and not rvio_path:
             machine_diagnostic = self._get_machine_diagnostic_summary()
@@ -1724,6 +1801,7 @@ class ShotSub(object):
                 machine_diagnostic=machine_diagnostic,
                 audio_path=audio_path,
                 audio_offset_seconds=audio_offset_seconds,
+                task_id=task["id"] if task else None,
             )
         except NotImplementedError as exc:
             cmds.warning("ShotGrid publish isn't built yet: {0}".format(exc))
@@ -1742,7 +1820,8 @@ class ShotSub(object):
         cmds.scrollField(self.widgets["publish_notes"], e=True, text="")
         self.refresh_ui_state()
         cmds.inViewMessage(
-            amg='Published <hl>{0}</hl> to ShotGrid.'.format(version_name),
+            amg='Published <hl>{0}</hl> to ShotGrid{1}.'.format(
+                version_name, " for <hl>{0}</hl>".format(task["content"]) if task else ""),
             pos='midCenter',
             fade=True
         )

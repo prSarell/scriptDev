@@ -28,6 +28,7 @@ import glob
 import json
 import stat
 import shutil
+from datetime import datetime
 
 import maya.cmds as cmds
 
@@ -329,6 +330,98 @@ def plan_publish(scene_path, h_root, scratch_root, code, target=None):
     return ctx
 
 
+# ---------------------------------------------------------------------------
+# Unassigned shaders (DECIDED 2026-10-19: no publish carries them, and Build
+# clears them out of the way). Deliberately narrow so it's safe for rigs:
+# only shading engines with no members, materials used by nothing else, and
+# texture/utility nodes that feed only those. Never DAG nodes, anim curves
+# or anything referenced. A fuller rig clean-up is its own job (OPEN).
+# ---------------------------------------------------------------------------
+
+_KEEP_SHADING = ("initialShadingGroup", "initialParticleSE", "lambert1",
+                 "standardSurface1", "particleCloud1")
+_DEFAULT_LISTS = ("defaultShaderList1", "defaultTextureList1",
+                  "defaultRenderUtilityList1", "renderPartition", "lightLinker1")
+
+
+def _shading_kind(node):
+    classes = " ".join(cmds.getClassification(cmds.nodeType(node)) or [])
+    return any(word in classes for word in ("shader", "texture", "utility"))
+
+
+def _keepable(node):
+    return (node in _KEEP_SHADING or ":" + node in _KEEP_SHADING
+            or cmds.referenceQuery(node, isNodeReferenced=True)
+            or cmds.lockNode(node, query=True, lock=True)[0])
+
+
+def unused_shading_nodes(namespace=None):
+    """Shading nodes nothing in the scene uses: shading groups with no
+    members (plus their materialInfo), materials whose only shading groups
+    are those (or that have none), and texture/utility nodes feeding only
+    those. namespace limits it to nodes in that namespace (e.g. 'backpack')."""
+    unused = set()
+    for sg in cmds.ls(type="shadingEngine") or []:
+        if _keepable(sg) or cmds.sets(sg, query=True):
+            continue
+        unused.add(sg)
+        unused.update(cmds.listConnections(sg + ".message", type="materialInfo") or [])
+    for material in cmds.ls(materials=True) or []:
+        if _keepable(material):
+            continue
+        sgs = set(cmds.listConnections(material, source=False, destination=True,
+                                       type="shadingEngine") or [])
+        if sgs <= unused:
+            unused.add(material)
+    changed = True
+    while changed:      # upstream nodes that feed only unused ones
+        changed = False
+        for node in list(unused):
+            for up in set(cmds.listConnections(node, source=True, destination=False) or []):
+                if up in unused or _keepable(up) or not _shading_kind(up):
+                    continue
+                downstream = [d for d in set(cmds.listConnections(up, source=False,
+                                                                  destination=True) or [])
+                              if d not in _DEFAULT_LISTS]
+                if downstream and set(downstream) <= unused:
+                    unused.add(up)
+                    changed = True
+    nodes = sorted(n for n in unused if cmds.objExists(n))
+    if namespace:
+        nodes = [n for n in nodes if n.lstrip(":").startswith(namespace + ":")]
+    return nodes
+
+
+class _WithoutUnusedShading(object):
+    """While inside, unassigned shaders are deleted from the working scene,
+    so a whole-scene export leaves them out; on the way out they're put back
+    with Maya's undo. self.removed: what was left out."""
+
+    def __enter__(self):
+        self.removed = unused_shading_nodes()
+        self._undo_was_on = cmds.undoInfo(query=True, state=True)
+        if self.removed:
+            cmds.undoInfo(state=True)
+            cmds.undoInfo(openChunk=True, chunkName="pipeLeaveOutUnusedShading")
+            try:
+                cmds.delete(self.removed)
+            finally:
+                cmds.undoInfo(closeChunk=True)
+        return self
+
+    def __exit__(self, *exc):
+        if self.removed:
+            cmds.undo()
+            cmds.undoInfo(state=self._undo_was_on)
+            missing = [n for n in self.removed if not cmds.objExists(n)]
+            if missing:
+                raise PublishError(
+                    "The publish worked, but these unused shaders weren't put back in your "
+                    "scene: %s\nReopen your scene without saving to get them back."
+                    % ", ".join(missing))
+        return False
+
+
 def copy_to_h_drive(scene_path, plan):
     """Copy the saved scene file to plan['dest'] and make it read-only."""
     if not os.path.isfile(scene_path):
@@ -390,6 +483,7 @@ class _NoNamespaces(object):
 # publish puts out" -> cache_SET).
 CACHE_SET = "cache_SET"
 RIG_CODE = "rig"
+MODEL_CODE = "model"
 GEOMETRY_TYPES = ("mesh", "nurbsSurface", "subdiv")
 
 
@@ -511,12 +605,174 @@ def export_to_h_drive(objects, plan):
                           expressions=True, shader=True, preserveReferences=True,
                           force=True)
             else:
-                cmds.file(plan["dest"], exportAll=True, type=file_type,
-                          preserveReferences=True, force=True)
+                # Whole scene: everything except unassigned shaders.
+                with _WithoutUnusedShading() as unused:
+                    cmds.file(plan["dest"], exportAll=True, type=file_type,
+                              preserveReferences=True, force=True)
+                plan["unused_shading_left_out"] = unused.removed
     finally:
         cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
     _lock(plan["dest"])
     plan["namespaces_removed"] = sorted(clean.namespaces)
+
+
+# ---------------------------------------------------------------------------
+# Pipe group (spec §4 item 6a "Model publish clean-up + pipe group",
+# DECIDED 2026-10-19): every model publish is wrapped in <asset>_<code>_GRP,
+# which carries the publish's identity. It replaces the publishInfo node.
+# ---------------------------------------------------------------------------
+
+PIPE_ATTR_PREFIX = "pipe_"
+ID_ATTR = PIPE_ATTR_PREFIX + "sgAssetId"
+
+
+def pipe_group_name(asset, code):
+    return "%s_%s_GRP" % (asset, code)
+
+
+def is_pipe_group(node):
+    return bool(cmds.objExists(node) and cmds.attributeQuery(ID_ATTR, node=node, exists=True))
+
+
+def artist_name(login):
+    """The person's name from ShotGrid, found by RMIT ID (sg_rmit_id) or
+    login. "" if ShotGrid can't say; the publish doesn't depend on it."""
+    try:
+        sg = _shotgrid().get_connection()
+        for field in ("sg_rmit_id", "login"):
+            user = sg.find_one("HumanUser", [[field, "is", login]], ["name"])
+            if user:
+                return user["name"] or ""
+    except Exception:
+        pass
+    return ""
+
+
+def pipe_group_info(plan, scene_path):
+    """What the pipe group records, in the order it's added."""
+    return [
+        ("sgAssetId", (plan.get("sg_asset") or {}).get("id") or 0),
+        ("asset", plan["asset"]),
+        ("assetType", plan["asset_type"]),
+        ("department", plan["code"]),
+        ("version", plan["version"]),
+        ("artistId", plan["login"]),
+        ("artistName", artist_name(plan["login"])),
+        ("published", datetime.now().isoformat(timespec="seconds")),
+        ("sourceScene", os.path.normpath(scene_path)),
+    ]
+
+
+def _stamp(group, info):
+    for name, value in info:
+        attr = PIPE_ATTR_PREFIX + name
+        if isinstance(value, int):
+            cmds.addAttr(group, longName=attr, attributeType="long")
+            cmds.setAttr("%s.%s" % (group, attr), value)
+        else:
+            cmds.addAttr(group, longName=attr, dataType="string")
+            cmds.setAttr("%s.%s" % (group, attr), value, type="string")
+        cmds.setAttr("%s.%s" % (group, attr), lock=True)
+
+
+def _model_roots(objects):
+    """The transforms a model publish takes: the given ones (nothing given
+    = every top-level object except Maya's default cameras), without any
+    that sit below another one, and with an existing pipe group swapped for
+    its contents (republishing a scene built from a publish)."""
+    if objects:
+        nodes = cmds.ls(objects, long=True, type="transform") or []
+    else:
+        nodes = [n for n in cmds.ls(assemblies=True, long=True) or []
+                 if not any(cmds.camera(s, query=True, startupCamera=True)
+                            for s in cmds.listRelatives(n, shapes=True, fullPath=True,
+                                                        type="camera") or [])]
+    roots = []
+    for node in nodes:
+        if is_pipe_group(node):
+            roots += cmds.listRelatives(node, children=True, fullPath=True,
+                                        type="transform") or []
+        else:
+            roots.append(node)
+    roots = [r for r in roots if not any(r.startswith(o + "|") for o in roots if o != r)]
+    if not roots:
+        raise PublishError("There's nothing to publish: no objects in the scene/selection.")
+    return roots
+
+
+def export_model_to_h_drive(objects, plan, scene_path):
+    """Model publish: the published file holds a clean copy of the model,
+    transforms frozen and history deleted, inside <asset>_model_GRP with
+    the publish's identity stamped on it. Done on duplicates; the working
+    scene ends exactly as it was (names, transforms, history, selection).
+    objects empty = every top-level object."""
+    missing = [o for o in objects if not cmds.objExists(o)]
+    if missing:
+        raise PublishError("Not in the scene any more: %s" % ", ".join(missing))
+    if os.path.exists(plan["dest"]):
+        raise PublishError("%s already exists — try again." % plan["dest"])
+    if not os.path.isdir(plan["h_folder"]):
+        os.makedirs(plan["h_folder"])
+    file_type = "mayaAscii" if plan["ext"] == ".ma" else "mayaBinary"
+    group_name = pipe_group_name(plan["asset"], plan["code"])
+    info = pipe_group_info(plan, scene_path)
+    selection = cmds.ls(selection=True)
+    uuids = cmds.ls(objects, uuid=True) if objects else []
+    moved, made = [], []      # (uuid, name) renamed out of the way; temp nodes
+    try:
+        with _NoNamespaces() as clean:
+            try:
+                # By UUID: renaming things out of the way changes paths.
+                roots = cmds.ls(_model_roots(cmds.ls(uuids) if objects else []), uuid=True)
+                # The copies take the originals' names, so the published
+                # file reads the same as the scene; the originals step aside.
+                for node in cmds.ls(group_name, long=True) or []:
+                    moved.append((cmds.ls(node, uuid=True)[0], node.split("|")[-1]))
+                    cmds.rename(node, "pipeTmp_" + node.split("|")[-1])
+                copies = []
+                for uuid in roots:
+                    root = cmds.ls(uuid, long=True)[0]
+                    short = root.split("|")[-1]
+                    copy = cmds.duplicate(root, returnRootsOnly=True)[0]
+                    made.append(cmds.ls(copy, uuid=True)[0])
+                    moved.append((uuid, short))
+                    cmds.rename(cmds.ls(uuid)[0], "pipeTmp_" + short)
+                    copy = cmds.rename(copy, short)
+                    if cmds.listRelatives(copy, parent=True):
+                        copy = cmds.parent(copy, world=True)[0]
+                    copies.append(cmds.ls(copy, uuid=True)[0])
+                copy_nodes = cmds.ls(copies, long=True)
+                everything = copy_nodes + (cmds.listRelatives(
+                    copy_nodes, allDescendents=True, fullPath=True) or [])
+                cmds.delete(everything, constructionHistory=True)
+                leftovers = [s for s in cmds.ls(everything, shapes=True, long=True) or []
+                             if cmds.objExists(s) and cmds.getAttr(s + ".intermediateObject")]
+                if leftovers:
+                    cmds.delete(leftovers)     # e.g. "Orig" shapes from deformers
+                cmds.makeIdentity(copy_nodes, apply=True, translate=True, rotate=True,
+                                  scale=True, normal=0, preserveNormals=True)
+                group = cmds.group(empty=True, world=True, name=group_name)
+                made.append(cmds.ls(group, uuid=True)[0])
+                cmds.parent(cmds.ls(copies, long=True), group)
+                _stamp(group, info)
+                cmds.select(group, replace=True)
+                cmds.file(plan["dest"], exportSelected=True, type=file_type,
+                          constructionHistory=True, channels=True, constraints=True,
+                          expressions=True, shader=True, preserveReferences=True,
+                          force=True)
+            finally:
+                # Copies and group gone, originals back to their names,
+                # before the namespaces are put back.
+                if cmds.ls(made):
+                    cmds.delete(cmds.ls(made))
+                for uuid, short in reversed(moved):
+                    if cmds.ls(uuid):
+                        cmds.rename(cmds.ls(uuid)[0], short)
+    finally:
+        cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
+    _lock(plan["dest"])
+    plan["namespaces_removed"] = sorted(clean.namespaces)
+    plan["pipe_group"] = group_name
 
 
 def _lock(path):
@@ -615,14 +871,19 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
     panel = _model_panel() if (objects or camera) else None
     selection = cmds.ls(selection=True)
     previous_camera = None
-    if panel and camera:
-        previous_camera = cmds.modelPanel(panel, query=True, camera=True)
-        cmds.modelPanel(panel, edit=True, camera=camera)
-    elif panel:
-        cmds.select(objects, replace=True)
-        cmds.isolateSelect(panel, state=True)
-        cmds.isolateSelect(panel, addSelected=True)
+    isolated = False
     try:
+        if panel and camera:
+            previous_camera = cmds.modelPanel(panel, query=True, camera=True)
+            cmds.modelPanel(panel, edit=True, camera=camera)
+        elif panel:
+            cmds.select(objects, replace=True)
+            cmds.isolateSelect(panel, state=True)
+            isolated = True
+            cmds.isolateSelect(panel, addSelected=True)
+        # Nothing selected while playblasting, so the ShotGrid movie doesn't
+        # show the green selection highlight. Put back afterwards.
+        cmds.select(clear=True)
         cmds.playblast(
             format="image", compression="jpg", quality=90, percent=100,
             filename=os.path.join(folder, "%s_%s" % (plan["asset"], version_name)),
@@ -630,15 +891,19 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
             framePadding=4, sequenceTime=False, clearCache=True, viewer=False,
             showOrnaments=False, offScreen=True, forceOverwrite=True,
             widthHeight=[width, height])
+        files = sorted(glob.glob(os.path.join(folder, "*.jpg")))
+        if not files:
+            raise PublishError("The playblast didn't produce any frames.")
+    except Exception:
+        # e.g. cancelled half way: no frames left on scratch.
+        remove_frames(folder, plan["asset_project"])
+        raise
     finally:
         if previous_camera:
             cmds.modelPanel(panel, edit=True, camera=previous_camera)
-        elif panel:
+        elif isolated:
             cmds.isolateSelect(panel, state=False)
-            cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
-    files = sorted(glob.glob(os.path.join(folder, "*.jpg")))
-    if not files:
-        raise PublishError("The playblast didn't produce any frames.")
+        cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
     return folder, files
 
 
@@ -674,6 +939,57 @@ def scene_audio(start_frame):
         return None, 0.0
     offset_frames = cmds.getAttr(node + ".offset")
     return path, (offset_frames - start_frame) / _scene_fps()
+
+
+# ---------------------------------------------------------------------------
+# Approval (spec §4 item 6a, DECIDED 2026-10-19): a shot can only be
+# pipe-published after shotSub review gets it Approved in ShotGrid, and what
+# it may publish depends on the task the approval is on: Layout -> the
+# camera, Blocking -> keys + full file, Final -> also caches.
+# ---------------------------------------------------------------------------
+
+APPROVED = "apr"
+
+
+def approved_tasks(sg_entity):
+    """{task name (lower case): that Task} for every Task on the Shot that
+    has an Approved Version linked to it. Versions with no task (from
+    before shotSub linked them) don't count."""
+    sg = _shotgrid().get_connection()
+    versions = sg.find("Version", [["entity", "is", {"type": sg_entity.get("type", "Shot"),
+                                                     "id": sg_entity["id"]}],
+                                   ["sg_status_list", "is", APPROVED]],
+                       ["sg_task", "sg_task.Task.content"])
+    found = {}
+    for v in versions:
+        name = (v.get("sg_task.Task.content") or "").strip().lower()
+        if name and v.get("sg_task"):
+            found[name] = v["sg_task"]
+    return found
+
+
+def task_on(sg_entity, name):
+    """The Task called name (any case) on a Shot/Asset, or None."""
+    sg = _shotgrid().get_connection()
+    for task in sg.find("Task", [["entity", "is", {"type": sg_entity.get("type", "Shot"),
+                                                   "id": sg_entity["id"]}]], ["content"]):
+        if (task["content"] or "").strip().lower() == name.lower():
+            return {"type": "Task", "id": task["id"], "content": task["content"]}
+    return None
+
+
+def link_version_to_task(plan, task):
+    """Point the publish's ShotGrid Version at its Task. Best effort: the
+    publish itself is already done."""
+    version = plan.get("sg_version")
+    if not (version and task):
+        return
+    try:
+        _shotgrid().get_connection().update(
+            "Version", version["id"], {"sg_task": {"type": "Task", "id": task["id"]}})
+    except Exception as e:
+        plan.setdefault("warnings", []).append(
+            "The ShotGrid Version wasn't linked to the %s task: %s" % (task.get("content"), e))
 
 
 def upload_with_audio(sg, plan, audio_path, audio_offset, *args, **kwargs):
@@ -713,19 +1029,34 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
         plan["cache_set"] = check_cache_set(plan["objects"])
         plan["cache_set_uuid"] = cmds.ls(plan["cache_set"], uuid=True)[0]
     plan["sg_asset"] = find_shotgrid_asset(plan, h_root)
+    check_rv()
     plan["frames_folder"], files = playblast_frames(plan, frame_count, plan["objects"])
 
     plan["namespaces_removed"] = []
-    if plan["objects"] or namespaced_nodes():
-        # Selected objects, or a whole scene that needs its namespaces
-        # taken off: export. A clean whole scene is copied as it is.
-        export_to_h_drive(plan["objects"], plan)
-    else:
-        copy_to_h_drive(scene_path, plan)
+    try:
+        if code == MODEL_CODE:
+            # Always a clean copy in its pipe group (spec §4 item 6a).
+            export_model_to_h_drive(plan["objects"], plan, scene_path)
+        elif plan["objects"] or namespaced_nodes() or unused_shading_nodes():
+            # Selected objects, or a whole scene that needs its namespaces
+            # or unassigned shaders taken off: export. A clean whole scene
+            # is copied as it is.
+            export_to_h_drive(plan["objects"], plan)
+        else:
+            copy_to_h_drive(scene_path, plan)
+    except Exception:
+        # Nothing was published, so this attempt's frames are no use:
+        # don't leave them on scratch.
+        remove_frames(plan["frames_folder"], plan["asset_project"])
+        raise
     if plan["namespaces_removed"]:
         plan.setdefault("warnings", []).append(
             "Namespace %s taken off in the published file (your scene is unchanged)."
             % ", ".join("'%s:'" % n for n in plan["namespaces_removed"]))
+    if plan.get("unused_shading_left_out"):
+        plan.setdefault("warnings", []).append(
+            "Unused shaders left out of the published file (your scene is unchanged): %s"
+            % ", ".join(plan["unused_shading_left_out"]))
 
     what = ("%d object(s): %s" % (len(plan["objects"]), ", ".join(plan["objects"]))
             if plan["objects"] else "whole scene")
@@ -749,10 +1080,35 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     except Exception as e:     # H-drive copy already done; report, don't lose it
         plan["sg_error"] = str(e)
     else:
-        # ShotGrid has the frames/movie now, so the local copies on scratch
-        # are no longer needed. Kept if the upload failed.
-        remove_frames(plan["frames_folder"], plan["asset_project"])
+        if not note_no_movie(plan):
+            # ShotGrid has the frames/movie now, so the local copies on
+            # scratch are no longer needed. Kept if the upload failed or
+            # the movie couldn't be made.
+            remove_frames(plan["frames_folder"], plan["asset_project"])
     return plan
+
+
+def check_rv():
+    """Refuse to publish while RV can't make movies (e.g. not signed in to
+    ShotGrid): caught before the playblast and any H-drive write, so the
+    student signs in and publishes again instead of ShotGrid silently
+    getting a thumbnail only. No RV at all stays a warning, as before."""
+    rvio = find_rvio()
+    sgc = _shotgrid()
+    if rvio and hasattr(sgc, "check_rvio"):
+        problem = sgc.check_rvio(rvio)
+        if problem:
+            raise PublishError(problem)
+
+
+def note_no_movie(plan):
+    """If ShotGrid got no movie, say why in plan['movie_warning'] and
+    return True."""
+    problem = (plan.get("sg_version") or {}).get("movie_problem")
+    if problem:
+        plan["movie_warning"] = ("ShotGrid got a thumbnail only, no movie. %s\n"
+                                 "The frames are kept in %s." % (problem, plan["frames_folder"]))
+    return bool(problem)
 
 
 def remove_frames(frames_folder, asset_project):

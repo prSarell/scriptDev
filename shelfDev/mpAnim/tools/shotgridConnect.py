@@ -224,6 +224,18 @@ def list_visible_projects(as_login=None):
     )
 
 
+def list_tasks(entity_type, entity_id, as_login=None):
+    """The Tasks on one Shot/Asset, e.g. Layout / Blocking / Final on a film
+    shot (pipeDev/filmPipeline_spec.md item 6a), as
+    [{"id", "content", "step"}], in pipeline order. [] if it has none."""
+    sg = get_connection(as_login=as_login)
+    tasks = sg.find("Task", [["entity", "is", {"type": entity_type, "id": entity_id}]],
+                    ["content", "step", "step.Step.list_order"])
+    tasks.sort(key=lambda t: (t.get("step.Step.list_order") or 0, t["id"]))
+    return [{"id": t["id"], "content": t["content"],
+             "step": (t.get("step") or {}).get("name", "")} for t in tasks]
+
+
 def list_project_shots(project_name, as_login=None):
     """All ShotGrid Shots that exist in the named Project -- read-only,
     never creates one (Shots are created directly in ShotGrid's web UI).
@@ -422,7 +434,7 @@ def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset
 def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None,
                       rvio_path=None, as_login=None, machine_diagnostic=None,
                       movie_path=None, thumbnail_path=None, audio_path=None,
-                      audio_offset_seconds=0.0):
+                      audio_offset_seconds=0.0, task_id=None):
     """Hand-off target for shotSub's "Publish Selected Version" button (see
     shotSub.py publish_version()). shotSub resolves entity_type/entity_id
     itself, from an explicit ShotGrid Shot id stored in a local
@@ -477,17 +489,22 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
     version_name = os.path.basename(version_folder_norm)
     code = "{0}_{1}".format(entity["code"], version_name)
 
+    # Which Task this Version is for (Layout / Blocking / Final): what
+    # "approved" means depends on it (spec item 6a, the cache rule).
+    task_field = {"sg_task": {"type": "Task", "id": task_id}} if task_id else {}
+
     existing = sg.find_one("Version", [["entity", "is", entity], ["code", "is", code]], ["id"])
     if existing:
         print("shotSub: Version '{0}' already exists on {1} '{2}' (id {3}) — not re-creating".format(
             code, entity_type, entity["code"], existing["id"]))
         version = existing
-        sg.update("Version", version["id"], {"sg_path_to_frames": version_folder_norm})
+        sg.update("Version", version["id"], dict(
+            {"sg_path_to_frames": version_folder_norm}, **task_field))
     else:
-        version = sg.create("Version", {
+        version = sg.create("Version", dict({
             "project": project, "code": code, "entity": entity,
             "sg_path_to_frames": version_folder_norm,
-        })
+        }, **task_field))
         print("shotSub: created Version '{0}' on {1} '{2}' (id {3})".format(
             code, entity_type, entity["code"], version["id"]))
 

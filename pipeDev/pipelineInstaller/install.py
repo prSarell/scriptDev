@@ -4,6 +4,11 @@ mpPipe Installer (staff testing)
 Drag and drop this file onto the Maya viewport to install the film
 pipeline tools (Publish, Build) and the mpPipe shelf.
 
+Works from the unzipped mpPipe package (scripts/ and icons/ beside this
+file), or straight from the scriptDev repo (pipeDev/pipelineInstaller/),
+where it takes the files from their source folders, using the same list
+as build_zip.py.
+
 Needs mpToolSet installed first: it supplies the ShotGrid connection
 (shotgridConnect, shotgun_api3 and the connection settings). This package
 never contains ShotGrid credentials.
@@ -12,6 +17,7 @@ To remove everything again, drag uninstall.py onto the viewport.
 """
 
 import os
+import sys
 import shutil
 import maya.cmds as cmds
 import maya.mel as mel
@@ -126,10 +132,61 @@ def _check_dependencies():
     return warnings
 
 
+def _copy_files(paths, dst_dir):
+    os.makedirs(dst_dir, exist_ok=True)
+    copied = []
+    for src in paths:
+        dst = os.path.join(dst_dir, os.path.basename(src)).replace("\\", "/")
+        shutil.copy2(src, dst)
+        copied.append(dst)
+    return copied
+
+
+def _read_version(root):
+    path = os.path.join(root, "version.txt")
+    if not os.path.isfile(path):
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def _sources(root):
+    """(script files, icons folder, shelf_config.py, build label): from the
+    unzipped package this file sits in, or from the repo's source folders
+    when it's run from pipeDev/pipelineInstaller (same list as build_zip)."""
+    scripts_dir = os.path.join(root, "scripts")
+    if os.path.isdir(scripts_dir):
+        scripts = [os.path.join(scripts_dir, n) for n in sorted(os.listdir(scripts_dir))
+                   if n.lower().endswith(".py")]
+        return (scripts, os.path.join(root, "icons"), os.path.join(root, "shelf_config.py"),
+                _read_version(root))
+    if not os.path.isfile(os.path.join(root, "build_zip.py")):
+        raise RuntimeError("No scripts folder next to this installer (%s). Use the "
+                           "unzipped mpPipe package, or the repo's pipelineInstaller." % root)
+    import importlib
+    from datetime import datetime
+    sys.path.insert(0, root)
+    try:
+        import build_zip
+        importlib.reload(build_zip)
+    finally:
+        sys.path.remove(root)
+    scripts = [os.path.join(build_zip.REPO, *(folder.split("/") + [name]))
+               for folder, name in build_zip.SCRIPTS]
+    missing = [p for p in scripts if not os.path.isfile(p)]
+    if missing:
+        raise RuntimeError("Missing source files:\n  " + "\n  ".join(missing))
+    version = "from repo %s (%s)" % (datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                     build_zip._git_hash())
+    return (scripts, os.path.join(build_zip.SHELF_DIR, "icons"),
+            os.path.join(build_zip.SHELF_DIR, "shelf_config.py"), version)
+
+
 def _install(root):
-    scripts = _copy_all(os.path.join(root, "scripts"), _scripts_dir(), ".py")
-    icons = _copy_all(os.path.join(root, "icons"), _icons_dir(), ".png")
-    shelf, buttons = _build_shelf(os.path.join(root, "shelf_config.py"))
+    script_files, icons_dir, shelf_config, version = _sources(root)
+    scripts = _copy_files(script_files, _scripts_dir())
+    icons = _copy_all(icons_dir, _icons_dir(), ".png")
+    shelf, buttons = _build_shelf(shelf_config)
     usersetup, scratch_var = _patch_usersetup()
 
     with open(os.path.join(_prefs_dir(), _MANIFEST_NAME), "w", encoding="utf-8") as f:
@@ -137,12 +194,6 @@ def _install(root):
         f.write("usersetup:%s\n" % usersetup)
         for path in scripts + icons:
             f.write("file:%s\n" % path)
-
-    version = ""
-    version_file = os.path.join(root, "version.txt")
-    if os.path.isfile(version_file):
-        with open(version_file, "r", encoding="utf-8") as f:
-            version = f.read().strip()
 
     warnings = _check_dependencies()
     summary = (
@@ -173,3 +224,8 @@ def onMayaDroppedPythonFile(_obj):
         cmds.confirmDialog(title=_TITLE + " — Error",
                            message="Install failed! See Script Editor for details.\n\n%s" % e,
                            button=["OK"])
+    finally:
+        # Maya imports a dropped file as a module named after it ("install")
+        # and reuses an already-loaded module of that name, so a later drop
+        # of another install.py this session would run this one instead.
+        sys.modules.pop(__name__, None)

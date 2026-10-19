@@ -429,6 +429,29 @@ def _old_paths(shot_dir, published, entry):
     return paths
 
 
+def any_version_references(shot_dir, published):
+    """Reference nodes pointing at any version of this asset + department
+    in the shot's publish folder, whatever the manifest says: old-style
+    names (backpack_model_v003.ma) as well as personal ones
+    (scenes\\<login>\\backpack_scout_model_v005.ma). Catches a scene whose
+    reference the manifest no longer remembers, e.g. another scene in the
+    same shot, or one saved before personal publishes."""
+    folder = os.path.normcase(os.path.join(
+        publish_dir(maya_dir_of_shot(shot_dir)), "assets",
+        published["asset_type"], published["asset"], "scenes"))
+    name = re.compile(r"^%s_(?:[^_]+_)?%s_v\d{3}\.(ma|mb)$"
+                      % (re.escape(published["asset"]), re.escape(published["code"])),
+                      re.IGNORECASE)
+    found = []
+    for node, _, full, resolved in scene_references():
+        for path in (resolved, full):
+            path = os.path.normcase(os.path.normpath(path or ""))
+            if path.startswith(folder + os.sep) and name.match(os.path.basename(path)):
+                found.append(node)
+                break
+    return found
+
+
 def build_asset(shot_dir, published, vid):
     """One click for one asset: make sure the chosen version (a version id,
     e.g. 'scout/v003') is in the shared publish folder, then make sure the
@@ -447,6 +470,12 @@ def build_asset(shot_dir, published, vid):
     previous = entry_path(shot_dir, entry) if entry else None
     label = version_label(published, vid, mark_latest=False)
     done = []
+    # Leftover unassigned shaders holding the asset's name (e.g. from an
+    # old import whose geometry was deleted) are cleared, not a clash.
+    cleared = pub.unused_shading_nodes(namespace)
+    if cleared:
+        cmds.delete(cleared)
+        done.append("removed unused shader leftovers %s" % ", ".join(cleared))
 
     same = bool(entry) and entry_version_id(entry) == vid
     restored = bool(same and entry.get("shared") and not os.path.isfile(previous))
@@ -494,6 +523,16 @@ def build_asset(shot_dir, published, vid):
             use_clean_namespace(dest, namespace)
             done.append("scene reference switched to %s" % label)
             return done, None, replaced
+
+    # Any other version of this asset already referenced: switch it rather
+    # than referencing the asset a second time.
+    nodes = any_version_references(shot_dir, published)
+    if nodes:
+        for node in nodes:
+            repoint_reference(node, ref_path)
+        use_clean_namespace(dest, namespace)
+        done.append("scene reference switched to %s" % label)
+        return done, None, replaced
 
     reference_into_scene(ref_path, namespace)
     done.append("referenced into scene")

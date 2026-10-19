@@ -273,6 +273,26 @@ def _export(nodes, path):
     api._lock(path)
 
 
+def camera_stamp(plan, scene_path):
+    """The pipe stamp for a published camera (like the model publish's
+    group, spec item 6a), put on the camera itself: Build makes it the live
+    camera1 at the top of the scene, so it can't sit in a group. Records
+    which stage published it (user, 2026-10-19: a camera published from
+    Animation must say so)."""
+    from datetime import datetime
+    return [
+        ("sgShotId", (plan.get("sg_shot") or {}).get("id") or 0),
+        ("shot", plan["shot"]),
+        ("department", CAM_CODE),
+        ("version", plan["version"]),
+        ("publishedFrom", plan.get("publish_for") or "layout"),
+        ("artistId", plan["login"]),
+        ("artistName", api.artist_name(plan["login"])),
+        ("published", datetime.now().isoformat(timespec="seconds")),
+        ("sourceScene", os.path.normpath(scene_path)),
+    ]
+
+
 def export_camera(camera, plan, start, end, scene_path):
     """Bake, then write the keys file + map and the camera file to the H
     drive. Nothing it makes is left in the open scene. Returns warnings."""
@@ -299,6 +319,7 @@ def export_camera(camera, plan, start, end, scene_path):
             "fps": api._scene_fps(),
             "source_scene": os.path.basename(scene_path),
             "source_camera": cmds.ls(camera)[0],
+            "published_from": plan.get("publish_for") or "layout",
             "curves": dict((c, list(v)) for c, v in sorted(curves.items())),
         }
         with open(plan["map_dest"], "w") as f:
@@ -306,6 +327,7 @@ def export_camera(camera, plan, start, end, scene_path):
         api._lock(plan["map_dest"])
         cmds.delete(list(curves))      # the camera file carries no keys
         made = [pub_tr]
+        api._stamp(pub_tr, camera_stamp(plan, scene_path))
         _export([pub_tr], plan["dest"])
     finally:
         existing = [n for n in made if cmds.objExists(n)]
@@ -341,7 +363,8 @@ def find_shotgrid_shot(plan, h_root):
 # One-click camera publish
 # ---------------------------------------------------------------------------
 
-def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, notes=""):
+def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, notes="",
+                   publish_for="layout"):
     """ShotGrid lookup -> playblast through the camera -> bake + write both
     files to the H drive -> ShotGrid Version on the Shot.
 
@@ -354,12 +377,23 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     camera = check_camera([camera])
     plan = plan_camera(scene_path, h_root, scratch_root)
     plan["objects"] = [cmds.ls(camera)[0]]
+    plan["publish_for"] = publish_for       # which stage, stamped on the camera
     plan["sg_shot"] = find_shotgrid_shot(plan, h_root)
+    # Not blocked by approval (changed 2026-10-19); the Version goes on the
+    # task of the stage it was published from.
+    plan["sg_task"] = api.task_on(plan["sg_shot"],
+                                  "Layout" if publish_for == "layout" else "Final")
+    api.check_rv()
     start = int(cmds.playbackOptions(query=True, minTime=True))
     end = int(cmds.playbackOptions(query=True, maxTime=True))
     plan["frames_folder"], files = api.playblast_frames(plan, frame_count, camera=camera)
 
-    plan["warnings"] = export_camera(camera, plan, start, end, scene_path)
+    try:
+        plan["warnings"] = export_camera(camera, plan, start, end, scene_path)
+    except Exception:
+        # Nothing was published: don't leave this attempt's frames on scratch.
+        api.remove_frames(plan["frames_folder"], plan["shot_project"])
+        raise
 
     note = ("Published camera v%03d to the H drive:\n%s\n%s\n"
             "(from %s, camera %s, keys baked %d-%d)" % (
@@ -383,5 +417,7 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     except Exception as e:     # files already on the H drive; report, don't lose them
         plan["sg_error"] = str(e)
     else:
-        api.remove_frames(plan["frames_folder"], plan["shot_project"])
+        api.link_version_to_task(plan, plan["sg_task"])
+        if not api.note_no_movie(plan):
+            api.remove_frames(plan["frames_folder"], plan["shot_project"])
     return plan

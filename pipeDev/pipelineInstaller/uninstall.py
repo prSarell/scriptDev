@@ -98,3 +98,7 @@ def onMayaDroppedPythonFile(_obj):
         cmds.confirmDialog(title=_TITLE + " — Error",
                            message="Uninstall failed! See Script Editor for details.\n\n%s" % e,
                            button=["OK"])
+    finally:
+        # Same as install.py: don't let a later drop of another uninstall.py
+        # this session run this one instead.
+        sys.modules.pop(__name__, None)

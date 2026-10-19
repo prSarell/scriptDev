@@ -9,11 +9,12 @@ SHELF_NAME = "mpPipe"
 BUTTONS = [
     {
         "label": "Publish",
-        "tooltip": "Publish Tool: publish assets and shot cameras to the H drive and ShotGrid.",
+        "tooltip": "Publish Tool: publish assets, and shot layout/animation, to the H drive and ShotGrid.",
         "icon": "iconPipePublish.png",
         "command": (
-            "import importlib, publishTool_api, publishTool_camera, publishTool_ui\n"
-            "for _m in (publishTool_api, publishTool_camera, publishTool_ui): importlib.reload(_m)\n"
+            "import importlib, publishTool_api, publishTool_camera, publishTool_anim, publishTool_ui\n"
+            "for _m in (publishTool_api, publishTool_camera, publishTool_anim, publishTool_ui): "
+            "importlib.reload(_m)\n"
             "publishTool_ui.show()"
         ),
     },
