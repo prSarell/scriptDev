@@ -1216,6 +1216,7 @@ class ShotSub(object):
         review movie is silent, which breaks lip-sync review. Audio is left
         at rvio's default (16-bit PCM): `-audiocodec aac` fails in rvio
         2025.1 ("non monotonically increasing dts")."""
+        self.last_encode_problem = None
         rvio_path = self.find_rv_executable("rvio")
         if not rvio_path:
             return None
@@ -1229,6 +1230,10 @@ class ShotSub(object):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception as exc:
+            output = (getattr(exc, "stdout", "") or "") + (getattr(exc, "stderr", "") or "")
+            sgc = self._quiet_shotgridConnect()
+            self.last_encode_problem = (sgc.rvio_problem(output) if sgc and hasattr(sgc, "rvio_problem")
+                                        else None) or "RV couldn't make the movie: {0}".format(exc)
             cmds.warning("shotSub: rvio encode failed — {0}".format(exc))
             return None
 
@@ -1246,6 +1251,9 @@ class ShotSub(object):
                 "shotSub: couldn't encode a movie (RV's rvio missing or failed) — "
                 "keeping the JPEG frames for this version instead."
             )
+            if getattr(self, "last_encode_problem", None):
+                cmds.confirmDialog(title="shotSub — no movie", button=["OK"], message=(
+                    self.last_encode_problem + "\n\nThe JPEG frames are kept for this version."))
             return prefix + ".#.jpg"
 
         shutil.copyfile(files[len(files) // 2], prefix + ".thumb.jpg")
@@ -1256,9 +1264,40 @@ class ShotSub(object):
                 cmds.warning("shotSub: could not delete frame {0} — {1}".format(filepath, exc))
         return movie
 
+    def _quiet_shotgridConnect(self):
+        """shotgridConnect if it's there, without _import_shotgridConnect()'s
+        warning (used for optional RV checks)."""
+        try:
+            import shotgridConnect
+            return shotgridConnect
+        except ImportError:
+            return None
+
+    def rv_ready_or_ask(self):
+        """Catch RV not being signed in to ShotGrid *before* playblasting
+        (rvio then can't encode, so ShotGrid would get no movie -- found
+        2026-10-19 to be why students' reviews had no movies). True to go
+        ahead; False if the student chose to sort RV out first."""
+        rvio_path = self.find_rv_executable("rvio")
+        sgc = self._quiet_shotgridConnect()
+        if not (rvio_path and sgc and hasattr(sgc, "check_rvio")):
+            return True
+        problem = sgc.check_rvio(rvio_path)
+        if not problem:
+            return True
+        answer = cmds.confirmDialog(
+            title="shotSub — RV can't make movies",
+            message=problem + "\n\nPlayblast anyway? You'd get JPEG frames only, and "
+                              "ShotGrid would get no review movie.",
+            button=["Cancel", "Playblast Anyway"], defaultButton="Cancel",
+            cancelButton="Cancel", dismissString="Cancel")
+        return answer == "Playblast Anyway"
+
     def create_playblast(self):
         try:
             self.ensure_scene_saved()
+            if not self.rv_ready_or_ask():
+                return
 
             version_folder = self.get_next_version_folder(create=True)
             prefix = self.get_playblast_prefix(version_folder)
@@ -1695,6 +1734,10 @@ class ShotSub(object):
 
         sg_version_id = result.get("id") if isinstance(result, dict) else None
         version_name = os.path.basename(version_folder)
+        movie_problem = result.get("movie_problem") if isinstance(result, dict) else None
+        if movie_problem:
+            cmds.confirmDialog(title="shotSub — published without a movie", button=["OK"], message=(
+                "{0} went to ShotGrid with a thumbnail only.\n\n{1}".format(version_name, movie_problem)))
         self.mark_version_published(version_name, sg_version_id=sg_version_id)
         cmds.scrollField(self.widgets["publish_notes"], e=True, text="")
         self.refresh_ui_state()

@@ -40,6 +40,7 @@ import re
 import glob
 import json
 import getpass
+import shutil
 import subprocess
 
 import maya.cmds as cmds
@@ -293,6 +294,69 @@ def _frame_sequence_prefix(version_folder):
     return os.path.join(version_folder, match.group(1)) if match else None
 
 
+# RV (and its rvio encoder) is licensed through the person's ShotGrid
+# sign-in. When that sign-in has expired, rvio refuses to encode ("can't get
+# rvio license") and publishes used to go out silently thumbnail-only --
+# the cause of students' missing review movies in class (found 2026-10-19).
+RV_SIGN_IN_HELP = (
+    "RV isn't signed in to ShotGrid, so it can't make the review movie.\n"
+    "Open RV, sign in to ShotGrid with your RMIT login when it asks, "
+    "close RV, then try again.")
+
+# Why the last _encode_to_mp4() call made no movie (None if it did, or
+# wasn't asked to). Read by upload_playblast() and shotSub.
+last_encode_problem = None
+
+_rvio_ok_until = 0.0        # check_rvio() result cache (time.time())
+
+
+def rvio_problem(output):
+    """A plain-language reason from rvio's output, or None if nothing's
+    recognisably wrong."""
+    text = output or ""
+    lowered = text.lower()
+    if "license" in lowered or "licence" in lowered or "access token" in lowered:
+        return RV_SIGN_IN_HELP
+    errors = [line.strip() for line in text.splitlines() if line.strip().startswith("ERROR")]
+    if errors:
+        return "RV couldn't make the review movie: " + errors[-1]
+    return None
+
+
+def check_rvio(rvio_path, cache_seconds=600):
+    """Ask rvio to encode a tiny generated clip (no files needed), so a
+    missing ShotGrid sign-in is caught *before* playblasting/publishing.
+    Takes a few seconds; a pass is remembered for cache_seconds. Returns
+    None if rvio works, else the reason (RV_SIGN_IN_HELP for a sign-in
+    problem)."""
+    global _rvio_ok_until
+    import tempfile
+    import time
+    if not rvio_path:
+        return None     # no RV at all: callers already handle that case
+    if time.time() < _rvio_ok_until:
+        return None
+    folder = tempfile.mkdtemp(prefix="rvio_check_")
+    out_path = os.path.join(folder, "check.mp4")
+    try:
+        result = subprocess.run(
+            [rvio_path, "solid,red=0.5,start=1,end=2,width=64,height=64,fps=24.movieproc",
+             "-o", out_path, "-codec", "libx264"],
+            capture_output=True, text=True, timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode == 0 and os.path.isfile(out_path):
+            _rvio_ok_until = time.time() + cache_seconds
+            return None
+        return rvio_problem(output) or "RV couldn't make a test movie (rvio exit code {0}).".format(
+            result.returncode)
+    except Exception as exc:
+        return "RV couldn't make a test movie: {0}".format(exc)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset_seconds=0.0):
     """Best-effort JPEG-sequence -> mp4 transcode via RV's bundled rvio.
     rvio_path is resolved by the caller (shotSub.py already has its own
@@ -308,6 +372,8 @@ def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset
     audio_path/audio_offset_seconds (from shotSub's scene time slider sound)
     are muxed in via an rvio source group so lip sync reviews work (rvio's
     default PCM audio -- its aac encoder fails, see shotSub)."""
+    global last_encode_problem
+    last_encode_problem = None
     prefix = _frame_sequence_prefix(version_folder)
     if not prefix:
         return None
@@ -341,10 +407,16 @@ def _encode_to_mp4(version_folder, fps, rvio_path, audio_path=None, audio_offset
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception as exc:
-        print("shotSub: rvio encode failed (publishing thumbnail-only instead) — {0}".format(exc))
+        output = (getattr(exc, "stdout", "") or "") + (getattr(exc, "stderr", "") or "")
+        last_encode_problem = rvio_problem(output) or "RV couldn't make the review movie: {0}".format(exc)
+        print("shotSub: rvio encode failed (publishing thumbnail-only instead) — {0}\n{1}".format(
+            exc, last_encode_problem))
         return None
 
-    return out_path if os.path.isfile(out_path) else None
+    if not os.path.isfile(out_path):
+        last_encode_problem = "RV ran but no review movie was made."
+        return None
+    return out_path
 
 
 def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=None, fps=None,
@@ -431,17 +503,25 @@ def upload_playblast(entity_type, entity_id, version_folder, files=None, notes=N
 
     mp4_path = movie_path or _encode_to_mp4(
         version_folder_norm, fps, rvio_path, audio_path, audio_offset_seconds)
+    movie_problem = None
     if mp4_path:
         sg.upload("Version", version["id"], mp4_path, field_name="sg_uploaded_movie")
         print("shotSub: uploaded movie '{0}' to Version id {1}".format(mp4_path, version["id"]))
-    elif machine_diagnostic:
-        try:
-            _create_note(
-                sg, entity, project, version, machine_diagnostic,
-                subject="shotSub: no review movie — {0}".format(code),
-            )
-        except Exception as exc:
-            print("shotSub: could not create rvio-missing diagnostic Note — {0}".format(exc))
+    else:
+        # Why there's no movie, for the caller to show the student and for
+        # a Note the instructor sees on the Shot/Version.
+        movie_problem = last_encode_problem or (
+            "RV's rvio wasn't found on this machine." if not rvio_path else None)
+        diagnostic = machine_diagnostic or movie_problem
+        if diagnostic:
+            try:
+                _create_note(
+                    sg, entity, project, version, diagnostic,
+                    subject="shotSub: no review movie — {0}".format(code),
+                )
+            except Exception as exc:
+                print("shotSub: could not create no-movie diagnostic Note — {0}".format(exc))
+    version = dict(version, movie_problem=movie_problem)
 
     if notes:
         try:
