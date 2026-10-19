@@ -8,6 +8,17 @@ SHELF_NAME = "mpPipe"
 # effect on the next click without restarting Maya.
 BUTTONS = [
     {
+        "label": "Project",
+        "tooltip": "Project Tool: set the Maya project to any asset or shot of your ShotGrid "
+                   "projects, and keep your scratch folders in step with the H drive.",
+        "icon": "iconPipeProject.png",
+        "command": (
+            "import importlib, publishTool_api, projectTool_api, projectTool_ui\n"
+            "for _m in (publishTool_api, projectTool_api, projectTool_ui): importlib.reload(_m)\n"
+            "projectTool_ui.show()"
+        ),
+    },
+    {
         "label": "Publish",
         "tooltip": "Publish Tool: publish assets, and shot layout/animation, to the H drive and ShotGrid.",
         "icon": "iconPipePublish.png",

@@ -392,13 +392,71 @@ def unused_shading_nodes(namespace=None):
     return nodes
 
 
-class _WithoutUnusedShading(object):
-    """While inside, unassigned shaders are deleted from the working scene,
-    so a whole-scene export leaves them out; on the way out they're put back
-    with Maya's undo. self.removed: what was left out."""
+def unknown_nodes():
+    """Nodes from plug-ins that aren't loaded (Maya shows them as "unknown"),
+    e.g. old Node Editor bookmarks, Redshift settings, editor tab info. Never
+    part of an asset, and their data stops Maya writing a .ma at all ("This
+    file contains unknown data..."). Referenced ones are left alone."""
+    return [n for n in cmds.ls(type=["unknown", "unknownDag", "unknownTransform"]) or []
+            if not cmds.referenceQuery(n, isNodeReferenced=True)
+            and not cmds.lockNode(n, query=True, lock=True)[0]]
+
+
+def _not_loaded(plugin):
+    if plugin == "maya":
+        return False
+    try:
+        return not cmds.pluginInfo(plugin, query=True, loaded=True)
+    except RuntimeError:
+        return True
+
+
+def drop_unknown_requires(path):
+    """Take `requires "<plugin>" ...;` lines for plug-ins that aren't loaded
+    in this Maya (e.g. an old stereoCamera or Redshift) out of a published
+    .ma, so opening the publish doesn't error "Plug-in ... was not found".
+    Their nodes are already left out (they'd be unknown nodes), so nothing
+    in the file needs them. Only the file's header is touched; the working
+    scene is never changed (Maya can't undo removing a plug-in
+    requirement). .mb files are left as they are. Returns what was taken out."""
+    if not path.lower().endswith(".ma"):
+        return []
+    tmp = path + ".tmp"
+    dropped, statement, header = [], [], True
+    with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as src, \
+            open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as out:
+        for line in src:
+            if header and (statement or line.startswith("requires")):
+                statement.append(line)
+                if line.rstrip().endswith(";"):
+                    quoted = re.findall(r'"([^"]*)"', "".join(statement))
+                    plugin = quoted[-2] if len(quoted) >= 2 else None
+                    if plugin and _not_loaded(plugin):
+                        dropped.append(plugin)
+                    else:
+                        out.writelines(statement)
+                    statement = []
+                continue
+            if header and line.startswith(("createNode", "fileInfo", "currentUnit", "file ")):
+                header = False
+            out.write(line)
+    os.replace(tmp, path)
+    return sorted(set(dropped))
+
+
+class _LeftOutForExport(object):
+    """While inside, the nodes find() returns are deleted from the working
+    scene so an export leaves them out; on the way out they're put back with
+    Maya's undo. Nothing else undoable may happen inside. self.removed:
+    what was left out."""
+
+    what = "nodes"
+
+    def __init__(self, find=None):
+        self._find = find or (lambda: unused_shading_nodes() + unknown_nodes())
 
     def __enter__(self):
-        self.removed = unused_shading_nodes()
+        self.removed = sorted(set(self._find()))
         self._undo_was_on = cmds.undoInfo(query=True, state=True)
         if self.removed:
             cmds.undoInfo(state=True)
@@ -416,10 +474,25 @@ class _WithoutUnusedShading(object):
             missing = [n for n in self.removed if not cmds.objExists(n)]
             if missing:
                 raise PublishError(
-                    "The publish worked, but these unused shaders weren't put back in your "
+                    "The publish worked, but these %s weren't put back in your "
                     "scene: %s\nReopen your scene without saving to get them back."
-                    % ", ".join(missing))
+                    % (self.what, ", ".join(missing)))
         return False
+
+
+class _WithoutUnusedShading(_LeftOutForExport):
+    """Whole-scene exports: unassigned shaders and unknown plug-in nodes
+    left out (unused shaders DECIDED 2026-10-19)."""
+    what = "unused shaders / unknown nodes"
+
+
+class _WithoutUnknownData(_LeftOutForExport):
+    """Model exports: unknown plug-in nodes left out (the model's own
+    shaders travel with the copy, so only unknown nodes matter here)."""
+    what = "unknown plug-in nodes"
+
+    def __init__(self):
+        super(_WithoutUnknownData, self).__init__(unknown_nodes)
 
 
 def copy_to_h_drive(scene_path, plan):
@@ -610,6 +683,7 @@ def export_to_h_drive(objects, plan):
                     cmds.file(plan["dest"], exportAll=True, type=file_type,
                               preserveReferences=True, force=True)
                 plan["unused_shading_left_out"] = unused.removed
+                drop_unknown_requires(plan["dest"])
     finally:
         cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
     _lock(plan["dest"])
@@ -700,6 +774,60 @@ def _model_roots(objects):
     return roots
 
 
+def _shown(node):
+    """Is this one node switched on: its own visibility, LOD visibility,
+    and any display layer it's in."""
+    if not cmds.getAttr(node + ".visibility"):
+        return False
+    if cmds.attributeQuery("lodVisibility", node=node, exists=True) and \
+            not cmds.getAttr(node + ".lodVisibility"):
+        return False
+    for layer in cmds.listConnections(node + ".drawOverride", source=True, destination=False,
+                                      type="displayLayer") or []:
+        if not cmds.getAttr(layer + ".visibility"):
+            return False
+    return True
+
+
+def visible_in_scene(node):
+    """Shown in the viewport: the node and every parent above it switched on."""
+    path = (cmds.ls(node, long=True) or [""])[0]
+    parts = path.split("|")
+    return all(_shown("|".join(parts[:i])) for i in range(2, len(parts) + 1))
+
+
+def hidden_inside(root):
+    """Paths below root (e.g. '|door001') of transforms and geometry shapes
+    that are hidden, so a model publish can leave them out (user,
+    2026-10-19). Only the top-most hidden thing of a branch is listed."""
+    found = []
+    for node in sorted(cmds.listRelatives(root, allDescendents=True, fullPath=True) or [], key=len):
+        if any(node.startswith(root + h + "|") for h in found):
+            continue
+        is_geo = cmds.nodeType(node) in GEOMETRY_TYPES
+        if (cmds.nodeType(node) == "transform" or is_geo) and not _shown(node):
+            if not (is_geo and cmds.getAttr(node + ".intermediateObject")):
+                found.append(node[len(root):])
+    return found
+
+
+def _remove_empty_groups(nodes):
+    """Delete transforms under (and including) nodes that hold no shape at
+    all any more. Returns their short names."""
+    removed = []
+    candidates = []
+    for node in cmds.ls(nodes, long=True) or []:
+        candidates.append(node)
+        candidates += cmds.listRelatives(node, allDescendents=True, fullPath=True,
+                                         type="transform") or []
+    for node in sorted(set(candidates), key=len, reverse=True):     # deepest first
+        if cmds.objExists(node) and cmds.nodeType(node) == "transform" and \
+                not cmds.listRelatives(node, allDescendents=True, type="shape"):
+            removed.append(node.split("|")[-1])
+            cmds.delete(node)
+    return sorted(removed)
+
+
 def export_model_to_h_drive(objects, plan, scene_path):
     """Model publish: the published file holds a clean copy of the model,
     transforms frozen and history deleted, inside <asset>_model_GRP with
@@ -729,6 +857,16 @@ def export_model_to_h_drive(objects, plan, scene_path):
                 for node in cmds.ls(group_name, long=True) or []:
                     moved.append((cmds.ls(node, uuid=True)[0], node.split("|")[-1]))
                     cmds.rename(node, "pipeTmp_" + node.split("|")[-1])
+                # What's hidden is worked out on the originals (layers,
+                # parents above the selection), then left out of the copies.
+                hidden_roots = [cmds.ls(u, long=True)[0] for u in roots
+                                if not visible_in_scene(cmds.ls(u, long=True)[0])]
+                if hidden_roots and len(hidden_roots) == len(roots):
+                    raise PublishError("Everything selected is hidden: %s"
+                                       % ", ".join(r.split("|")[-1] for r in hidden_roots))
+                roots = [u for u in roots if cmds.ls(u, long=True)[0] not in hidden_roots]
+                left_out = [r.split("|")[-1] for r in hidden_roots]
+                hidden = dict((u, hidden_inside(cmds.ls(u, long=True)[0])) for u in roots)
                 copies = []
                 for uuid in roots:
                     root = cmds.ls(uuid, long=True)[0]
@@ -740,8 +878,30 @@ def export_model_to_h_drive(objects, plan, scene_path):
                     copy = cmds.rename(copy, short)
                     if cmds.listRelatives(copy, parent=True):
                         copy = cmds.parent(copy, world=True)[0]
+                    copy = cmds.ls(copy, long=True)[0]
+                    for suffix in hidden[uuid]:
+                        if cmds.objExists(copy + suffix):
+                            cmds.delete(copy + suffix)
+                            left_out.append(suffix.split("|")[-1])
                     copies.append(cmds.ls(copy, uuid=True)[0])
+                empties = _remove_empty_groups(cmds.ls(copies, long=True))
+                copies = [u for u in copies if cmds.ls(u)]
+                if not copies:
+                    raise PublishError("Nothing left to publish: everything selected is "
+                                       "hidden or an empty group.")
+                plan["left_out"] = {"hidden": sorted(left_out), "empty": empties}
                 copy_nodes = cmds.ls(copies, long=True)
+                # Invalid / unused components (Mesh Cleanup) make Maya warn
+                # "errors have occurred while reading this scene" on every
+                # open of the publish. Cleaned on the copies only.
+                meshes = [m for m in cmds.listRelatives(copy_nodes, allDescendents=True,
+                                                        fullPath=True, type="mesh") or []
+                          if not cmds.getAttr(m + ".intermediateObject")]
+                for mesh in meshes:     # one at a time: one bad mesh mustn't stop the rest
+                    try:
+                        cmds.polyClean(mesh, cleanEdges=True, cleanVertices=True)
+                    except RuntimeError:
+                        pass        # nothing to clean / not cleanable: publish as is
                 everything = copy_nodes + (cmds.listRelatives(
                     copy_nodes, allDescendents=True, fullPath=True) or [])
                 cmds.delete(everything, constructionHistory=True)
@@ -756,10 +916,15 @@ def export_model_to_h_drive(objects, plan, scene_path):
                 cmds.parent(cmds.ls(copies, long=True), group)
                 _stamp(group, info)
                 cmds.select(group, replace=True)
-                cmds.file(plan["dest"], exportSelected=True, type=file_type,
-                          constructionHistory=True, channels=True, constraints=True,
-                          expressions=True, shader=True, preserveReferences=True,
-                          force=True)
+                # Unknown plug-in data (old editor bookmarks, Redshift...)
+                # never belongs to a model and stops a .ma being written.
+                with _WithoutUnknownData() as unknown:
+                    cmds.file(plan["dest"], exportSelected=True, type=file_type,
+                              constructionHistory=True, channels=True, constraints=True,
+                              expressions=True, shader=True, preserveReferences=True,
+                              force=True)
+                plan["left_out"]["unknown"] = len(unknown.removed)
+                plan["left_out"]["requires"] = drop_unknown_requires(plan["dest"])
             finally:
                 # Copies and group gone, originals back to their names,
                 # before the namespaces are put back.
@@ -1055,8 +1220,24 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
             % ", ".join("'%s:'" % n for n in plan["namespaces_removed"]))
     if plan.get("unused_shading_left_out"):
         plan.setdefault("warnings", []).append(
-            "Unused shaders left out of the published file (your scene is unchanged): %s"
-            % ", ".join(plan["unused_shading_left_out"]))
+            "Unused shaders / unknown plug-in nodes left out of the published file "
+            "(your scene is unchanged): %d" % len(plan["unused_shading_left_out"]))
+    left_out = plan.get("left_out") or {}
+    if left_out.get("hidden"):
+        plan.setdefault("warnings", []).append(
+            "Hidden objects left out of the published file (your scene is unchanged): %s"
+            % ", ".join(left_out["hidden"]))
+    if left_out.get("empty"):
+        plan.setdefault("warnings", []).append(
+            "Empty groups left out: %s" % ", ".join(left_out["empty"]))
+    if left_out.get("unknown"):
+        plan.setdefault("warnings", []).append(
+            "%d unknown plug-in node(s) left out (old editor/renderer data, not part "
+            "of the model)." % left_out["unknown"])
+    if left_out.get("requires"):
+        plan.setdefault("warnings", []).append(
+            "The published file no longer asks for plug-ins that aren't installed: %s"
+            % ", ".join(left_out["requires"]))
 
     what = ("%d object(s): %s" % (len(plan["objects"]), ", ".join(plan["objects"]))
             if plan["objects"] else "whole scene")

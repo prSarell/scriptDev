@@ -38,6 +38,8 @@ SCRIPTS = [
     ("pipeDev/buildDev", "pipeEnv.py"),
     ("pipeDev/buildDev", "buildTool_api.py"),
     ("pipeDev/buildDev", "buildTool_ui.py"),
+    ("pipeDev/projectDev", "projectTool_api.py"),
+    ("pipeDev/projectDev", "projectTool_ui.py"),
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
 TOP = "mpPipe"

@@ -1487,6 +1487,27 @@ The tools are developed side by side:
                    `test_modelGroup_mayapy.py` 13/13. Not built yet: the
                    group for rigs and other departments (a rig can't be
                    duplicated, so it needs a different approach).
+             - **Groups of models (user, 2026-10-19):** "if a model
+               contains more than one individual model the student can
+               select a group and the publish tool will perform a full clean
+               ... but also delete any hidden geo etc." Found on the real
+               `scoutsHouse.mb` (previs): its publish failed because the
+               scene held 180 unknown plug-in nodes (editor bookmarks,
+               Redshift settings, old ngSkinTools data), which stop Maya
+               writing a .ma; and unparenting by hand broke world space.
+               - Built: the model publish (still on copies; working scene
+                 unchanged) leaves out anything hidden (itself, under a
+                 hidden group, or on a hidden display layer) and empty
+                 groups, runs Mesh Cleanup (`polyClean`) per mesh, leaves
+                 unknown plug-in nodes out of the export (put back with
+                 undo), and strips `requires` lines for plug-ins that
+                 aren't loaded from a published .ma (Maya can't undo
+                 removing them from the scene, so only the file is
+                 changed; .mb keeps them). Publish lists what it left out.
+               - Checked on the real house: .ma written, 8 hidden objects
+                 + `group1` + 180 unknown nodes left out, all 99 visible
+                 meshes in exactly the same world space, frozen, publish
+                 opens with no warnings. `test_modelGroup_mayapy.py` 21/21.
              - **Unassigned shaders (DECIDED 2026-10-19):** "this rule will
                need to apply to all publishes": no published file carries
                unassigned shaders. Models are cleaned before rigging gets

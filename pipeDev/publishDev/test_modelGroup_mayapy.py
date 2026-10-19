@@ -51,4 +51,62 @@ check("republish: one group, not nested", cmds.ls("backpack_model_GRP", long=Tru
       and cmds.listRelatives("backpack_model_GRP", children=True, type="transform") == ["backPack_geo"]
       and cmds.getAttr("backpack_model_GRP.pipe_version") == 5)
 check("file is read-only", not os.access(p5["dest"], os.W_OK))
+
+# -- A group of many models (the scout's house case, 2026-10-19): hidden geo,
+#    hidden layer, empty group and unknown plug-in data left out; every mesh
+#    stays exactly where it was in world space; .ma still writes. -----------
+odd = os.path.join(d, "odd_plugin.ma")
+with open(odd, "w") as f:      # a node from a plug-in that isn't loaded
+    f.write('//Maya ASCII 2025 scene\nrequires "notARealPlugin" "1.0";\n'
+            'createNode notARealNodeType -n "oldEditorBookmark1";\n')
+cmds.file(new=True, force=True)
+cmds.file(odd, i=True, force=True)
+house = cmds.group(empty=True, name="house")
+cmds.setAttr(house + ".translate", 5, 0, 0)
+wing = cmds.group(empty=True, name="wing", parent=house)
+cmds.setAttr(wing + ".rotateY", 90)
+cmds.setAttr(wing + ".scale", -1, 2, 1)          # negative + non-uniform scale
+wall = cmds.polyCube(name="wall")[0]
+cmds.parent(wall, "|house|wing", relative=True)
+cmds.setAttr("|house|wing|wall.translate", 1, 2, 3)
+door = cmds.polyCube(name="door")[0]
+cmds.parent(door, "|house", relative=True)
+cmds.setAttr("|house|door.visibility", False)                          # hidden itself
+layer_geo = cmds.polyCube(name="crate")[0]
+cmds.parent(layer_geo, "|house", relative=True)
+layer = cmds.createDisplayLayer(["|house|crate"], name="HIDDEN_LYR", noRecurse=True)
+cmds.setAttr(layer + ".visibility", False)                              # hidden by layer
+cmds.group(empty=True, name="emptyGrp", parent="|house")                # empty group
+before = [round(v, 4) for v in cmds.xform("|house|wing|wall.vtx[*]", q=True, ws=True, t=True)]
+pm = plan(1)
+pm["dest"] = os.path.join(d, "house_scout_model_v001.ma")
+api.export_model_to_h_drive(["|house"], pm, "house.ma")
+check("group of models: unknown plug-in data doesn't stop a .ma publish", os.path.isfile(pm["dest"]))
+check("hidden, layer-hidden and empty left out, and reported",
+      pm["left_out"]["hidden"] == ["crate", "door"] and pm["left_out"]["empty"] == ["emptyGrp"]
+      and pm["left_out"]["unknown"] == 1)
+check("working scene keeps its unknown node and plug-in requirement",
+      cmds.ls("oldEditorBookmark1") != [] and "notARealPlugin" in (cmds.unknownPlugin(q=True, list=True) or []))
+text = open(pm["dest"]).read()
+check("published file doesn't ask for the missing plug-in", "notARealPlugin" not in text
+      and 'requires maya "2025' in text)
+crafted = os.path.join(d, "crafted.ma")
+with open(crafted, "w") as f:
+    f.write('//Maya ASCII 2025 scene\nrequires maya "2025ff03";\n'
+            'requires -nodeType "oldNode" "stereoCamera_gone" "1.0";\n'
+            'requires "lookdevKit" "1.0";\ncurrentUnit -l centimeter;\ncreateNode transform -n "a";\n'
+            '// requires "notAHeader" "1.0"; stays: not in the header\n')
+cmds.loadPlugin("lookdevKit", quiet=True)
+dropped = api.drop_unknown_requires(crafted)
+text = open(crafted).read()
+check("requires for unloaded plug-ins stripped from a .ma header, loaded ones kept",
+      dropped == ["stereoCamera_gone"] and "stereoCamera_gone" not in text
+      and 'requires "lookdevKit"' in text and 'requires maya' in text and "notAHeader" in text)
+cmds.file(new=True, force=True)
+cmds.file(pm["dest"], open=True, force=True)
+check("published: only the visible wall, in its groups",
+      cmds.ls("door", "crate", "emptyGrp") == [] and cmds.ls("|backpack_model_GRP|house|wing|wall") != [])
+after = [round(v, 4) for v in cmds.xform("|backpack_model_GRP|house|wing|wall.vtx[*]", q=True, ws=True, t=True)]
+check("every vertex where it was in world space (negative/non-uniform scale)", after == before)
+check("no unknown nodes in the published file", not cmds.ls(type="unknown"))
 print("%d/%d passed" % (sum(ok), len(ok)))
