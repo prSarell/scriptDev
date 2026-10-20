@@ -558,6 +558,38 @@ CACHE_SET = "cache_SET"
 RIG_CODE = "rig"
 MODEL_CODE = "model"
 GEOMETRY_TYPES = ("mesh", "nurbsSurface", "subdiv")
+# A Model publish freezes transforms and deletes history, which would wreck
+# a rig (user, 2026-10-20), so it refuses anything carrying these.
+RIG_NODE_TYPES = ("joint", "skinCluster", "blendShape", "ikHandle", "constraint")
+
+
+def rig_parts(objects):
+    """{node type: count} of rig nodes in what's being published (objects,
+    their children and their history; empty = the whole scene)."""
+    if objects:
+        nodes = cmds.ls(objects, long=True) or []
+        nodes += cmds.listRelatives(nodes, allDescendents=True, fullPath=True) or []
+        if nodes:
+            nodes += cmds.listHistory(nodes) or []
+    else:
+        nodes = cmds.ls() or []
+    found = {}
+    for node_type in RIG_NODE_TYPES:
+        count = len(set(cmds.ls(nodes, type=node_type) or []))
+        if count:
+            found[node_type] = count
+    return found
+
+
+def check_not_a_rig(objects):
+    """Refuse a Model publish of a rig: freezing and deleting history on
+    the copy would break it."""
+    found = rig_parts(objects)
+    if found:
+        raise PublishError(
+            "This looks like a rig (%s). A Modeling publish freezes transforms and "
+            "deletes history, which would break it.\nChoose Rigging in Department."
+            % ", ".join("%d %s" % (n, t) for t, n in sorted(found.items())))
 
 
 def _under(node, roots):
@@ -575,10 +607,11 @@ def check_cache_set(objects):
     never by the tool) holding geometry, all of it inside what's being
     published. Returns the set's name; raises PublishError explaining what
     to fix."""
-    how = ("\n\nRig publishes need a %s: an object set listing the geometry a "
-           "shot publish will cache. Create it by hand (select the render "
-           "geometry, Create > Sets > Set, name it %s), then publish again."
-           % (CACHE_SET, CACHE_SET))
+    how = ("\n\nRig publishes need a %s: an object set listing the geometry that "
+           "gets rendered, which is what a shot publish caches. Rig helpers (NURBS "
+           "surfaces that drive joints, collision geometry...) stay out of it. Create "
+           "it by hand (select the render geometry, Create > Sets > Set, name it %s), "
+           "then publish again." % (CACHE_SET, CACHE_SET))
     sets = [s for s in cmds.ls(type="objectSet") or []
             if s.split(":")[-1] == CACHE_SET
             and not cmds.referenceQuery(s, isNodeReferenced=True)]
@@ -609,6 +642,327 @@ def check_cache_set(objects):
                 "Publish the whole rig (or include them), or take them out of the set."
                 % (cache_set, ", ".join(outside[:5])))
     return cache_set
+
+
+# ---------------------------------------------------------------------------
+# Rig control sets (spec §4 "Rig sets: controls and render geo", DECIDED
+# 2026-10-20): the rigger makes body_controls_SET (+ face_controls_SET, +
+# any custom sets); a rig publish is refused without them. Sets can hold
+# sets, so mGear's or Advanced Skeleton's own sets go inside. A MetaHuman
+# face's controls count as face controls automatically. Publish gathers
+# the pipe's sets into RMIT_publishSet (user, 2026-10-20). The names
+# Publish recognises live in rig_rules.py.
+# ---------------------------------------------------------------------------
+
+PUBLISH_SET = "RMIT_publishSet"
+BODY_CONTROLS_SET = "body_controls_SET"
+FACE_CONTROLS_SET = "face_controls_SET"
+
+
+def _short(node):
+    return node.split("|")[-1].split(":")[-1]
+
+
+def _own_sets(name):
+    """Object sets called name (any namespace), not from a reference."""
+    return [s for s in cmds.ls(type="objectSet") or []
+            if _short(s) == name and not cmds.referenceQuery(s, isNodeReferenced=True)]
+
+
+def set_tree(object_set):
+    """object_set and every set nested inside it."""
+    found, todo = [], [object_set]
+    while todo:
+        s = todo.pop()
+        if s in found:
+            continue
+        found.append(s)
+        todo += [m for m in cmds.sets(s, query=True) or [] if cmds.nodeType(m) == "objectSet"]
+    return found
+
+
+def set_controls(object_set):
+    """The transforms in a set, following sets nested inside it (long names)."""
+    controls = set()
+    for s in set_tree(object_set):
+        for m in cmds.sets(s, query=True) or []:
+            if cmds.nodeType(m) == "transform" or cmds.nodeType(m) == "joint":
+                controls.add(cmds.ls(m, long=True)[0])
+    return sorted(controls)
+
+
+def metahuman_face_controls():
+    """None if the rig has no MetaHuman (no DNA node), else the face
+    controls by rig_rules.METAHUMAN: CTRL_ transforms under the face GUI
+    group, minus the board and utility nodes (long names; may be empty if
+    MetaHuman renamed things)."""
+    import rig_rules
+    rules = rig_rules.METAHUMAN
+    try:
+        dna = cmds.ls(type=rules["dna_node_type"]) or []
+    except RuntimeError:
+        dna = []        # node type unknown: the plug-in isn't loaded
+    if not dna:
+        return None
+    skip = set(rules["not_controls"])
+    found = set()
+    for group in cmds.ls(type="transform", long=True) or []:
+        if _short(group) != rules["face_gui_group"]:
+            continue
+        for node in cmds.listRelatives(group, allDescendents=True, fullPath=True,
+                                       type="transform") or []:
+            short = _short(node)
+            if short.startswith(rules["control_prefix"]) and short not in skip:
+                found.add(node)
+    return sorted(found)
+
+
+def _known_set_hints():
+    """'rig1_controllers_grp: mGear's controllers set: ...' for sets other
+    tools made that are in the scene, to say what goes where."""
+    import fnmatch
+    import rig_rules
+    hints = []
+    for s in cmds.ls(type="objectSet") or []:
+        for pattern, text in rig_rules.KNOWN_SETS:
+            if fnmatch.fnmatchcase(_short(s), pattern):
+                hints.append("%s: %s" % (s, text))
+                break
+    return ("\n\nFound in this scene:\n  " + "\n  ".join(hints)) if hints else ""
+
+
+def _one_set(name, how):
+    sets = _own_sets(name)
+    if not sets:
+        raise PublishError("This rig has no %s." % name + how)
+    if len(sets) > 1:
+        raise PublishError("This scene has more than one %s (%s). Keep just one."
+                           % (name, ", ".join(sets)))
+    return sets[0]
+
+
+def check_control_sets(objects):
+    """A Rigging publish needs the rigger's control sets. Returns
+    {body, face, metahuman_missing, metahuman_count, sets} where
+    metahuman_missing are MetaHuman face controls not yet in the face set
+    (Publish adds them to the published file only) and sets is every set
+    to export with the rig. Raises PublishError explaining what to fix."""
+    how = ("\n\nRig publishes need control sets, made by hand:\n"
+           "  %s   (body controls; required)\n  %s   (face controls; required "
+           "for a MetaHuman, optional otherwise)\n"
+           "Create > Sets > Set for each. Sets can hold sets, so you can put an existing "
+           "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
+           "Publish puts them in %s itself."
+           % (BODY_CONTROLS_SET, FACE_CONTROLS_SET, PUBLISH_SET))
+    how += _known_set_hints()
+    body = _one_set(BODY_CONTROLS_SET, how)
+    if not set_controls(body):
+        raise PublishError("%s has no controls in it." % body + how)
+    face = _own_sets(FACE_CONTROLS_SET)
+    face = _one_set(FACE_CONTROLS_SET, how) if face else None
+    metahuman = metahuman_face_controls()
+    missing = []
+    if metahuman is not None:
+        import rig_rules
+        rules = rig_rules.METAHUMAN
+        if not metahuman:
+            raise PublishError(
+                "This rig has MetaHuman DNA (%s) but no %s face controls under %s. "
+                "MetaHuman may have renamed them: put the face controls in %s yourself, "
+                "or update rig_rules.py." % (rules["dna_node_type"], rules["control_prefix"],
+                                             rules["face_gui_group"], FACE_CONTROLS_SET))
+        if not face:
+            raise PublishError("This is a MetaHuman rig, so it needs a %s (it can be "
+                               "empty: Publish adds the MetaHuman face controls)."
+                               % FACE_CONTROLS_SET + how)
+        have = set(set_controls(face))
+        missing = [c for c in metahuman if c not in have]
+    elif face and not set_controls(face):
+        raise PublishError("%s is empty. Add the face controls, or delete the set if "
+                           "this rig has no face." % face + how)
+    if objects:
+        for s in (body, face):
+            outside = [c for c in set_controls(s) if not _under(c, objects)] if s else []
+            if outside:
+                raise PublishError(
+                    "%s holds controls that aren't in this publish: %s\n"
+                    "Publish the whole rig (or include them), or take them out of the set."
+                    % (s, ", ".join(_short(c) for c in outside[:5])))
+    sets = set_tree(body) + (set_tree(face) if face else [])
+    return {"body": body, "face": face,
+            "metahuman_missing": missing,
+            "metahuman_count": len(metahuman) if metahuman is not None else 0,
+            "sets": [s for i, s in enumerate(sets) if s not in sets[:i]]}
+
+
+class _PublishSet(object):
+    """For the length of the export, RMIT_publishSet holds exactly the
+    pipe's sets (cache_SET, body_controls_SET, face_controls_SET). Made by
+    Publish (user, 2026-10-20); if the scene already has one, its members
+    are swapped for the export and put back after, so the working scene
+    ends as it was. Exported with the rig via plan["set_uuids"]."""
+
+    def __init__(self, plan, members):
+        self.plan, self.members = plan, [m for m in members if m]
+        self.made, self.existing, self.before = None, None, []
+
+    def __enter__(self):
+        own = _own_sets(PUBLISH_SET)
+        if own:
+            self.existing = own[0]
+            self.before = cmds.sets(self.existing, query=True) or []
+            if self.before:
+                cmds.sets(self.before, remove=self.existing)
+            cmds.sets(self.members, add=self.existing)
+            node = self.existing
+        else:
+            node = self.made = cmds.sets(self.members, name=PUBLISH_SET)
+        self.plan["set_uuids"] = list(self.plan.get("set_uuids") or []) + \
+            cmds.ls(node, uuid=True)
+        return self
+
+    def __exit__(self, *exc):
+        if self.made and cmds.objExists(self.made):
+            cmds.delete(self.made)
+        if self.existing and cmds.objExists(self.existing):
+            now = cmds.sets(self.existing, query=True) or []
+            if now:
+                cmds.sets(now, remove=self.existing)
+            if self.before:
+                cmds.sets(self.before, add=self.existing)
+        return False
+
+
+class _AddedToSet(object):
+    """Add nodes to a set for the length of an export, then take them out
+    again, so the working scene ends as it was (MetaHuman face controls
+    into face_controls_SET for the published file only)."""
+
+    def __init__(self, object_set, nodes):
+        self.object_set, self.nodes = object_set, list(nodes or [])
+
+    def __enter__(self):
+        if self.object_set and self.nodes:
+            cmds.sets(self.nodes, add=self.object_set)
+        return self
+
+    def __exit__(self, *exc):
+        if self.object_set and self.nodes and cmds.objExists(self.object_set):
+            cmds.sets(self.nodes, remove=self.object_set)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Rig publish group (user, 2026-10-20): like the model and camera, the
+# published rig sits in <asset>_rig_GRP (pipe icon, locked at the origin),
+# whose stamp also lists the rig's textures, MetaHuman DNA files, plug-ins
+# and control-set details. Made in the published file only: a rig can't be
+# duplicated like a model, so its top nodes are parented under the group
+# for the export and put back afterwards.
+# ---------------------------------------------------------------------------
+
+def required_plugins():
+    """[name, version] of loaded plug-ins whose node types the scene uses
+    (not counting referenced nodes): what the rig needs to work elsewhere."""
+    found = []
+    for plugin in sorted(cmds.pluginInfo(query=True, listPlugins=True) or []):
+        types = cmds.pluginInfo(plugin, query=True, dependNode=True) or []
+        if any(n for t in types for n in (cmds.ls(type=t) or [])
+               if not cmds.referenceQuery(n, isNodeReferenced=True)):
+            found.append([plugin, cmds.pluginInfo(plugin, query=True, version=True)])
+    return found
+
+
+class _RigGroup(object):
+    """For the length of the export, parent the rig's top nodes (relative,
+    so their own values don't change) under a stamped <asset>_rig_GRP;
+    afterwards put them back where they were and delete the group. An
+    existing node with the group's name steps aside meanwhile."""
+
+    def __init__(self, plan, objects, info):
+        self.plan, self.objects, self.info = plan, objects, info
+        self.group, self.roots, self.aside = None, [], None
+
+    def __enter__(self):
+        name = pipe_group_name(self.plan["asset"], RIG_CODE)
+        roots = cmds.ls(_model_roots(self.objects), uuid=True)
+        if cmds.objExists(name):
+            self.aside = cmds.ls(name, uuid=True)[0]
+            cmds.rename(name, "pipeTmp_" + name)
+        for uuid in roots:
+            node = cmds.ls(uuid, long=True)[0]
+            parent = cmds.listRelatives(node, parent=True, fullPath=True)
+            self.roots.append((uuid, cmds.ls(parent[0], uuid=True)[0] if parent else None))
+        group = cmds.group(empty=True, world=True, name=name)
+        self.group = cmds.ls(group, long=True)[0]
+        try:
+            cmds.parent(cmds.ls(roots, long=True), self.group, relative=True)
+            self.group = cmds.ls(cmds.ls(group, uuid=True)[0], long=True)[0]
+            _stamp(self.group, self.info)
+            finish_pipe_group(self.group)
+        except Exception:
+            self._undo()
+            raise
+        return self
+
+    def _undo(self):
+        group_uuid = cmds.ls(self.group, uuid=True) if self.group and cmds.objExists(self.group) else []
+        for uuid, parent in self.roots:
+            node = cmds.ls(uuid, long=True)
+            if not node:
+                continue
+            current = cmds.listRelatives(node[0], parent=True, fullPath=True)
+            if parent:
+                if not current or cmds.ls(current[0], uuid=True)[0] != parent:
+                    cmds.parent(node[0], cmds.ls(parent, long=True)[0], relative=True)
+            elif current:
+                cmds.parent(node[0], world=True, relative=True)
+        if group_uuid and cmds.ls(group_uuid):
+            cmds.delete(cmds.ls(group_uuid))
+        if self.aside and cmds.ls(self.aside):
+            cmds.rename(cmds.ls(self.aside)[0], pipe_group_name(self.plan["asset"], RIG_CODE))
+
+    def __exit__(self, *exc):
+        self._undo()
+        return False
+
+
+def rig_group_info(plan, scene_path, files):
+    """The rig group's stamp: the model group's fields plus the rig's
+    textures, DNA files (portable paths, read by pipeEnv.fix_dna_paths),
+    plug-ins and control-set details. Lists are JSON text."""
+    import rig_rules
+    sets = plan.get("control_sets") or {}
+    return pipe_group_info(plan, scene_path) + [
+        ("textures", json.dumps(files.stamp_textures)),
+        ("dna", json.dumps(files.stamp_dna)),
+        ("plugins", json.dumps(required_plugins())),
+        ("rigRulesVersion", rig_rules.VERSION),
+        ("metahumanFaceControls", sets.get("metahuman_count", 0)),
+        ("faceControlsAdded", len(sets.get("metahuman_missing") or [])),
+    ]
+
+
+def export_rig_to_h_drive(objects, plan, scene_path, textures=(), dna=(), face_fill=(None, [])):
+    """Rig publish: textures and DNA copied to the version's folder on the H
+    drive, MetaHuman face controls added to face_controls_SET, the pipe's
+    sets gathered in RMIT_publishSet, the rig in a stamped <asset>_rig_GRP,
+    all in the published file only; the working scene ends as it was.
+    objects empty = the whole scene."""
+    import publishTool_textures as tex
+    # DNA nodes go with a selected-objects export even if nothing selected
+    # connects to them (a real one is wired to the joints anyway).
+    plan["set_uuids"] = list(plan.get("set_uuids") or []) + [d["uuid"] for d in dna or []]
+    sets = plan.get("control_sets") or {}
+    pipe_sets = [plan.get("cache_set"), sets.get("body"), sets.get("face")]
+    with _AddedToSet(*face_fill), _PublishSet(plan, pipe_sets), \
+            tex.PublishedTextures(textures, plan, dna) as files:
+        with _RigGroup(plan, objects, rig_group_info(plan, scene_path, files)) as rig:
+            export_to_h_drive([rig.group] if objects else [], plan)
+    if files.stamp_dna:
+        plan.setdefault("warnings", []).append(
+            "MetaHuman DNA published: %s. Check head and body point at the right files."
+            % ", ".join("%s -> %s" % (d["node"], d["file"]) for d in files.stamp_dna))
 
 
 # Script nodes run code when a scene opens, which is how Maya scene viruses
@@ -670,9 +1024,10 @@ def export_to_h_drive(objects, plan):
         with _NoNamespaces() as clean:
             if objects:
                 cmds.select(cmds.ls(uuids), replace=True)
-                if plan.get("cache_set_uuid"):
-                    # The set itself, not its members (a rig's cache_SET).
-                    cmds.select(cmds.ls(plan["cache_set_uuid"]), add=True, noExpand=True)
+                if plan.get("set_uuids"):
+                    # The sets themselves, not just their members (a rig's
+                    # cache_SET and control sets, nested ones included).
+                    cmds.select(cmds.ls(plan["set_uuids"]), add=True, noExpand=True)
                 cmds.file(plan["dest"], exportSelected=True, type=file_type,
                           constructionHistory=True, channels=True, constraints=True,
                           expressions=True, shader=True, preserveReferences=True,
@@ -698,10 +1053,29 @@ def export_to_h_drive(objects, plan):
 
 PIPE_ATTR_PREFIX = "pipe_"
 ID_ATTR = PIPE_ATTR_PREFIX + "sgAssetId"
+# Outliner icon on every pipe group, so it reads as "from the pipe" (user,
+# 2026-10-20). Just the file name: Maya finds it in the prefs icons folder
+# the pipe installer copies to (shelfDev/mpPipe/icons). Missing icon = the
+# normal group icon, nothing breaks.
+PIPE_ICON = "iconPipeOutliner.png"
+GROUP_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY",
+                  "rotateZ", "scaleX", "scaleY", "scaleZ", "visibility")
 
 
 def pipe_group_name(asset, code):
     return "%s_%s_GRP" % (asset, code)
+
+
+def finish_pipe_group(group):
+    """Every published asset's top group (user, 2026-10-20): the pipe icon
+    in the Outliner, and locked at the world origin with its channels
+    hidden so it can't be moved by accident. Only the group: what's inside
+    it (the model's own transforms, a rig's controls) stays free."""
+    cmds.setAttr(group + ".iconName", PIPE_ICON, type="string")
+    for attr in GROUP_CHANNELS:
+        plug = "%s.%s" % (group, attr)
+        cmds.setAttr(plug, 1 if attr.startswith("scale") or attr == "visibility" else 0)
+        cmds.setAttr(plug, lock=True, keyable=False, channelBox=False)
 
 
 def is_pipe_group(node):
@@ -915,6 +1289,7 @@ def export_model_to_h_drive(objects, plan, scene_path):
                 made.append(cmds.ls(group, uuid=True)[0])
                 cmds.parent(cmds.ls(copies, long=True), group)
                 _stamp(group, info)
+                finish_pipe_group(group)
                 cmds.select(group, replace=True)
                 # Unknown plug-in data (old editor bookmarks, Redshift...)
                 # never belongs to a model and stops a .ma being written.
@@ -1189,10 +1564,22 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     check_script_nodes()
     plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
     plan["objects"] = list(objects or [])
+    face_fill = (None, [])
+    textures, dna = [], []
+    if code == MODEL_CODE:
+        check_not_a_rig(plan["objects"])
     if code == RIG_CODE:
         # Checked before anything is made or uploaded.
+        import publishTool_textures as tex
         plan["cache_set"] = check_cache_set(plan["objects"])
-        plan["cache_set_uuid"] = cmds.ls(plan["cache_set"], uuid=True)[0]
+        plan["control_sets"] = check_control_sets(plan["objects"])
+        plan["set_uuids"] = cmds.ls([plan["cache_set"]] + plan["control_sets"]["sets"], uuid=True)
+        face_fill = (plan["control_sets"]["face"], plan["control_sets"]["metahuman_missing"])
+        # The rig's textures and MetaHuman DNA travel with it (spec §4
+        # "Texture workflow through rigging"); a missing one stops the
+        # publish here.
+        textures = tex.collect(plan["objects"])
+        dna = tex.collect_dna()
     plan["sg_asset"] = find_shotgrid_asset(plan, h_root)
     check_rv()
     plan["frames_folder"], files = playblast_frames(plan, frame_count, plan["objects"])
@@ -1202,6 +1589,9 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
         if code == MODEL_CODE:
             # Always a clean copy in its pipe group (spec §4 item 6a).
             export_model_to_h_drive(plan["objects"], plan, scene_path)
+        elif code == RIG_CODE:
+            # Always exported: in its pipe group, with textures and DNA.
+            export_rig_to_h_drive(plan["objects"], plan, scene_path, textures, dna, face_fill)
         elif plan["objects"] or namespaced_nodes() or unused_shading_nodes():
             # Selected objects, or a whole scene that needs its namespaces
             # or unassigned shaders taken off: export. A clean whole scene
@@ -1243,6 +1633,9 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
             if plan["objects"] else "whole scene")
     note = "Published %s v%03d to the H drive:\n%s\n(from %s, %s)" % (
         code, plan["version"], plan["dest"], os.path.basename(scene_path), what)
+    if plan.get("textures"):
+        note += "\nTextures: %d file(s), MetaHuman DNA: %d, in %s" % (
+            plan["textures"]["files"], plan["textures"].get("dna", 0), plan["textures"]["folder"])
     if notes.strip():
         # The student's own words first, the file details underneath.
         note = notes.strip() + "\n\n---\n" + note

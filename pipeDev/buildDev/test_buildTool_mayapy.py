@@ -355,7 +355,7 @@ check("Build lists the camera by person", cams and cams[0]["latest"] == BEN1)
 cmds.file(new=True, force=True)
 api.ensure_maya_project(shot10)
 done, warn, old = api.build_asset(shot10, cams[0], BEN1)
-check("camera built as camera1", cmds.objExists("|camera1") and
+check("camera built as camera1 in its group", cmds.objExists("|EAP_010_010_cam_GRP|camera1") and
       "camera1 v001 (bensmith) imported and locked" in done)
 check("camera1 stamped with who + version", api.shot_camera()[1] == BEN1)
 cmds.currentTime(10)
@@ -364,6 +364,15 @@ done, warn, old = api.build_asset(shot10, cams[0], BEN1)
 check("camera rebuild: already up to date", done[-1] == "already up to date")
 check("camera manifest records login",
       api.read_manifest(shot10)["camera/EAP_010_010/cam"]["login"] == "bensmith")
+
+# --- What the scene already has (Build Shot leaves those alone, 2026-10-20)
+check("scene_version: camera1 in scene", api.scene_version(shot10, cams[0]) == BEN1)
+check("scene_version: backpack not in this scene", api.scene_version(shot10, published) is None)
+api.build_asset(shot10, published, V2)
+check("scene_version: backpack v2 after building it", api.scene_version(shot10, published) == V2)
+cmds.rename("|EAP_010_010_cam_GRP|camera1", "myCam")
+check("scene_version: no camera1 -> not in scene", api.scene_version(shot10, cams[0]) is None)
+cmds.rename("|EAP_010_010_cam_GRP|myCam", "camera1")
 
 # --- scratch listing still works with shared entries
 items = api.scratch_items(S, H, FILM)

@@ -19,6 +19,7 @@ Dev launch (Script Editor, Python tab):
 
 import sys
 import os
+import re
 
 import maya.cmds as cmds
 from maya import OpenMayaUI as omui
@@ -307,6 +308,13 @@ class PublishToolUI(QtWidgets.QDialog):
                 self.asset_combo.setCurrentIndex(max(index, 0))
             self.asset_combo.blockSignals(False)
             self._fill_departments()
+            # Start on the department the file name says (scout_rig_v002 ->
+            # Rigging), so a rig isn't published as a model by default.
+            words = re.split(r"[_.]", os.path.basename(scene).lower())
+            for code in LIVE_DEPARTMENTS:
+                if code.lower() in words and self.dept_combo.findData(code) >= 0:
+                    self.dept_combo.setCurrentIndex(self.dept_combo.findData(code))
+                    break
             self._set_frame_defaults(ctx)
             self._set_shot_mode(bool(ctx) and ctx["kind"] == "shot")
         self._render_table()
@@ -463,7 +471,7 @@ class PublishToolUI(QtWidgets.QDialog):
         have = set(u for r in self._rows for u in r.get("uuids") or [])
         added, problems = [], []
         for node in selection:
-            camera = cam.camera_transform(node)
+            camera = cam.camera_transform(node) or cam.camera_in_group(node)
             try:
                 if camera:
                     cam.check_camera([camera])
@@ -539,10 +547,19 @@ class PublishToolUI(QtWidgets.QDialog):
         if cameras:
             return ("Cameras are published to their shot, not to an asset: %s\n"
                     "Open the shot scene and use a Camera row." % ", ".join(cameras))
-        if code == api.RIG_CODE:
-            # Rigs must carry a hand-made cache_SET (spec "cache_SET").
+        if code == api.MODEL_CODE:
             try:
+                api.check_not_a_rig(objects)
+            except api.PublishError as e:
+                return str(e)
+        if code == api.RIG_CODE:
+            # Rigs must carry a hand-made cache_SET (spec "cache_SET") and
+            # control sets (spec "Rig sets: controls and render geo").
+            try:
+                import publishTool_textures as tex
                 api.check_cache_set(objects)
+                api.check_control_sets(objects)
+                tex.collect(objects)        # missing textures
             except api.PublishError as e:
                 return str(e)
         return None

@@ -69,7 +69,7 @@ for n in ("scout_rig", "cache_SET"):
     cmds.rename(n, "wip:" + n)
 dest = os.path.join(base, "scout_rig_v001.ma")
 plan = {"dest": dest, "h_folder": base, "ext": ".ma",
-        "cache_set_uuid": cmds.ls(api.check_cache_set(["wip:scout_rig"]), uuid=True)[0]}
+        "set_uuids": cmds.ls(api.check_cache_set(["wip:scout_rig"]), uuid=True)}
 api.export_to_h_drive(["wip:scout_rig"], plan)
 cmds.file(new=True, force=True)
 cmds.file(dest, open=True, force=True)

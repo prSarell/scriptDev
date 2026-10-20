@@ -42,8 +42,8 @@ cmds.file(save=True, type="mayaAscii")
 cmds.file(new=True, force=True)
 cmds.file(model, reference=True, namespace="backpack")
 cmds.file(old, reference=True, namespace="oldprop")
-cmds.setKeyframe("backpack:backpack_model_GRP.tx", time=1, value=0)
-cmds.setKeyframe("backpack:backpack_model_GRP.tx", time=10, value=5)
+cmds.setKeyframe("backpack:backPack_geo.tx", time=1, value=0)     # the model; the pipe group is locked
+cmds.setKeyframe("backpack:backPack_geo.tx", time=10, value=5)
 ball = cmds.polySphere(name="ball")[0]
 cmds.setKeyframe(ball + ".ty", time=1, value=0)
 cmds.setKeyframe(ball + ".ty", time=10, value=3)
@@ -120,10 +120,10 @@ check("not approved: no caches", not listing(caches) and plan["stage"] == "anima
 check("every publish makes a ShotGrid Version", plan["sg_version"] == {"type": "Version", "id": 55})
 m = json.load(open(os.path.join(h_scenes, "EAP_010_010_scout_backpack_anim_v001.json")))
 check("keys map: names without namespace, stamp and stage recorded",
-      list(m["curves"].values()) == [["backpack_model_GRP", "translateX"]]
+      list(m["curves"].values()) == [["backPack_geo", "translateX"]]
       and m["asset"]["sgAssetId"] == 1577 and m["namespace"] == "backpack" and m["stage"] == "animation")
 text = open(os.path.join(h_scenes, "EAP_010_010_scout_backpack_anim_v001.ma")).read()
-check("keys file holds the curve", "animCurveTL" in text and "backpack__backpack_model_GRP_translateX" in text)
+check("keys file holds the curve", "animCurveTL" in text and "backpack__backPack_geo_translateX" in text)
 check("Animation Version goes on the Final task (for approval)",
       ("Version", 55, {"sg_task": {"type": "Task", "id": 12}}) in updates)
 approvals = {"blocking": {"type": "Task", "id": 11}}
@@ -203,10 +203,11 @@ m = json.load(open(plan["map_dest"]))
 check("camera map records it came from animation", m["published_from"] == "anim")
 cmds.file(new=True, force=True)
 cmds.file(plan["dest"], open=True, force=True)
-stamp = dict((a, cmds.getAttr("shotCam." + a)) for a in cmds.listAttr("shotCam", userDefined=True) or [])
+grp = cam.camera_group_name(plan["shot"])      # the stamp is on the camera group (2026-10-20)
+stamp = dict((a, cmds.getAttr(grp + "." + a)) for a in cmds.listAttr(grp, userDefined=True) or [])
 print("   camera stamp:", stamp)
 check("published camera carries the pipe stamp, from animation",
       stamp.get("pipe_publishedFrom") == "anim" and stamp.get("pipe_sgShotId") == 2560
       and stamp.get("pipe_department") == "cam" and stamp.get("pipe_version") == plan["version"])
-check("camera stamp locked", cmds.getAttr("shotCam.pipe_publishedFrom", lock=True))
+check("camera stamp locked", cmds.getAttr(grp + ".pipe_publishedFrom", lock=True))
 print("%d/%d passed" % (sum(ok), len(ok)))

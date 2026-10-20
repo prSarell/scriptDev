@@ -154,10 +154,10 @@ class BuildShotTab(QtWidgets.QWidget):
         build_btn = QtWidgets.QPushButton("Build Shot")
         build_btn.setMinimumHeight(36)
         build_btn.setToolTip(
-            "For every asset in the list: pull the chosen version from the H "
-            "drive into your scratch publish folder and reference it into the "
-            "open scene. A different version already in the scene is switched "
-            "over; other shots are not changed.")
+            "Adds every asset in the list that isn't in the open scene yet "
+            "(pulled from the H drive into your scratch publish folder). Assets "
+            "already in the scene are left as they are, unless you pick another "
+            "version for them in the list.")
         build_btn.clicked.connect(self._build_shot)
 
         self.status = StatusLabel()
@@ -258,11 +258,32 @@ class BuildShotTab(QtWidgets.QWidget):
                 # A version from before personal publishes isn't on the H
                 # drive any more: start the choice at the latest instead.
                 current = api.entry_version_id(manifest[self._key(p)])
-                self._rows.append(dict(p, chosen=current if current in p["versions"]
-                                       and not blank else p["latest"]))
+                self._rows.append(self._row(p, current if current in p["versions"]
+                                            and not blank else p["latest"]))
             elif p.get("kind") == "camera":
-                self._rows.append(dict(p, chosen=p["latest"]))
+                self._rows.append(self._row(p, p["latest"]))
         self._render_table()
+
+    def _row(self, p, chosen):
+        """A list row. 'in_scene' is what the open scene already has (see
+        api.scene_version); such a row starts at that version and is only
+        built if the student picks another one ('start' remembers it)."""
+        shot_dir = self._shot_dir()
+        in_scene = api.scene_version(shot_dir, p) if shot_dir else None
+        if in_scene in p["versions"]:
+            chosen = in_scene
+        return dict(p, chosen=chosen, start=chosen, in_scene=in_scene)
+
+    @staticmethod
+    def _left_as_is(p, shot_dir):
+        """True if Build Shot should skip this row: already in the scene and
+        its version not changed in the list. A rig whose file in the shot is
+        missing or out of date is still built, since that's the fix."""
+        if p.get("in_scene") is None or p.get("chosen") != p.get("start"):
+            return False
+        entry = api.read_manifest(shot_dir).get(api.manifest_key(
+            p["asset_type"], p["asset"], p["code"]))
+        return api.link_state(shot_dir, entry) not in (api.MISSING, api.STALE)
         self.status.show_message(
             "" if self._published else "Nothing has been published for %s yet." % film,
             ok=bool(self._published))
@@ -293,7 +314,7 @@ class BuildShotTab(QtWidgets.QWidget):
                 continue
             row = in_list.get(key)
             if row is None:
-                row = dict(by_key[key])
+                row = self._row(by_key[key], by_key[key]["latest"])
                 self._rows.append(row)
             if chosen in row["versions"]:
                 row["chosen"] = chosen
@@ -347,12 +368,22 @@ class BuildShotTab(QtWidgets.QWidget):
                 self.table.setItem(row, 4, _cell(
                     api.version_label(p, current, mark_latest=False)
                     if current in p["versions"] else "v%03d (old)" % entry["version"]))
-                if api.newer_available(p, entry):
+                state = api.link_state(shot_dir, entry)    # rigs only (spec §4a)
+                if p.get("in_scene") is None:
+                    self.table.setItem(row, 5, _cell("Not in this scene: Build adds it",
+                                                     "#9fc5ff"))
+                elif state in (api.MISSING, api.STALE):
+                    self.table.setItem(row, 5, _cell(
+                        "Rig file %s in this shot: Build to fix"
+                        % ("missing" if state == api.MISSING else "out of date"), "#e0a060"))
+                elif api.newer_available(p, entry):
                     self.table.setItem(row, 5, _cell(
                         "%s available" % api.version_label(p, p["latest"], mark_latest=False),
                         "#e0a060"))
                 else:
-                    self.table.setItem(row, 5, _cell("Up to date", "#7fbf7f"))
+                    self.table.setItem(row, 5, _cell(
+                        "Up to date" + (" (full copy, not linked)" if state == api.COPY else ""),
+                        "#7fbf7f"))
         self.table.resizeColumnsToContents()
 
     # -- list -------------------------------------------------------------
@@ -368,7 +399,7 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("%s %s is already in the list."
                                      % (p["asset"], api.DEPT_LABELS.get(code, code)), ok=False)
             return
-        self._rows.append(dict(p, chosen=p["latest"]))
+        self._rows.append(self._row(p, p["latest"]))
         self._render_table()
 
     def _remove_rows(self):
@@ -413,24 +444,30 @@ class BuildShotTab(QtWidgets.QWidget):
             if answer != QtWidgets.QMessageBox.Yes:
                 return
 
-        lines, warnings, replaced = [], [], []
+        lines, warnings, replaced, changed_rigs = [], [], [], []
         if api.ensure_maya_project(shot_dir):
             lines.append("Maya project set to %s" % os.path.basename(shot_dir))
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for p in self._rows:
                 label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
+                if self._left_as_is(p, shot_dir):
+                    lines.append("%s: already in the scene, left as is" % label)
+                    continue
                 try:
                     done, warning, old = api.build_asset(shot_dir, p,
                                                          p.get("chosen", p["latest"]))
                 except Exception as e:
                     warnings.append("%s: %s" % (label, e))
                     continue
+                p["in_scene"] = p["start"] = p.get("chosen", p["latest"])
                 lines.append("%s: %s" % (label, ", ".join(done)))
                 if warning:
                     warnings.append("%s: %s" % (label, warning))
                 if old:
                     replaced.append(old)
+                    if p["code"] in api.LINKED_CODES:
+                        changed_rigs.append(p)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self._render_table()
@@ -438,7 +475,45 @@ class BuildShotTab(QtWidgets.QWidget):
         if warnings:
             text += "\n\n" + "\n".join(warnings)
         self.status.show_message(text, ok=not warnings)
+        replaced += self._offer_other_shots(changed_rigs, shot_dir)
         self._offer_removal(replaced, shot_dir)
+
+    def _offer_other_shots(self, changed_rigs, shot_dir):
+        """After a rig update or rollback: every shot follows by default
+        (spec §4a), so ask whether the student's other shots should switch
+        too. Their scenes load it the next time they're opened. Returns the
+        versions those shots no longer use."""
+        replaced = []
+        for p in changed_rigs:
+            vid = p.get("chosen", p["latest"])
+            others = api.other_shots_using(shot_dir, p, vid)
+            if not others:
+                continue
+            label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
+            box = QtWidgets.QMessageBox(self)
+            box.setIcon(QtWidgets.QMessageBox.Question)
+            box.setWindowTitle("Other shots")
+            box.setText("Switch %s to %s in your other shots too?\n\n%s\n\n"
+                        "They load it the next time you open them. Choose 'Only this "
+                        "shot' to leave them as they are (e.g. when rolling back one shot)."
+                        % (label, api.version_label(p, vid, mark_latest=False),
+                           "\n".join("  " + os.path.basename(o) for o in others)))
+            every = box.addButton("Every shot", QtWidgets.QMessageBox.AcceptRole)
+            box.addButton("Only this shot", QtWidgets.QMessageBox.RejectRole)
+            box.setDefaultButton(every)
+            box.exec()
+            if box.clickedButton() != every:
+                continue
+            try:
+                updated, old = api.update_shots(others, p, vid)
+            except Exception as e:
+                self.status.show_message(self.status._text + "\n\n%s: other shots not "
+                                         "updated: %s" % (label, e), ok=False)
+                continue
+            replaced += old
+            self.status.show_message(self.status._text + "\n\n%s also switched in: %s"
+                                     % (label, ", ".join(updated)), ok=True)
+        return replaced
 
     def _offer_removal(self, replaced, shot_dir):
         """After an update: versions no shot uses any more can go to the
@@ -455,6 +530,8 @@ class BuildShotTab(QtWidgets.QWidget):
             "again from the H drive." % names)
         if answer != QtWidgets.QMessageBox.Yes:
             return
+        # Each version's textures go with it.
+        unused = [f for path in unused for f in api.version_files(path)]
         if api.send_to_recycle_bin(unused):
             self.status.show_message(self.status._text + "\n\nRemoved %d old version(s)."
                                      % len(unused), ok=True)

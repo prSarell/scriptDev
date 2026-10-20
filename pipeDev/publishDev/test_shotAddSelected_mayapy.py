@@ -38,7 +38,7 @@ api.export_model_to_h_drive([], {"dest": model, "h_folder": base, "ext": ".ma", 
                                  "sg_asset": {"id": 1577}}, "work.ma")
 cmds.file(new=True, force=True)
 cmds.file(model, reference=True, namespace="backpack")
-cmds.setKeyframe("backpack:backpack_model_GRP.tx", time=1, value=0)
+cmds.setKeyframe("backpack:backPack_geo.tx", time=1, value=0)
 cmds.polySphere(name="ball")
 cmds.setKeyframe("ball.ty", time=1, value=0)
 cmds.setKeyframe("ball.ty", time=10, value=3)

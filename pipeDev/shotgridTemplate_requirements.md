@@ -77,6 +77,14 @@ built yet), **SUGGESTION** (not agreed), **OPEN**.
   each student's work on an assignment, Assets = lecturer-provided, created
   in ShotGrid and published with the Publish tool. Students don't create
   assets in a class.
+- **DECIDED 2026-10-20** Assets get a **LookDev** task alongside Modeling.
+  The model publish carries only low-res placeholder textures (for rigging
+  and animation); a separate **LookDev publish** carries the render
+  textures and shaders (spec §4 "LookDev is its own step and publish").
+  - OPEN: a task on the Modeling step or its own LookDev step (check
+    whether the site already has a Look Dev / Surfacing step to reuse);
+    which asset types get it (all, or only ones that are rendered); who is
+    assigned.
 - The Asset id is an asset's identity: stamped into every publish
   (`publishInfo` node, spec §3) and used by shot publishes to tell a
   published asset from something made in the shot.

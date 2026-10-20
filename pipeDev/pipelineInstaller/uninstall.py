@@ -37,14 +37,15 @@ def _strip_usersetup(path):
         if new != content:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new.rstrip("\n") + "\n" if new.strip() else "")
-    callback = getattr(sys, "_pipeEnv_callback_id", None)
-    if callback is not None:
-        try:
-            import maya.api.OpenMaya as om
-            om.MMessage.removeCallback(callback)
-        except Exception:
-            pass
-        del sys._pipeEnv_callback_id
+    for attr in ("_pipeEnv_callback_id", "_pipeEnv_after_open_id"):
+        callback = getattr(sys, attr, None)
+        if callback is not None:
+            try:
+                import maya.api.OpenMaya as om
+                om.MMessage.removeCallback(callback)
+            except Exception:
+                pass
+            delattr(sys, attr)
 
 
 def _uninstall():

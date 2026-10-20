@@ -103,21 +103,75 @@ def _before_open(file_object, client_data=None):
     return True
 
 
+# ---------------------------------------------------------------------------
+# MetaHuman DNA paths. The DNA node can't read $PIPE_SCRATCH (tested
+# 2026-10-20: "Failed to initialize rig logic"), so a rig's publish group
+# lists each DNA node with its portable path (pipe_dna, written by Publish)
+# and the real path for this drive is filled in after a scene opens, and by
+# Build when it builds a rig.
+# ---------------------------------------------------------------------------
+
+DNA_STAMP = "pipe_dna"
+_AFTER_OPEN_ATTR = "_pipeEnv_after_open_id"
+
+
+def fix_dna_paths():
+    """For every rig publish group in the scene with a pipe_dna list, point
+    each DNA node (same namespace as the group) at its file on this drive.
+    Skips files that aren't there (Build/Repair pulls them). Returns
+    [(node, path)] for the nodes changed."""
+    import json
+    import maya.cmds as cmds
+    changed = []
+    for group in cmds.ls("*." + DNA_STAMP, objectsOnly=True, recursive=True) or []:
+        try:
+            entries = json.loads(cmds.getAttr("%s.%s" % (group, DNA_STAMP)) or "[]")
+        except ValueError:
+            continue
+        ns = group.split("|")[-1].rpartition(":")[0]
+        for entry in entries:
+            node = (ns + ":" if ns else "") + entry["node"]
+            path = os.path.expandvars(entry["published"])
+            if not cmds.objExists(node) or "$" in path or not os.path.isfile(path):
+                continue
+            path = os.path.normpath(path).replace("\\", "/")
+            plug = "%s.%s" % (node, entry.get("attr", "dnaFilePath"))
+            now = cmds.getAttr(plug) or ""
+            if os.path.normcase(os.path.normpath(now)) == os.path.normcase(os.path.normpath(path)):
+                continue
+            if cmds.getAttr(plug, lock=True):
+                cmds.setAttr(plug, lock=False)
+            cmds.setAttr(plug, path, type="string")
+            changed.append((node, path))
+    return changed
+
+
+def _after_open(client_data=None):
+    try:
+        fix_dna_paths()
+    except Exception as e:      # never break opening a scene
+        print("mpPipe: couldn't set MetaHuman DNA paths: %s" % e)
+
+
 def install():
     """Called once at Maya startup (userSetup.py). Sets a starting value
-    from the saved scratch drive and registers the before-open callback.
-    Safe to call again: the old callback is replaced, not doubled."""
+    from the saved scratch drive and registers the before-open callback
+    (the variable) and the after-open one (MetaHuman DNA paths). Safe to
+    call again: old callbacks are replaced, not doubled."""
     import maya.api.OpenMaya as om
     if not current():
         saved = pub.get_root(pub.SCRATCH)
         if saved:
             set_root(saved)
-    old = getattr(sys, _CALLBACK_ATTR, None)
-    if old is not None:
-        try:
-            om.MMessage.removeCallback(old)
-        except RuntimeError:
-            pass
+    for attr in (_CALLBACK_ATTR, _AFTER_OPEN_ATTR):
+        old = getattr(sys, attr, None)
+        if old is not None:
+            try:
+                om.MMessage.removeCallback(old)
+            except RuntimeError:
+                pass
     setattr(sys, _CALLBACK_ATTR, om.MSceneMessage.addCheckFileCallback(
         om.MSceneMessage.kBeforeOpenCheck, _before_open))
+    setattr(sys, _AFTER_OPEN_ATTR, om.MSceneMessage.addCallback(
+        om.MSceneMessage.kAfterOpen, _after_open))
     return current()

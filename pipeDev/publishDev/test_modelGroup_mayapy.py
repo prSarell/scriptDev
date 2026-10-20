@@ -42,6 +42,37 @@ check("stamp: id/version/artist/date", (cmds.getAttr("backpack_model_GRP.pipe_sg
        cmds.getAttr("backpack_model_GRP.pipe_artistName")) == (1577, 4, "Test Person") and cmds.getAttr("backpack_model_GRP.pipe_published")[:4] == "2026")
 print("   attrs:", [(a, cmds.getAttr("backpack_model_GRP." + a)) for a in cmds.listAttr("backpack_model_GRP", userDefined=True)])
 check("stamp locked", cmds.getAttr("backpack_model_GRP.pipe_sgAssetId", lock=True))
+# Pipe group look and lock (user, 2026-10-20): RMIT icon, locked at the origin,
+# channels hidden; only the group, the model inside stays free.
+G = "backpack_model_GRP"
+chans = [G + "." + a for a in api.GROUP_CHANNELS]
+check("group shows the pipe icon in the Outliner", cmds.getAttr(G + ".iconName") == "iconPipeOutliner.png")
+check("group locked at the origin, channels hidden",
+      all(cmds.getAttr(c, lock=True) and not cmds.getAttr(c, keyable=True)
+          and not cmds.getAttr(c, channelBox=True) for c in chans)
+      and cmds.getAttr(G + ".translate")[0] == (0, 0, 0) and cmds.getAttr(G + ".scale")[0] == (1, 1, 1))
+check("model inside not locked", not cmds.getAttr(g + ".tx", lock=True) and cmds.getAttr(g + ".tx", keyable=True))
+# Referenced into a shot: the model moves by its own transforms or a constraint;
+# report whether a student could unlock the group.
+cmds.file(new=True, force=True)
+cmds.file(p["dest"], reference=True, namespace="backpack")
+RG, RM = "backpack:backpack_model_GRP", "backpack:backpack_model_GRP|backpack:backPack_geo"
+check("referenced: icon and locks come through", cmds.getAttr(RG + ".iconName") == "iconPipeOutliner.png"
+      and cmds.getAttr(RG + ".tx", lock=True))
+cmds.setAttr(RM + ".tx", 5)
+moved = abs(cmds.getAttr(RM + ".tx") - 5) < 1e-3
+loc = cmds.spaceLocator(name="carry_LOC")[0]
+cmds.parentConstraint(loc, RM, maintainOffset=True)
+cmds.setAttr(loc + ".tz", 4)
+check("referenced: model moves by its own transform and by a constraint to a locator",
+      moved and abs(cmds.getAttr(RM + ".tz") - 4) < 1e-3 and abs(cmds.getAttr(RM + ".tx") - 5) < 1e-3)
+try:
+    cmds.setAttr(RG + ".tx", lock=False)
+    unlockable = not cmds.getAttr(RG + ".tx", lock=True)
+except RuntimeError:
+    unlockable = False
+print("   referenced group can be unlocked by a student:", unlockable)
+cmds.file(new=True, force=True); cmds.file(p["dest"], open=True, force=True)
 # Republish from that file (whole scene): the old group is replaced, not nested.
 cmds.file(rename=os.path.join(d, "work2.ma"))
 p5 = plan(5); api.export_model_to_h_drive([], p5, "work2.ma")

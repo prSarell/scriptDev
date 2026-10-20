@@ -35,6 +35,8 @@ SCRIPTS = [
     ("pipeDev/publishDev", "publishTool_camera.py"),
     ("pipeDev/publishDev", "publishTool_anim.py"),
     ("pipeDev/publishDev", "publishTool_ui.py"),
+    ("pipeDev/publishDev", "rig_rules.py"),
+    ("pipeDev/publishDev", "publishTool_textures.py"),
     ("pipeDev/buildDev", "pipeEnv.py"),
     ("pipeDev/buildDev", "buildTool_api.py"),
     ("pipeDev/buildDev", "buildTool_ui.py"),

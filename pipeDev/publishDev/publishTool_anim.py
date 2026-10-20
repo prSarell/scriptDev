@@ -118,7 +118,7 @@ def classify(objects):
     missing = [o for o in objects if not cmds.objExists(o)]
     if missing:
         raise PublishError("Not in the scene any more: %s" % ", ".join(missing))
-    cameras = cam.contains_camera(objects)
+    cameras = cam.contains_camera(objects) + [c for c in (cam.camera_in_group(o) for o in objects) if c]
     if cameras:
         raise PublishError("Cameras go in their own Camera row, not Animation: %s"
                            % ", ".join(cameras))

@@ -20,6 +20,15 @@ Rules (DECIDED 2026-10-12):
 - All camera data (film back, display options...) travels in the camera file.
 - No scale on cameras (it breaks Arnold renders): the published camera is
   always scale 1, no scale keys, scale channels locked.
+
+Camera group (DECIDED 2026-10-20, user):
+    <shot>_cam_GRP          pipe stamp (like the model group) + image plane info
+      shotCam               the camera; animated attributes driven 1:1 by...
+      shotCam_DATA          ...one attribute each here, which the keys drive
+The group is named from the shot being published, never a fixed name. The
+keys file holds the curves for shotCam_DATA, the map says which attribute
+each one drives. Build imports it live, so the camera behaves like a
+referenced one (driven, locked) with no reference path to manage.
 """
 
 import os
@@ -35,6 +44,8 @@ CAM_CODE = "cam"
 KEYS_CODE = "camAnim"
 CAM_LABEL = "Camera"
 PUBLISHED_CAMERA = "shotCam"         # node name inside the published camera file
+DATA_SUFFIX = "_DATA"                # shotCam_DATA: holds the keys, drives the camera
+MAP_FORMAT = 2                       # 2 = camera group + data node (2026-10-20)
 STARTUP_CAMERAS = ("persp", "top", "front", "side")
 TRANSFORM_ATTRS = ("translateX", "translateY", "translateZ",
                    "rotateX", "rotateY", "rotateZ")
@@ -79,6 +90,23 @@ def camera_transform(node):
         node = cmds.listRelatives(node, parent=True, fullPath=True)[0]
     shapes = cmds.listRelatives(node, shapes=True, fullPath=True, type="camera") or []
     return cmds.ls(node, long=True)[0] if shapes else None
+
+
+def camera_in_group(node):
+    """The camera for anything inside a published camera group (the group
+    itself, camera1_DATA, ...), so selecting any part of the shot camera
+    gives a Camera row. None otherwise."""
+    parts = ((cmds.ls(node, long=True) or [""])[0]).split("|")
+    for i in range(len(parts), 1, -1):
+        group = "|".join(parts[:i])
+        attr = api.PIPE_ATTR_PREFIX + "department"
+        if cmds.attributeQuery(attr, node=group, exists=True) \
+                and cmds.getAttr("%s.%s" % (group, attr)) == CAM_CODE:
+            for child in cmds.listRelatives(group, children=True, fullPath=True,
+                                            type="transform") or []:
+                if camera_transform(child):
+                    return child
+    return None
 
 
 def contains_camera(objects):
@@ -261,6 +289,68 @@ def bake_camera(camera, start, end):
     return pub_tr, pub_sh, curves, warnings
 
 
+def camera_group_name(shot):
+    """<shot>_cam_GRP, like the model group's <asset>_<department>_GRP.
+    Always from the shot being published (EAP_010_010_cam_GRP, ...)."""
+    return "%s_%s_GRP" % (shot, CAM_CODE)
+
+
+def data_attr_name(where, attr):
+    """The data node's attribute for one camera attribute, e.g.
+    cam_translateX, camShape_focalLength."""
+    return ("camShape_" if where == "shape" else "cam_") + attr
+
+
+# Data node attribute type for each camera attribute type. Matching types
+# means no unit-conversion nodes between curve, data node and camera.
+_ATTR_TYPES = {"doubleAngle": "doubleAngle", "doubleLinear": "doubleLinear",
+               "bool": "bool", "long": "long", "short": "long", "byte": "long",
+               "enum": "long", "time": "time"}
+
+
+def make_data_node(pub_tr, pub_sh, curves):
+    """Move the baked keys off the camera onto shotCam_DATA: each curve now
+    drives one attribute there, which drives the camera attribute 1:1.
+    Returns (data node, {curve: data attr}, {data attr: [where, attr]})."""
+    data = cmds.createNode("transform", name=PUBLISHED_CAMERA + DATA_SUFFIX)
+    data = cmds.ls(data, long=True)[0]
+    curve_attrs, attrs = {}, {}
+    for curve, (where, attr) in sorted(curves.items()):
+        node = pub_sh if where == "shape" else pub_tr
+        plug = "%s.%s" % (node, attr)
+        name = data_attr_name(where, attr)
+        cmds.addAttr(data, longName=name, keyable=True,
+                     attributeType=_ATTR_TYPES.get(cmds.getAttr(plug, type=True), "double"))
+        cmds.connectAttr(curve + ".output", "%s.%s" % (data, name), force=True)
+        cmds.connectAttr("%s.%s" % (data, name), plug, force=True)
+        new = cmds.rename(curve, "%s%s_%s" % (PUBLISHED_CAMERA, DATA_SUFFIX, name))
+        curve_attrs[new] = name
+        attrs[name] = [where, attr]
+    return data, curve_attrs, attrs
+
+
+def image_plane_info(camera):
+    """What image sequences the camera uses (user, 2026-10-20: the publish
+    records their location and name). Recorded only; image planes are not
+    published or rebuilt. [{node, folder, file, image, type,
+    useFrameExtension, frameOffset, ...}]"""
+    shape = cmds.listRelatives(camera_transform(camera), shapes=True, fullPath=True,
+                               type="camera")[0]
+    planes = []
+    for ip in sorted(set(cmds.listConnections(shape + ".imagePlane", source=True,
+                                              destination=False, shapes=True,
+                                              type="imagePlane") or [])):
+        image = cmds.getAttr(ip + ".imageName") or ""
+        info = {"node": ip.split("|")[-1], "image": image,
+                "folder": os.path.dirname(image), "file": os.path.basename(image)}
+        for attr in ("type", "useFrameExtension", "frameOffset", "frameIn", "frameOut",
+                     "frameCache", "depth", "fit", "displayMode"):
+            if cmds.attributeQuery(attr, node=ip, exists=True):
+                info[attr] = cmds.getAttr("%s.%s" % (ip, attr))
+        planes.append(info)
+    return planes
+
+
 # ---------------------------------------------------------------------------
 # Export the two files
 # ---------------------------------------------------------------------------
@@ -273,12 +363,11 @@ def _export(nodes, path):
     api._lock(path)
 
 
-def camera_stamp(plan, scene_path):
-    """The pipe stamp for a published camera (like the model publish's
-    group, spec item 6a), put on the camera itself: Build makes it the live
-    camera1 at the top of the scene, so it can't sit in a group. Records
-    which stage published it (user, 2026-10-19: a camera published from
-    Animation must say so)."""
+def camera_stamp(plan, scene_path, planes=()):
+    """The pipe stamp for a published camera, on its <shot>_cam_GRP like the
+    model publish's group (spec item 6a). Records which stage published it
+    (user, 2026-10-19: a camera published from Animation must say so) and
+    the image sequences the camera uses (2026-10-20)."""
     from datetime import datetime
     return [
         ("sgShotId", (plan.get("sg_shot") or {}).get("id") or 0),
@@ -290,12 +379,18 @@ def camera_stamp(plan, scene_path):
         ("artistName", api.artist_name(plan["login"])),
         ("published", datetime.now().isoformat(timespec="seconds")),
         ("sourceScene", os.path.normpath(scene_path)),
+        ("imagePlanes", json.dumps(list(planes))),
     ]
 
 
+def _lock_transform(node):
+    for attr in TRANSFORM_ATTRS + SCALE_ATTRS + ("visibility",):
+        cmds.setAttr("%s.%s" % (node, attr), lock=True)
+
+
 def export_camera(camera, plan, start, end, scene_path):
-    """Bake, then write the keys file + map and the camera file to the H
-    drive. Nothing it makes is left in the open scene. Returns warnings."""
+    """Bake, then write the keys file + map and the camera group file to the
+    H drive. Nothing it makes is left in the open scene. Returns warnings."""
     for key in ("dest", "keys_dest", "map_dest"):
         if os.path.exists(plan[key]):
             raise PublishError("%s already exists — try again." % plan[key])
@@ -304,13 +399,27 @@ def export_camera(camera, plan, start, end, scene_path):
 
     selection = cmds.ls(selection=True)
     current = cmds.currentTime(query=True)
+    group_name = camera_group_name(plan["shot"])
+    # Publishing from a built shot: its own group has the name the
+    # published one needs, so step it aside until the export is done.
+    aside = None
+    if cmds.objExists("|" + group_name):
+        uuid = cmds.ls(camera, uuid=True)[0]     # its path changes with the group's name
+        aside = cmds.rename("|" + group_name, group_name + "_publishing")
+        camera = cmds.ls(uuid, long=True)[0]
     made = []
     try:
+        planes = image_plane_info(camera)
         pub_tr, pub_sh, curves, warnings = bake_camera(camera, start, end)
         made = [pub_tr] + list(curves)
-        _export(list(curves), plan["keys_dest"])
+        data, curve_attrs, attrs = make_data_node(pub_tr, pub_sh, curves)
+        made = [pub_tr, data] + list(curve_attrs)
+        _export(list(curve_attrs), plan["keys_dest"])
         mapping = {
+            "format": MAP_FORMAT,
+            "group": group_name,
             "camera": PUBLISHED_CAMERA,
+            "data": PUBLISHED_CAMERA + DATA_SUFFIX,
             "shot": plan["shot"],
             "login": plan["login"],
             "version": plan["version"],
@@ -320,19 +429,30 @@ def export_camera(camera, plan, start, end, scene_path):
             "source_scene": os.path.basename(scene_path),
             "source_camera": cmds.ls(camera)[0],
             "published_from": plan.get("publish_for") or "layout",
-            "curves": dict((c, list(v)) for c, v in sorted(curves.items())),
+            "curves": curve_attrs,          # curve -> data node attribute
+            "attrs": attrs,                 # data node attribute -> [where, camera attribute]
+            "image_planes": planes,
         }
         with open(plan["map_dest"], "w") as f:
-            json.dump(mapping, f, indent=2)
+            json.dump(mapping, f, indent=2, sort_keys=True)
         api._lock(plan["map_dest"])
-        cmds.delete(list(curves))      # the camera file carries no keys
-        made = [pub_tr]
-        api._stamp(pub_tr, camera_stamp(plan, scene_path))
-        _export([pub_tr], plan["dest"])
+        cmds.delete(list(curve_attrs))  # the camera file carries no keys
+        group = cmds.group(empty=True, world=True, name=group_name)
+        made = [group, pub_tr, data]
+        pub_tr = cmds.parent(pub_tr, group)[0]
+        data = cmds.parent(data, group)[0]
+        made = [group]
+        for node in (pub_tr, data):
+            _lock_transform(node)
+        api.finish_pipe_group(group)    # icon, locked at the origin, channels hidden
+        api._stamp(group, camera_stamp(plan, scene_path, planes))
+        _export([group], plan["dest"])
     finally:
         existing = [n for n in made if cmds.objExists(n)]
         if existing:
             cmds.delete(existing)
+        if aside and cmds.objExists(aside):
+            cmds.rename(aside, group_name)
         cmds.currentTime(current)
         cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
     return warnings

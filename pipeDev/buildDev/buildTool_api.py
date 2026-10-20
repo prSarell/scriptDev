@@ -12,6 +12,9 @@ scratch management).
     scratch  G:\\scratch\\NWF_SHF\\maya\\publish\\assets\\prop\\backpack\\scenes\\s1234567\\backpack_s1234567_model_v002.ma
              (one copy per version, shared by every shot; each shot's
              assets\\build_manifest.json records the version it uses)
+    rig      ...\\sequences\\EAP_010\\EAP_010_010\\assets\\character\\scout\\rig\\scout_rig.ma
+             (fixed name the shot references, hardlinked to a version in
+             publish\\; spec §4a, option C)
     camera   ...\\sequences\\EAP_010\\EAP_010_010\\assets\\camera\\cam.ma  (stays in its shot)
 
 Shares drive settings, department codes and film-folder helpers with the
@@ -193,13 +196,14 @@ CAMERA_TYPE = "camera"              # asset_type used for a shot's camera
 CAMERA_CODE = "cam"
 CAMERA_NAME = "camera1"             # the shot camera is always live as camera1
 OLD_CAMERA_NAME = "camera1_old"     # what an existing camera1 is renamed to
-SHOT_ATTR = "pipeShot"              # stamped on camera1 at build
-VERSION_ATTR = "pipeCameraVersion"
+DATA_NAME = CAMERA_NAME + "_DATA"   # holds the keys, drives camera1 1:1
+CAMERA_MAP_FORMAT = 2               # camera group + data node (2026-10-20)
 CURVE_KEY_ATTRS = ("ktv", "kix", "kiy", "kox", "koy", "kit", "kot", "kwl", "tan", "wgt")
 CAMERA_FILES = {"camera": "assets/camera/cam.ma",
                 "keys": "assets/camera/camAnim.ma",
                 "map": "assets/camera/camAnim.json"}
-BY_ATTR = "pipeCameraBy"            # who published the built camera
+# The published <shot>_cam_GRP's stamp says which version is built.
+DEPT_STAMP, VERSION_STAMP, BY_STAMP = "pipe_department", "pipe_version", "pipe_artistId"
 CAMERA_RE = re.compile(r"^(?P<shot>.+)_(?P<login>[a-z0-9]+)_(?P<code>cam|camAnim)"
                        r"_v(?P<version>\d{3})\.(?P<ext>ma|json)$", re.IGNORECASE)
 
@@ -209,7 +213,9 @@ def list_shot_cameras(h_root, film, seq, shot):
     person's scenes\\<login>\\), as a list with at most one entry shaped
     like list_published()'s, plus 'kind': 'camera' and
     'files': {vid: {camera, keys, map}}. Only complete versions (all three
-    files) count. The latest is the newest by publish time."""
+    files) in the camera group format count; older publishes are left out
+    and need republishing (user, 2026-10-20). The latest is the newest by
+    publish time."""
     scenes = os.path.join(shot_folder(h_root, film, seq, shot), "scenes")
     found = {}
     for dirpath, _, filenames in os.walk(scenes):
@@ -226,10 +232,18 @@ def list_shot_cameras(h_root, film, seq, shot):
     entry = {"kind": "camera", "asset_type": CAMERA_TYPE, "asset": shot,
              "code": CAMERA_CODE, "files": {}, "versions": {}, "info": {}}
     for (login, version), files in found.items():
-        if len(files) == 3:
+        if len(files) == 3 and _camera_map_format(files["map"]) == CAMERA_MAP_FORMAT:
             _add_version(entry, login, version, files["camera"])
             entry["files"][version_id(login, version)] = files
     return [_finish(entry)] if entry["files"] else []
+
+
+def _camera_map_format(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f).get("format", 1)
+    except (IOError, OSError, ValueError):
+        return None
 
 
 def publish_time(path):
@@ -277,11 +291,128 @@ def legacy_rel_path(asset_type, asset, code, ext):
 
 
 def entry_path(shot_dir, entry):
-    """Full path of what a manifest entry points at: the shared publish
-    folder for assets, the shot itself for cameras (and old entries)."""
+    """Full path of what the shot's scenes reference for a manifest entry:
+    the rig's fixed name in the shot for linked departments, the shared
+    publish folder for other assets, the shot itself for cameras (and old
+    entries)."""
+    if entry.get("link"):
+        return os.path.join(shot_dir, *entry["link"].split("/"))
+    return shared_path(shot_dir, entry)
+
+
+def shared_path(shot_dir, entry):
+    """Full path of the version file a manifest entry uses (in the shared
+    publish folder), or the in-shot file for cameras and old entries."""
     if entry.get("shared"):
         return os.path.join(publish_dir(maya_dir_of_shot(shot_dir)), *entry["shared"].split("/"))
     return os.path.join(shot_dir, *entry["file"].split("/"))
+
+
+# ---------------------------------------------------------------------------
+# Rigs: a fixed name per shot, hardlinked to a version in the publish folder
+# (spec §4a, option C, built 2026-10-20). The shot's reference path never
+# changes, so updating or rolling back is a relink plus a reload, never a
+# Replace Reference. Every shot follows an update by default; one shot can
+# be rolled back on its own. Where the drive can't hardlink (exFAT, network
+# shares) the fixed name is a read-only copy instead (option B): same path,
+# more disk.
+# ---------------------------------------------------------------------------
+
+LINKED_CODES = ("rig",)
+LINKED, COPY, MISSING, STALE = "linked", "copy", "missing", "stale"
+
+
+def link_rel_path(asset_type, asset, code, ext):
+    """The fixed name inside the shot, e.g.
+    'assets/character/scout/rig/scout_rig.ma'."""
+    return "/".join(["assets", asset_type, asset, code,
+                     "%s_%s.%s" % (asset, code, ext.lstrip(".").lower())])
+
+
+def _is_current(link, source):
+    """True if link already holds source: the same data (hardlink), or a
+    copy made from it (copy2 keeps size and modified time)."""
+    if not (os.path.isfile(link) and os.path.isfile(source)):
+        return False
+    if os.path.samefile(link, source):
+        return True
+    a, b = os.stat(link), os.stat(source)
+    return a.st_size == b.st_size and int(a.st_mtime) == int(b.st_mtime)
+
+
+def _lock_publish_folder(maya_dir):
+    """Make every file in the publish folder read-only again. Windows keeps
+    read-only per piece of data, not per name, so removing a hardlink (which
+    needs it writable) unlocks the version it pointed at too."""
+    for dirpath, _, filenames in os.walk(publish_dir(maya_dir)):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            if os.access(path, os.W_OK):
+                os.chmod(path, stat.S_IREAD)
+
+
+def _drive_can_link(path):
+    """True if path's drive is NTFS (hardlinks work). Only used to decide
+    whether to turn an existing copy back into a link; os.link failing is
+    what decides when making one."""
+    if os.name != "nt":
+        return True
+    name = ctypes.create_unicode_buffer(32)
+    drive = os.path.splitdrive(os.path.abspath(path))[0] + "\\"
+    if not ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(drive), None, 0, None, None, None, name, len(name)):
+        return False
+    return name.value.upper() == "NTFS"
+
+
+def _remove_name(path):
+    if os.path.isfile(path):
+        os.chmod(path, stat.S_IWRITE)
+        os.remove(path)
+
+
+def link_version(source, link, maya_dir):
+    """Point the shot's fixed name at one version in the publish folder:
+    a hardlink where the drive allows, else a read-only copy. Returns True
+    if hardlinked."""
+    if _is_current(link, source):
+        if os.path.samefile(link, source):
+            return True
+        if not _drive_can_link(link):
+            return False    # a copy is the best this drive can do
+    try:
+        _remove_name(link)
+    except OSError as e:
+        raise BuildError("Couldn't replace %s (%s). Is it open in another Maya?"
+                         % (os.path.basename(link), e.strerror or e))
+    finally:
+        _lock_publish_folder(maya_dir)
+    if not os.path.isdir(os.path.dirname(link)):
+        os.makedirs(os.path.dirname(link))
+    try:
+        os.link(source, link)
+        return True
+    except OSError:
+        shutil.copy2(source, link)
+        os.chmod(link, stat.S_IREAD)
+        return False
+
+
+def link_state(shot_dir, entry):
+    """LINKED, COPY (works, but uses its own disk), MISSING or STALE (holds
+    something other than the version the manifest records, e.g. after the
+    shot folder was copied from elsewhere). None for entries without a
+    link. Build Shot fixes MISSING and STALE by building the asset again."""
+    if not entry or not entry.get("link"):
+        return None
+    link, source = entry_path(shot_dir, entry), shared_path(shot_dir, entry)
+    if not os.path.isfile(link):
+        return MISSING
+    if not os.path.isfile(source):
+        return COPY     # version cleared from publish\: the shot still has the data
+    if os.path.samefile(link, source):
+        return LINKED
+    return COPY if _is_current(link, source) else STALE
 
 
 def _manifest_path(shot_dir):
@@ -308,20 +439,52 @@ def manifest_key(asset_type, asset, code):
     return "%s/%s/%s" % (asset_type, asset, code)
 
 
-def copy_published(source, maya_dir):
-    """Copy one published file from the H drive into the shared publish
-    folder under the same path and name, unless an identical copy is
-    already there. Read-only, like the publish. Returns (dest, copied)."""
-    dest = os.path.join(publish_dir(maya_dir), *_maya_rel(source).split("/"))
+def texture_folder_of(path):
+    """The texture folder that goes with a published file (H drive or
+    scratch publish folder): <asset>\\sourceimages\\<login>\\<file name
+    without extension> beside <asset>\\scenes\\<login>\\<file> (publishTool_
+    textures, 2026-10-20). It may not exist (nothing textured)."""
+    login_dir = os.path.dirname(path)
+    asset_dir = os.path.dirname(os.path.dirname(login_dir))
+    return os.path.join(asset_dir, "sourceimages", os.path.basename(login_dir),
+                        os.path.splitext(os.path.basename(path))[0])
+
+
+def version_files(path):
+    """A pulled version in the publish folder plus its textures: what
+    clearing that version removes (spec "Clearing old versions": its
+    textures go with it)."""
+    found = [path]
+    for dirpath, _, filenames in os.walk(texture_folder_of(path)):
+        found += [os.path.join(dirpath, n) for n in filenames]
+    return found
+
+
+def _copy_if_changed(source, dest):
     if os.path.isfile(dest) and os.path.getsize(dest) == os.path.getsize(source):
-        return dest, False
+        return False
     if not os.path.isdir(os.path.dirname(dest)):
         os.makedirs(os.path.dirname(dest))
     if os.path.isfile(dest):
         os.chmod(dest, stat.S_IWRITE)
     shutil.copy2(source, dest)
     os.chmod(dest, stat.S_IREAD)
-    return dest, True
+    return True
+
+
+def copy_published(source, maya_dir):
+    """Copy one published file from the H drive into the shared publish
+    folder under the same path and name, unless an identical copy is
+    already there, plus the textures published with it. Read-only, like
+    the publish. Returns (dest, copied)."""
+    dest = os.path.join(publish_dir(maya_dir), *_maya_rel(source).split("/"))
+    textures = texture_folder_of(source)
+    for dirpath, _, filenames in os.walk(textures):
+        for name in filenames:
+            src = os.path.join(dirpath, name)
+            _copy_if_changed(src, os.path.join(texture_folder_of(dest),
+                                               os.path.relpath(src, textures)))
+    return dest, _copy_if_changed(source, dest)
 
 
 def pull(shot_dir, published, vid):
@@ -333,18 +496,24 @@ def pull(shot_dir, published, vid):
         raise BuildError("%s of %s %s isn't on the H drive."
                          % (vid, published["asset"], published["code"]))
     source = published["versions"][vid]
-    dest, _ = copy_published(source, maya_dir_of_shot(shot_dir))
+    maya_dir = maya_dir_of_shot(shot_dir)
+    dest, _ = copy_published(source, maya_dir)
 
     info = published["info"][vid]
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     manifest = read_manifest(shot_dir)
-    manifest[key] = {
+    entry = {
         "version": info["version"],
         "login": info["login"],
         "shared": _maya_rel(source),
         "source": source,
         "pulled": datetime.now().isoformat(timespec="seconds"),
     }
+    if published["code"] in LINKED_CODES:
+        entry["link"] = link_rel_path(published["asset_type"], published["asset"],
+                                      published["code"], os.path.splitext(dest)[1])
+        entry["hardlink"] = link_version(dest, entry_path(shot_dir, entry), maya_dir)
+    manifest[key] = entry
     _write_manifest(shot_dir, manifest)
     return dest
 
@@ -452,7 +621,42 @@ def any_version_references(shot_dir, published):
     return found
 
 
+def scene_version(shot_dir, published):
+    """What the open scene has of this asset + department: its version id,
+    '' if it's there at a version that can't be told (old names, old camera
+    stamps), or None if it isn't in the scene. Build Shot leaves anything
+    already in the scene alone unless the student picks another version
+    (user, 2026-10-20: adding an asset must not rebuild the others)."""
+    if published.get("kind") == "camera":
+        node, vid = shot_camera()
+        return (vid or "") if node else None
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    entry = read_manifest(shot_dir).get(key)
+    if entry and referenced_nodes(entry_path(shot_dir, entry)):
+        return entry_version_id(entry)
+    for node in any_version_references(shot_dir, published):
+        m = PUBLISHED_RE.match(os.path.basename(_absolute(written_path(node))))
+        return version_id(m.group("login").lower(), int(m.group("version"))) if m else ""
+    if any(referenced_nodes(p) for p in _old_paths(shot_dir, published, entry)):
+        return ""
+    return None
+
+
 def build_asset(shot_dir, published, vid):
+    """Build one asset (see _build_asset), then point any MetaHuman DNA
+    nodes it brought at their files on this drive (pipeEnv.fix_dna_paths:
+    DNA nodes can't read $PIPE_SCRATCH)."""
+    done, warning, replaced = _build_asset(shot_dir, published, vid)
+    if published.get("kind") != "camera":
+        fixed = pipeEnv.fix_dna_paths()
+        if fixed:
+            if done == ["already up to date"]:
+                done = []
+            done.append("MetaHuman DNA pointed at this drive (%d)" % len(fixed))
+    return done, warning, replaced
+
+
+def _build_asset(shot_dir, published, vid):
     """One click for one asset: make sure the chosen version (a version id,
     e.g. 'scout/v003') is in the shared publish folder, then make sure the
     open scene references it. A reference to another version (or to an old
@@ -467,7 +671,8 @@ def build_asset(shot_dir, published, vid):
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     namespace = namespace_for(published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
-    previous = entry_path(shot_dir, entry) if entry else None
+    previous = shared_path(shot_dir, entry) if entry else None
+    linked = published["code"] in LINKED_CODES
     label = version_label(published, vid, mark_latest=False)
     done = []
     # Leftover unassigned shaders holding the asset's name (e.g. from an
@@ -479,6 +684,7 @@ def build_asset(shot_dir, published, vid):
 
     same = bool(entry) and entry_version_id(entry) == vid
     restored = bool(same and entry.get("shared") and not os.path.isfile(previous))
+    relinked = bool(same and not restored and link_state(shot_dir, entry) in (MISSING, STALE))
     dest = pull(shot_dir, published, vid)
     if not entry:
         done.append("pulled %s" % label)
@@ -488,17 +694,28 @@ def build_asset(shot_dir, published, vid):
                                   else "v%03d" % entry["version"], label))
     elif restored:
         done.append("%s pulled again (it was missing)" % label)
+    elif relinked:
+        done.append("%s relinked in this shot (it was missing or out of date)" % label)
     replaced = previous if previous and not pub._same_path(previous, dest) else None
+
+    # What the shot's scenes reference: the fixed name in the shot for rigs,
+    # the version in the publish folder for everything else.
+    new_entry = read_manifest(shot_dir)[key]
+    target = entry_path(shot_dir, new_entry)
+    warning = None
+    if linked and not new_entry.get("hardlink"):
+        warning = ("this drive can't hardlink, so the rig is a full copy in this shot "
+                   "(works the same, uses more disk).")
 
     # References are written with $PIPE_SCRATCH so the shot opens from any
     # drive (spec "Reference paths that work on any drive"). Point the
     # variable at this shot's drive first.
     pipeEnv.set_from_path(shot_dir)
-    ref_path = pipeEnv.to_var_path(dest)
+    ref_path = pipeEnv.to_var_path(target)
 
-    nodes = referenced_nodes(dest)
+    nodes = referenced_nodes(target)
     if nodes:
-        old_ns = use_clean_namespace(dest, namespace)
+        old_ns = use_clean_namespace(target, namespace)
         if old_ns:
             done.append("renamed %s: to %s:" % (old_ns, namespace))
         rewritten = False
@@ -508,35 +725,69 @@ def build_asset(shot_dir, published, vid):
                 rewritten = True
         if rewritten:
             done.append("reference path made drive-independent")
-        elif restored:
-            reload_references_to(dest)
+        elif restored or relinked or (linked and not same):
+            # Same path, new content: a reload is all a rig update needs.
+            reload_references_to(target)
             done.append("reloaded in scene")
         if not done:
             done.append("already up to date")
-        return done, None, replaced
+        return done, warning, replaced
 
     for path in _old_paths(shot_dir, published, entry):
         nodes = referenced_nodes(path)
         if nodes:
             for node in nodes:
                 repoint_reference(node, ref_path)
-            use_clean_namespace(dest, namespace)
+            use_clean_namespace(target, namespace)
             done.append("scene reference switched to %s" % label)
-            return done, None, replaced
+            return done, warning, replaced
 
-    # Any other version of this asset already referenced: switch it rather
-    # than referencing the asset a second time.
+    # Any other version of this asset already referenced (for rigs: a scene
+    # from before the fixed name): switch it rather than referencing the
+    # asset a second time.
     nodes = any_version_references(shot_dir, published)
     if nodes:
         for node in nodes:
             repoint_reference(node, ref_path)
-        use_clean_namespace(dest, namespace)
+        use_clean_namespace(target, namespace)
         done.append("scene reference switched to %s" % label)
-        return done, None, replaced
+        return done, warning, replaced
 
     reference_into_scene(ref_path, namespace)
     done.append("referenced into scene")
-    return done, None, replaced
+    return done, warning, replaced
+
+
+def other_shots_using(shot_dir, published, vid):
+    """Shot folders on the same scratch film, other than shot_dir, that have
+    this linked asset + department on a version other than vid."""
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    film_dir = os.path.dirname(maya_dir_of_shot(shot_dir))
+    found = []
+    for seq, shot in list_shots(os.path.dirname(film_dir), os.path.basename(film_dir)):
+        other = os.path.join(film_dir, "maya", "sequences", seq, shot)
+        if pub._same_path(other, shot_dir):
+            continue
+        entry = read_manifest(other).get(key)
+        if entry and entry.get("link") and entry_version_id(entry) != vid:
+            found.append(other)
+    return found
+
+
+def update_shots(shot_dirs, published, vid):
+    """Relink a rig in shots that aren't open (spec §4a: every shot follows
+    an update by default). Their scenes load the new version the next time
+    they're opened, since the path they reference doesn't change.
+    Returns (updated shot names, replaced version paths)."""
+    updated, replaced = [], []
+    for shot_dir in shot_dirs:
+        key = manifest_key(published["asset_type"], published["asset"], published["code"])
+        entry = read_manifest(shot_dir).get(key)
+        dest = pull(shot_dir, published, vid)
+        updated.append(os.path.basename(shot_dir))
+        if entry and not pub._same_path(shared_path(shot_dir, entry), dest):
+            replaced.append(shared_path(shot_dir, entry))
+    return updated, replaced
 
 
 def shots_using(maya_dir):
@@ -552,7 +803,7 @@ def shots_using(maya_dir):
             shot_dir = os.path.join(seq_dir, seq, shot)
             for entry in read_manifest(shot_dir).values():
                 if entry.get("shared"):
-                    path = os.path.normcase(os.path.normpath(entry_path(shot_dir, entry)))
+                    path = os.path.normcase(os.path.normpath(shared_path(shot_dir, entry)))
                     used.setdefault(path, []).append(shot)
     return used
 
@@ -562,9 +813,12 @@ def unused_versions(paths, maya_dir):
     manifest uses and the open scene doesn't reference."""
     used = shots_using(maya_dir)
     in_scene = set(os.path.normcase(os.path.normpath(r)) for _, _, _, r in scene_references())
-    result = []
+    result, seen = [], set()
     for path in paths:
         key = os.path.normcase(os.path.normpath(path))
+        if key in seen:
+            continue    # replaced by more than one shot
+        seen.add(key)
         if os.path.isfile(path) and key not in used and key not in in_scene \
                 and key.startswith(os.path.normcase(publish_dir(maya_dir)) + os.sep):
             result.append(path)
@@ -607,13 +861,76 @@ def repair_scene(h_root):
             # Keep the path as the scene wrote it ($PIPE_SCRATCH stays).
             cmds.file(written if pipeEnv.uses_var(written) else dest, loadReference=node)
             fixed.append("%s: pulled again from the H drive and loaded." % name)
+        elif _linked_entry(root, rel, path):
+            # A rig's fixed name in the shot: the manifest says which version.
+            entry = _linked_entry(root, rel, path)
+            source = os.path.join(h_root, rel[0], "maya", *entry["shared"].split("/"))
+            if not os.path.isfile(source):
+                not_fixed.append("%s: v%03d isn't on the H drive (%s)."
+                                 % (name, entry["version"], source))
+                continue
+            maya_dir = os.path.join(root, rel[0], "maya")
+            dest, _ = copy_published(source, maya_dir)
+            link_version(dest, path, maya_dir)
+            cmds.file(written if pipeEnv.uses_var(written) else path, loadReference=node)
+            fixed.append("%s: relinked to v%03d (%s) and loaded."
+                         % (name, entry["version"], entry.get("login", "?")))
         elif len(rel) > 5 and rel[1] == "maya" and rel[2] == "sequences" and rel[5] == "assets":
             not_fixed.append("%s: an old copy kept inside the shot. Add %s in Build Shot "
                              "and build to switch it to a published version."
                              % (name, rel[7] if len(rel) > 8 else os.path.splitext(name)[0]))
         else:
             not_fixed.append("%s: missing, and not a pulled publish (%s)." % (name, path))
+    fixed += _repair_textures(h_root)
+    fixed += ["%s: MetaHuman DNA pointed at %s" % (node, os.path.basename(path))
+              for node, path in pipeEnv.fix_dna_paths()]
     return fixed, not_fixed
+
+
+def _repair_textures(h_root):
+    """Pulled publishes the open scene references whose textures are
+    missing on scratch (e.g. after a wipe, when a rig's link in the shot
+    still had its data): pull them again. Returns messages."""
+    fixed = []
+    for node, written, full, resolved in scene_references():
+        path = resolved if os.path.isfile(resolved) else full
+        if not os.path.isfile(path):
+            continue
+        try:
+            root, rel = pub.find_film_folder(path)
+        except BuildError:
+            continue
+        maya_dir = os.path.join(root, rel[0], "maya")
+        entry = _linked_entry(root, rel, path)
+        if entry:
+            local = os.path.join(publish_dir(maya_dir), *entry["shared"].split("/"))
+            source = os.path.join(h_root, rel[0], "maya", *entry["shared"].split("/"))
+        elif len(rel) > 3 and rel[1] == "maya" and rel[2] == PUBLISH_FOLDER:
+            local, source = path, os.path.join(h_root, rel[0], "maya", *rel[3:])
+        else:
+            continue
+        on_h, here = texture_folder_of(source), texture_folder_of(local)
+        wanted = [os.path.relpath(os.path.join(d, n), on_h)
+                  for d, _, names in os.walk(on_h) for n in names]
+        if not os.path.isfile(source) or all(os.path.isfile(os.path.join(here, w))
+                                             for w in wanted):
+            continue
+        copy_published(source, maya_dir)
+        if entry:
+            link_version(local, path, maya_dir)
+        fixed.append("%s: textures pulled again from the H drive." % os.path.basename(path))
+    return fixed
+
+
+def _linked_entry(root, rel, path):
+    """The shot's manifest entry whose fixed name is path, or None."""
+    if not (len(rel) > 5 and rel[1] == "maya" and rel[2] == "sequences" and rel[5] == "assets"):
+        return None
+    shot_dir = os.path.join(root, *rel[:5])
+    for entry in read_manifest(shot_dir).values():
+        if entry.get("link") and pub._same_path(entry_path(shot_dir, entry), path):
+            return entry
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -651,23 +968,37 @@ def pull_camera(shot_dir, published, vid):
     return os.path.join(shot_dir, *CAMERA_FILES["camera"].split("/"))
 
 
+def _is_camera_group(node):
+    """A published <shot>_cam_GRP: its pipe stamp says department cam."""
+    return (cmds.attributeQuery(DEPT_STAMP, node=node, exists=True)
+            and cmds.getAttr("%s.%s" % (node, DEPT_STAMP)) == CAMERA_CODE)
+
+
 def shot_camera():
-    """The built shot camera in the open scene: (transform, version id) or
-    (None, None). It's the top-level camera1 carrying the build stamp.
-    Cameras built before personal publishes have no BY_ATTR, so their id
-    matches no current version and a rebuild replaces them."""
-    for node in cmds.ls(CAMERA_NAME, long=True, type="transform") or []:
-        if node == "|" + CAMERA_NAME and cmds.attributeQuery(VERSION_ATTR, node=node, exists=True):
-            by = (cmds.getAttr("%s.%s" % (node, BY_ATTR))
-                  if cmds.attributeQuery(BY_ATTR, node=node, exists=True) else None)
-            return node, version_id(by, cmds.getAttr("%s.%s" % (node, VERSION_ATTR)))
+    """The built shot camera in the open scene: (camera1 transform, version
+    id) or (None, None). It's camera1 inside a top-level camera group; the
+    group's stamp says who published which version. A camera from before
+    the group (a top-level camera1) doesn't count, so a rebuild replaces it."""
+    for group in cmds.ls(assemblies=True, long=True) or []:
+        camera = "%s|%s" % (group, CAMERA_NAME)
+        if _is_camera_group(group) and cmds.objExists(camera):
+            return camera, version_id(cmds.getAttr("%s.%s" % (group, BY_STAMP)),
+                                      cmds.getAttr("%s.%s" % (group, VERSION_STAMP)))
     return None, None
+
+
+def _camera_data(transform):
+    """The data node(s) driving the camera (camera1_DATA)."""
+    shape = cmds.listRelatives(transform, shapes=True, fullPath=True, type="camera") or []
+    return sorted(set(n for n in cmds.listConnections([transform] + shape, source=True,
+                                                      destination=False, type="transform") or []
+                      if n.split("|")[-1].endswith("_DATA")))
 
 
 def _camera_curves(transform):
     shape = cmds.listRelatives(transform, shapes=True, fullPath=True, type="camera") or []
     curves = set()
-    for node in [transform] + shape:
+    for node in [transform] + shape + _camera_data(transform):
         curves.update(cmds.listConnections(node, source=True, destination=False,
                                            type="animCurve") or [])
     return sorted(curves)
@@ -675,13 +1006,18 @@ def _camera_curves(transform):
 
 def set_camera_locked(transform, locked):
     """Lock (or unlock) the camera so its keys can't be edited by accident:
-    the channels, the curves' key data (so the Graph Editor can't move keys
-    either) and the curve nodes themselves (so they can't be deleted)."""
+    the channels of the camera, its data node and group, the curves' key
+    data (so the Graph Editor can't move keys either) and the curve nodes
+    themselves (so they can't be deleted)."""
     shape = cmds.listRelatives(transform, shapes=True, fullPath=True, type="camera")[0]
     curves = _camera_curves(transform)
+    group = (cmds.listRelatives(transform, parent=True, fullPath=True) or [None])[0]
+    nodes = [transform, shape] + _camera_data(transform)
+    if group and _is_camera_group(group):
+        nodes.append(group)
     for curve in curves:
         cmds.lockNode(curve, lock=False)
-    for node in (transform, shape):
+    for node in nodes:
         for attr in cmds.listAttr(node, keyable=True) or []:
             try:
                 cmds.setAttr("%s.%s" % (node, attr), lock=locked)
@@ -695,15 +1031,32 @@ def set_camera_locked(transform, locked):
             cmds.lockNode(curve, lock=True)
 
 
+def _free_name(name):
+    """name, or name1, name2, ... whichever no node in the scene uses. Maya
+    allows the same short name under different parents (e.g. inside a
+    camera group), but then names stop being unique."""
+    candidate, i = name, 1
+    while cmds.objExists(candidate):
+        candidate, i = "%s%d" % (name, i), i + 1
+    return candidate
+
+
 def _move_out_of_the_way(node):
-    """Rename an existing camera1 (and its shape and our curves) to
-    camera1_old, camera1_old1, ... Nothing is deleted. Returns the new name."""
+    """Rename an existing camera1 (and its shape, data node, camera group
+    and our curves) to camera1_old, camera1_old1, ... Nothing is deleted.
+    Returns the new name."""
     curves = _camera_curves(node)
+    data = _camera_data(node)
+    group = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
     for curve in curves:
         cmds.lockNode(curve, lock=False)
-    new = cmds.rename(node, OLD_CAMERA_NAME)
+    new = cmds.rename(node, _free_name(OLD_CAMERA_NAME))
     for shape in cmds.listRelatives(new, shapes=True, fullPath=True) or []:
         cmds.rename(shape, new.split("|")[-1] + "Shape")
+    for d in data:
+        cmds.rename(d, new.split("|")[-1] + "_DATA")
+    if group and _is_camera_group(group):
+        cmds.rename(group, _free_name(group.split("|")[-1] + "_old"))
     prefix = CAMERA_NAME + "_"
     for curve in curves:
         if curve.startswith(prefix):
@@ -733,48 +1086,45 @@ def _drop_namespace(ns):
 
 
 def import_camera(shot_dir, version, login):
-    """Import the pulled camera as a live camera1, connect its keys, stamp
-    and lock it. Returns the transform."""
+    """Import the pulled camera group live (<shot>_cam_GRP > camera1 +
+    camera1_DATA), connect its keys to the data node and lock it. The
+    camera is driven 1:1 by the data node, so it behaves like a referenced
+    camera with no reference path (user, 2026-10-20). The group's pipe
+    stamp says which version it is. Returns camera1's transform."""
     cam_path = os.path.join(shot_dir, *CAMERA_FILES["camera"].split("/"))
     keys_path = os.path.join(shot_dir, *CAMERA_FILES["keys"].split("/"))
     with open(os.path.join(shot_dir, *CAMERA_FILES["map"].split("/")), "r") as f:
         mapping = json.load(f)
+    if mapping.get("format") != CAMERA_MAP_FORMAT:
+        raise BuildError("This camera was published before cameras had a group. "
+                         "Republish it from the layout scene.")
+    group_name = mapping["group"]
+    if cmds.objExists("|" + group_name):    # not our camera group, or one with no camera1
+        cmds.rename("|" + group_name, _free_name(group_name + "_old"))
 
     ns, nodes = _import_into_root(cam_path, "buildCam")
-    transform = nodes.get(mapping.get("camera", "shotCam"))
-    if not transform or cmds.nodeType(transform) != "transform":
-        raise BuildError("The camera file has no %s camera: %s"
-                         % (mapping.get("camera", "shotCam"), cam_path))
-    transform = cmds.rename(transform, ":" + CAMERA_NAME)
+    missing = [n for n in (group_name, mapping["camera"], mapping["data"]) if n not in nodes]
+    if missing:
+        raise BuildError("The camera file is missing %s: %s" % (", ".join(missing), cam_path))
+    cmds.rename(nodes[mapping["data"]], ":" + DATA_NAME)
+    transform = cmds.rename(nodes[mapping["camera"]], ":" + CAMERA_NAME)
     shape = cmds.listRelatives(transform, shapes=True, fullPath=True, type="camera")[0]
     cmds.rename(shape, ":" + CAMERA_NAME.replace("camera", "cameraShape"))
+    group = cmds.rename(cmds.listRelatives(transform, parent=True, fullPath=True)[0],
+                        ":" + group_name)
     _drop_namespace(ns)
-    transform = cmds.ls("|" + CAMERA_NAME, long=True)[0]
-    shape = cmds.listRelatives(transform, shapes=True, fullPath=True, type="camera")[0]
+    group = cmds.ls(group, long=True)[0]
+    transform = "%s|%s" % (group, CAMERA_NAME)
+    data = "%s|%s" % (group, DATA_NAME)
 
     ns, curves = _import_into_root(keys_path, "buildCamKeys")
-    for curve, (where, attr) in mapping["curves"].items():
+    for curve, attr in mapping["curves"].items():
         if curve not in curves:
             raise BuildError("The keys file is missing curve %s." % curve)
-        node = shape if where == "shape" else transform
-        cmds.setAttr("%s.%s" % (node, attr), lock=False)
-        cmds.connectAttr(curves[curve] + ".output", "%s.%s" % (node, attr), force=True)
-        cmds.rename(curves[curve], ":%s_%s%s" % (CAMERA_NAME, "shape_" if where == "shape" else "", attr))
+        cmds.setAttr("%s.%s" % (data, attr), lock=False)
+        cmds.connectAttr(curves[curve] + ".output", "%s.%s" % (data, attr), force=True)
+        cmds.rename(curves[curve], ":%s_%s" % (DATA_NAME, attr))
     _drop_namespace(ns)
-
-    # Stamp: which shot and version this camera is (how a rebuild knows).
-    for attr, value in ((SHOT_ATTR, mapping.get("shot", "")), (VERSION_ATTR, version),
-                        (BY_ATTR, login)):
-        if not cmds.attributeQuery(attr, node=transform, exists=True):
-            if attr == VERSION_ATTR:
-                cmds.addAttr(transform, longName=attr, attributeType="long")
-            else:
-                cmds.addAttr(transform, longName=attr, dataType="string")
-        if attr == VERSION_ATTR:
-            cmds.setAttr("%s.%s" % (transform, attr), value)
-        else:
-            cmds.setAttr("%s.%s" % (transform, attr), value, type="string")
-        cmds.setAttr("%s.%s" % (transform, attr), lock=True)
     set_camera_locked(transform, True)
     return transform
 
@@ -809,9 +1159,10 @@ def build_camera(shot_dir, published, vid):
         for node in cmds.ls(cams, long=True):
             done.append("old referenced camera %s made live and renamed %s"
                         % (node.split("|")[-1], _move_out_of_the_way(node)))
+    # Any existing camera1 (an older build in its group, one from before
+    # camera groups, or the student's own) is kept, renamed out of the way.
     for node in cmds.ls(CAMERA_NAME, long=True, type="transform") or []:
-        if node == "|" + CAMERA_NAME:
-            done.append("existing camera1 renamed %s" % _move_out_of_the_way(node))
+        done.append("existing camera1 renamed %s" % _move_out_of_the_way(node))
     info = published["info"][vid]
     import_camera(shot_dir, info["version"], info["login"])
     done.append("camera1 %s imported and locked" % label)
@@ -939,7 +1290,8 @@ def scratch_items(scratch_root, h_root, film):
         manifest = read_manifest(folder)
         pulled = set(os.path.normcase(os.path.join(folder, *rel.split("/")))
                      for e in manifest.values()
-                     for rel in ([e["file"]] if "file" in e else []) + e.get("extra_files", []))
+                     for rel in ([e["file"]] if "file" in e else [])
+                     + ([e["link"]] if "link" in e else []) + e.get("extra_files", []))
         pulled.add(os.path.normcase(_manifest_path(folder)))
         risky = [f for f in files if os.path.normcase(f) not in pulled]
         status = SAFE if not risky else UNPUBLISHED
@@ -976,7 +1328,16 @@ def send_to_recycle_bin(paths):
         return True
     if os.name != "nt":
         raise BuildError("Recycle Bin removal is only set up for Windows.")
+    # A rig's hardlink shares its read-only flag with the version in the
+    # publish folder, so lock that folder again afterwards.
+    relock = set()
     for p in paths:
+        try:
+            if os.stat(p).st_nlink > 1:
+                root, rel = pub.find_film_folder(p)
+                relock.add(os.path.join(root, rel[0], "maya"))
+        except (OSError, BuildError):
+            pass
         try:
             os.chmod(p, stat.S_IWRITE)
         except OSError:
@@ -996,6 +1357,8 @@ def send_to_recycle_bin(paths):
     op.pFrom = "\0".join(os.path.abspath(p) for p in paths) + "\0\0"
     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
     result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    for maya_dir in relock:
+        _lock_publish_folder(maya_dir)
     return result == 0 and not op.fAnyOperationsAborted
 
 

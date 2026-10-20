@@ -294,6 +294,8 @@ exists on scratch, but only `EAP_010_010` and its assets have files in them.
   falls out of step. Undecided how to handle this.
 - Note: tech notes §6 says lab scratch drives are wiped every couple of
   weeks, so at RMIT the "first build" may repeat after each wipe.
+  **Update 2026-10-20 (user):** every 3–4 weeks, unannounced; Maya prefs
+  survive. Impacts in §4a.
 
 **SUGGESTION (not agreed):** drive letters differ between these setups (and
 will at RMIT), so the tools should never hard-code `D:\`/`H:\`. Each location
@@ -420,6 +422,9 @@ The tools are developed side by side:
   caches and the like stay in each shot's own folder on scratch. Shots no
   longer keep assets in their own `assets\` folder.
 
+  - **Changed for rigs 2026-10-20 (§4a, option C):** each shot references
+    a fixed name hardlinked to a version here; every shot follows an
+    update by default. Models still work as below.
   - **Each version is its own file (DECIDED 2026-10-13).** The shared folder
     keeps published versions side by side under their published names, e.g.
     `publish\assets\character\scout\scenes\scout_rig_v002.mb` and `..._v003.mb`.
@@ -793,6 +798,9 @@ The tools are developed side by side:
     v001 + v002 published; Build Shot matches the layout camera every
     frame, survives save + reopen, no double reference on rebuild, roll
     back to v001 works with no leftover curves.
+  - (2026-10-20: cameras now sit in a `<shot>_cam_GRP` with a
+    `camera1_DATA` node driving them; see "Camera group (DECIDED + built
+    2026-10-20)" in §4.)
   - **DECIDED: in the shot the camera is live, not referenced.** Build
     Shot imports it, always named **`camera1`** (shape `cameraShape1`),
     and connects its keys. An existing `camera1` is renamed
@@ -883,6 +891,101 @@ The tools are developed side by side:
     `$PIPE_SCRATCH`, as for references, §3i); where Build Shot
     puts them in the shot (e.g. beside the pulled model) and how it
     re-points the file nodes.
+  - **Texture workflow through rigging (user, 2026-10-20; agreed in
+    principle, not built):** "Rigger pulls the published model asset. The
+    pipe saves the textures in the source images folder of the rig
+    project. The rigger builds the rig and skins the live textured
+    unreferenced model and publish the rig. The textures get saved with the
+    rig publish in the source images folder. The animator builds the shot
+    with the rig, the rig and textures are saved into the publish/ folder
+    on the scratch drive."
+    - What the pipe has to do: (1) model publish carries its textures (not
+      built yet, comes first); (2) pulling a model for rigging copies that
+      version's textures into the rig project's `sourceimages` and
+      re-points the file nodes; (3) rig publish collects every file its
+      file nodes use (incl. UDIM tiles, sequences, `.tx`), copies them to
+      H with that rig version, rewrites paths to `$PIPE_SCRATCH` form, and
+      stops on missing textures; (4) Build pulls them into scratch
+      `publish\` with the rig (also covers Restore after a wipe).
+  - **Two texture sets per model publish (DECIDED 2026-10-20).** The user:
+    "we are not going to need heavy render ready textures for the rigs
+    during animation. So I guess the models would hold a highres texture
+    publish, but also need a low res publish for rigging. We need to build
+    that into the model publish specs." So a model publish carries a
+    full-res (render) set and a low-res (anim) set; pulling for rigging
+    takes only the low-res set, so rigs and shots stay light.
+    - SUGGESTION (not agreed): same file names in both, in sibling folders
+      per version, e.g. `sourceimages\<login>\model_v004\render\` and
+      `...\anim\`, so switching is a folder swap in the paths, not a
+      rewire. Pulled textures go in their own subfolder of the rig
+      project's `sourceimages` (e.g. `pulled\model_v004\`) so they never
+      overwrite working textures.
+    - Answers 2026-10-20: the artist exports the low-res set themselves
+      (option b); the size is "up to the texture artist". (Then superseded
+      the same day, below: the render set moves out of the model publish.)
+    - Claude's folder-swap and "two shader sets in the model publish,
+      paired `_render_MTL`/`_anim_MTL`" suggestions: dropped, superseded by
+      the LookDev step below.
+  - **LookDev is its own step and publish (DECIDED 2026-10-20, replaces
+    the two texture sets above).** The user: "We need a lookdev stage or
+    task as part of the modeling and a look dev publish would hold the
+    renderable textures as a separate thing. So model publish would always
+    be lowres placeholder textures for animation. lookdev publish would be
+    the renderable textures."
+    - **Model publish:** always low-res placeholder textures, made by the
+      artist (size up to them). These are what rigs and shots carry.
+    - **LookDev publish:** the render textures (and their shaders), a
+      separate publish under the `lookDev` department code (already in
+      the department list). Needs a LookDev task in ShotGrid (recorded in
+      `shotgridTemplate_requirements.md`).
+    - Unchanged: the texture workflow through rigging above (pull model
+      -> textures into the rig project -> rig publish carries them ->
+      Build pulls them into `publish\`), now with placeholder textures only.
+  - **Rig publish carries its textures (built 2026-10-20, user: "can we
+    add the texture handling to the rig publish process").**
+    `pipeDev/publishDev/publishTool_textures.py` (shipped in the mpPipe
+    zip):
+    - Finds the texture nodes (`file`, `aiImage` when Arnold is loaded) on
+      the shaders of what's published (selected objects and everything
+      under them; whole scene = every one), not from references; every
+      file each uses: UDIM tiles, image sequences, and an Arnold `.tx`
+      beside a texture. Project-relative and `$VAR` paths resolved.
+    - A missing texture stops the publish (with the other rig checks,
+      before ShotGrid/playblast/H drive) and names the node; also checked
+      when a Rigging row is added.
+    - Copies them to H in a folder per version:
+      `<asset>\sourceimages\<login>\<published file name>\`, e.g.
+      `scout\sourceimages\scout\scout_scout_rig_v001\`. Files keep their
+      names; a second source folder with a clashing name goes in its own
+      numbered subfolder (whole folder, so tiles/sequences stay together).
+      Read-only.
+    - In the published file only, texture paths become
+      `$PIPE_SCRATCH/<FILM>/maya/publish/<same path as on H>` (UDIM nodes
+      keep their tile pattern); the working scene's paths are put back. A
+      failed export removes the copied textures. A whole-scene rig with
+      textures is exported, not copied. The ShotGrid note lists them.
+    - Build: `copy_published()` also mirrors the version's texture folder
+      into scratch `publish\` (so Build, Repair and Restore all bring
+      them); clearing an unused version takes its textures with it
+      (`version_files()`); Repair also re-pulls missing textures of
+      anything the scene references (found in testing: after a wipe a
+      rig's link still has its data, so only the textures were missing).
+    - Test `pipeDev/publishDev/test_rigTextures_mayapy.py` 18/18; all
+      other Publish/Build tests still pass.
+    - Not yet: pulling a model's (placeholder) textures into the rig
+      project (waits for model publishes to carry textures, same module
+      can do it); opening a published rig straight from H shows textures
+      missing unless that version is in scratch `publish\` (same as
+      references).
+    - OPEN: what a LookDev publish contains (shaders + render textures +
+      which object gets which shader, no geometry? or a full textured
+      model?); which model version it belongs to and what must match
+      (object names, UVs); how lighting applies it (to the referenced rig,
+      or to the Alembic caches from the shot publish, matched by object
+      name); whether LookDev is a task on the Modeling step or its own
+      step; who does it (same student or a texture artist); whether
+      MetaHuman DNA files ride the rig's texture mechanism (pinned DNA
+      question).
 - **Could rigs be referenced straight from the H drive? (OPEN, test first.)**
   Maya reads a referenced file when the scene opens or the reference is
   reloaded. It doesn't keep reading it while you work. So a rig on the H
@@ -1372,9 +1475,65 @@ The tools are developed side by side:
                 publish is stamped like the model group, with
                 `pipe_publishedFrom` (`layout` / `anim`) plus shot id, shot,
                 department, version, artist, date and source scene, locked.
-                The stamp is on the camera node itself, not a group, because
-                Build makes it the live `camera1` at the top of the scene;
-                the keys map also records `published_from`.
+                ~~The stamp is on the camera node itself, not a group, because
+                Build makes it the live `camera1` at the top of the scene;~~
+                (superseded 2026-10-20: the stamp is on the camera group, see
+                "Camera group" below) the keys map also records `published_from`.
+              - **Camera group (DECIDED + built 2026-10-20).** The user:
+                (1) cameras parented under a publish group with the details
+                the model publish has; (2) the camera's keyframes and any
+                driven attribute stored separately on a node under that
+                group; (3) the camera's attributes driven 1:1 by direct
+                connections from that node, "this way the camera can behave
+                like a referenced camera in the animators scenes but there
+                are no reference paths for the pipe to manage"; (4) the
+                publish records image sequences the camera uses (location,
+                name etc.). Answers to Claude's questions: keep the keys in
+                their own file (camera file + keys file + map, as before);
+                image planes recorded only, not published or rebuilt (OPEN
+                for later); old three-file publishes are dropped, republish
+                them; names as below.
+                ```
+                EAP_010_010_cam_GRP     <shot>_cam_GRP, named from the shot (never fixed)
+                  camera1               every animated attribute driven 1:1 by...
+                  camera1_DATA          ...an attribute here (cam_translateX, camShape_focalLength, ...)
+                ```
+                - Published file: `<shot>_cam_GRP > shotCam + shotCam_DATA`,
+                  data node already wired to the camera, no keys; group,
+                  camera and data transforms locked. Group stamp:
+                  `pipe_sgShotId`, `pipe_shot`, `pipe_department` (`cam`),
+                  `pipe_version`, `pipe_publishedFrom`, `pipe_artistId`,
+                  `pipe_artistName`, `pipe_published`, `pipe_sourceScene`,
+                  `pipe_imagePlanes` (JSON: node, full path, folder, file
+                  name, type, useFrameExtension, frameOffset, frameIn/Out,
+                  frameCache, depth, fit, displayMode). Static settings
+                  (film back etc.) stay on the camera shape.
+                - Keys file: one baked curve per data attribute. Map
+                  `format: 2`: `group`, `data`, `curves` (curve -> data
+                  attribute), `attrs` (data attribute -> camera attribute),
+                  `image_planes`. Data attributes use the camera
+                  attribute's own type, so no unit-conversion nodes.
+                - Build imports it live: the group keeps its name, the
+                  camera becomes `camera1` (still the only `camera1`, so
+                  playblast/shotSub by name still work), the data node
+                  `camera1_DATA`, keys connected to the data node, then
+                  everything locked (channels, curve key data, curve nodes,
+                  group). The built version is read from the group's stamp
+                  (replaces the old `pipeShot`/`pipeCameraVersion`/
+                  `pipeCameraBy` stamps on camera1). An existing camera1
+                  (older build, pre-group camera, or the student's own) is
+                  kept as `camera1_old`, `camera1_old1`, ... with its data
+                  node and group (`..._cam_GRP_old`); names are kept unique.
+                - Publishing again from a built shot works (the scene's
+                  group steps aside during export). In the Publish window,
+                  selecting the group or `camera1_DATA` gives a Camera row;
+                  an Animation publish refuses them.
+                - Tests: `pipeDev/buildDev/test_cameraGroup_mayapy.py` 37/37
+                  (two shots, so two group names); all other Build/Publish
+                  tests still pass.
+                - To do by hand: republish the EAP_010_010 camera from the
+                  layout scene (v001/v002 on `G:\H` are the old format and
+                  no longer listed), rebuild, check in Maya.
               - **Build in a blank scene = latest (DECIDED + built
                 2026-10-19):** "if the student is building in a blank scene
                 the build tool should always load the latest published
@@ -1383,6 +1542,23 @@ The tools are developed side by side:
                 version the shot has. `test_blankSceneLatest_mayapy.py` 2/2.
                 (Same day the user had a successful build of a shot from a
                 published animation.)
+              - **Adding an asset builds only the new one (DECIDED + built
+                2026-10-20).** Bug found by the user: adding scoutsHouse to
+                the test shot also rebuilt the camera (existing camera1
+                renamed camera1_old) and possibly touched the backpack.
+                Cause: Build Shot ran every row and compared rows with the
+                shot's manifest, not the open scene (here the manifest's
+                camera had moved to v002 from another scene of the shot).
+                The user: "If there are existing assets in the scene and new
+                asset is added the tool needs to know to only add the new
+                asset and not rebuild everything." Now each row records
+                what the open scene has (`api.scene_version()`), starts at
+                that version, and is skipped ("already in the scene, left
+                as is") unless the student picks another version. A rig
+                whose file in the shot is missing/out of date is still
+                built (that's the fix). The table shows "Not in this scene:
+                Build adds it" for shot assets the scene lacks.
+                `test_addAssetOnly_mayapy.py` 9/9 (real tab, offscreen).
               - Built 2026-10-19: the **Publish for** dropdown (Layout,
                 Animation; Lighting/FX coming soon) and Add Selected in shot
                 scenes. `test_shotAddSelected_mayapy.py` 11/11 (real window,
@@ -1456,6 +1632,15 @@ The tools are developed side by side:
                group with the appropriate name", the group storing the
                **ShotGrid id** and anything else needed, e.g. **date created
                and the artist** who created it.
+               - **Never on a rig (user, 2026-10-20):** "There should be no
+                 freeze transform clean up for the publish of the rig ...
+                 and no delete history." The rig export never did either; a
+                 rig went through Model because the Department picker
+                 defaulted to Modeling. Fixed: Model rows/publishes refuse
+                 joints, skinClusters, blendShapes, IK handles and
+                 constraints (`publishTool_api.check_not_a_rig`), and the
+                 picker starts on the department in the scene's file name
+                 (`scout_rig_v002` -> Rigging). Test: `test_modelNotRig_mayapy`.
                - Changes the 2026-10-12 choice of a separate `publishInfo`
                  node with no top group: that "no top-group rule" was about
                  not making *students* build a group; here the **pipe**
@@ -1473,7 +1658,51 @@ The tools are developed side by side:
                     name, the **date the publish was created**, and the
                     scene it was published from.
                  - The user is aware freezing zeroes translate/rotate in
-                   the published file; animators key the pipe group.
+                   the published file; ~~animators key the pipe group~~
+                   (superseded 2026-10-20, below).
+                 - **Pipe group look and lock (DECIDED + built
+                   2026-10-20).** The user: the group should "display in
+                   the outliner as the RMIT logo, so that we know it's
+                   come from the pipe", and be "locked at world 000 with
+                   all chanels hidden incase students accidentally move
+                   it. This will be for all published assets." And: "All
+                   the pipe needs to do is make the publish group and
+                   parent the model/rig/camera under it. That's all. The
+                   backpack model can be moved around without that group
+                   via it's own transforms or connected to a locator in
+                   the scene via a parent constraint." (Claude first
+                   misread this as adding a place control; not built.)
+                   - **Icon PARKED 2026-10-20 (user: "lets not worry about
+                     the icon on the group for now"):** Scout rig v003's
+                     group has `.icn` set, the PNG is valid and on
+                     XBMLANGPATH, yet the Outliner shows no icon in the
+                     shot. Untested: whether the Outliner honours
+                     `iconName` on a plain transform at all, or only fails
+                     for referenced nodes (test snippet: two fresh groups,
+                     `sphere.png` vs `iconPipeOutliner.png`).
+                   - `publishTool_api.finish_pipe_group()`: `iconName` =
+                     `iconPipeOutliner.png` (file name only, found in the
+                     prefs icons folder; missing icon = normal group
+                     icon); translate/rotate/scale/visibility set to
+                     0/0/1/on, locked, not keyable, hidden from the
+                     Channel Box. Only the group; everything inside stays
+                     free. Used by model publishes and the camera group;
+                     rig publishes use it when the rig group is built.
+                   - Icon: `shelfDev/mpPipe/icons/iconPipeOutliner.png`,
+                     20x20, red RMIT mark on a navy circle (transparent
+                     outside), drawn as a vector so it can be re-rendered.
+                     Colours picked by eye (`#000054`, `#e61e2a`); swap
+                     for official RMIT values if wanted. Copied to prefs
+                     icons by the mpPipe installer (rebuild the zip).
+                   - Fact found by test: in a shot scene, a student CAN
+                     unlock the channels of a referenced pipe group, so
+                     the lock stops accidents, not determined students.
+                   - Tests: `test_modelGroup_mayapy.py` 26/26 (icon, lock,
+                     hidden channels, model inside free, through a
+                     reference, model moved by its own transform and by a
+                     parent constraint to a locator);
+                     `test_cameraGroup_mayapy.py` 38/38. The animation
+                     publish tests now key the model, not the group.
                  - **Built 2026-10-19 for models**
                    (`publishTool_api.export_model_to_h_drive`): works on
                    duplicates, so the working scene ends exactly as it was;
@@ -1487,6 +1716,281 @@ The tools are developed side by side:
                    `test_modelGroup_mayapy.py` 13/13. Not built yet: the
                    group for rigs and other departments (a rig can't be
                    duplicated, so it needs a different approach).
+             - **Rig publish, thought through from scratch (started
+               2026-10-19).** The user: rigs are "a lot more complicated
+               than the model, so let's think this through from scratch."
+               Facts so far (user):
+               - Rigs will in most cases be built on **clean published
+                 models**.
+               - **ngSkinTools is used at RMIT**, so the pipe must not rip
+                 the plug-in out of students' scenes; but it's better to
+                 publish **without the ngSkinTools node**. If it's present,
+                 students could be **prompted to remove it before
+                 publishing**.
+                 - **DECIDED 2026-10-19:** if an ngSkinTools node is in the
+                   rig, **Publish stops** and prompts the student to remove
+                   it (Publish doesn't remove it for them).
+               - Students rig with **mGear, Advanced Skeleton, Rapid Rig,
+                 the user's own rigging tools, and possibly their own
+                 setups**.
+               - **mGear is installed only in the PC labs** (user). So an
+                 mGear rig (it relies on mGear's own plug-in nodes) can only
+                 be opened, and shots using it only animated, where mGear is
+                 installed. The user: "for our purposes that is
+                 everywhere" (the PC labs are where the work happens), but
+                 then agreed the visibility ideas "all sound like good
+                 ideas" (2026-10-19): **Publish records the plug-ins a rig
+                 needs in its stamp; Build warns before pulling a rig onto
+                 a machine that doesn't have them** ("This rig needs mGear,
+                 which isn't installed here..."), so students find out at
+                 Build, not when the shot opens with broken nodes.
+               - **The model gets into the rig scene by import (user).**
+                 "So building assets for the rigging shouldn't include
+                 references": a rig scene (and its publish) holds no
+                 references. OPEN: if a rig scene does have references at
+                 publish time, refuse, or bring them into the published
+                 file?
+               - **mGear depends on its plug-in nodes (user)**: they must
+                 never be stripped. SUGGESTION (not agreed): rig publishes
+                 never delete anything; if a rig holds *unknown* plug-in
+                 nodes (e.g. mGear's when mGear isn't loaded on that
+                 machine) Publish stops and says which plug-in to load,
+                 instead of the model publish's "leave unknown nodes out".
+               - **What real rigs contain (scanned as data, never opened,
+                 2026-10-19):** 8 of the user's/students' rigs (scoutPrevis,
+                 ATKS, argus, dragonBird, KAT, Phyllis MH, wobbert, ATKS
+                 volume block). All require `mgear_solvers`; 4 hold
+                 ngSkinTools data; most require `mtoa`, `lookdevKit`,
+                 `stereoCamera`; MetaHuman-based ones `embeddedRL4`. No
+                 non-standard script nodes in the .ma files (the .mb ones
+                 show 2 script-node chunks each, consistent with Maya's
+                 standard two; .mb is read less reliably). No virus markers.
+                 One (Phyllis) references a file on another drive
+                 (`D:/ASSESSMENT/.../Hair_rig.mb`): the reference problem in
+                 practice. Rig files are big: up to 276 MB (.ma).
+               - **MetaHuman rigs (user, 2026-10-19):** "the tool needs to
+                 recognise and track if there is a MetaHuman involved. It
+                 will need to handle locating the DNA files, storing the
+                 correct DNA file name and path for the publish in the top
+                 node of the rig where we store the info, and save the DNA
+                 files in an appropriate place in our assets folder, making
+                 sure the paths hold up when the publish is built and
+                 referenced for animating."
+                 - Found in real rigs: each `embeddedNodeRL4` holds an
+                   absolute `dnaFilePath` to wherever the rigger kept it;
+                   3 of 5 checked don't exist on this machine (Phyllis,
+                   KAT), and KAT's head node points at MAYHEM's body.dna.
+                   `rigDev/mh_rig_assemble/mh_dna_repair.py` exists to fix
+                   broken paths. Head DNA ~55 MB.
+                 - SUGGESTION (not agreed): detect `embeddedNodeRL4`; stop
+                   if a DNA file is missing (point to MH DNA Repair); copy
+                   DNA to the H drive with the rig version; record node ->
+                   DNA in the stamp; published path portable; Build pulls
+                   DNA into the shared `publish\` folder with the rig
+                   version (§3e, like textures), never into shots.
+                 - OPEN (PINNED 2026-10-19, resume next session): where in
+                   the asset folder (next to the rig in `scenes\<login>\`
+                   vs a `data\dna\` folder; decide with the textures folder
+                   question); per rig version vs per asset; missing DNA ->
+                   stop?; head/body mismatch -> warn or stop?; technical
+                   test: does `dnaFilePath` accept `$PIPE_SCRATCH`, or must
+                   Build rewrite it?
+                 - **Tested 2026-10-20: `dnaFilePath` does NOT accept
+                   `$PIPE_SCRATCH`.** mayapy, `embeddedRL4` loaded, a new
+                   `embeddedNodeRL4` with Scout's real `body.dna`: real
+                   path -> "Initializing RigLogic - Done."; the same file
+                   as `$PIPE_SCRATCH/...` -> "Failed to initialize rig
+                   logic! Check DNA path or LOD value" (same as a broken
+                   path). The node re-initialises every time the path is
+                   set. Scout's DNA files exist on this machine (head 57
+                   MB, body 4.5 MB). The user asked whether rig publish can
+                   collect DNA from off-pipe locations like textures.
+                 - SUGGESTION (not agreed): rig publish collects DNA like
+                   textures (any location, stop if missing, copy to the
+                   version's folder on H); the published file keeps the
+                   portable `$PIPE_SCRATCH/...` path in a pipe attribute on
+                   each DNA node (`pipe_dnaPath`), and the real path is
+                   filled into `dnaFilePath` by Build and by an mpPipe
+                   after-open hook (beside pipeEnv's before-open one), so
+                   it follows the drive; Build/Repair pull DNA with the
+                   rig. Suggested home: the same per-version folder as the
+                   textures (`...\<published name>\dna\`); head/body
+                   mismatch listed in the publish summary (warn only).
+                 - **Rig publish group + DNA (DECIDED + built 2026-10-20).**
+                   The user: "the names and paths of these files should
+                   probably be stored on the publish node for the rigs";
+                   on the rig now sitting one level down in shots
+                   (`scout:scout_rig_GRP|...`): "that will all work fine.
+                   As long as it's handled properly by the rigger."
+                   - `publishTool_api.export_rig_to_h_drive()` (every rig
+                     publish is now exported, never file-copied): for the
+                     export only, the rig's top nodes are parented
+                     (relative, values unchanged) under `<asset>_rig_GRP`
+                     (pipe icon, locked at the origin, channels hidden;
+                     everything inside free), then put back; a node
+                     already called that steps aside meanwhile. Working
+                     scene ends as it was, also after a failed export.
+                   - Group stamp = the model group's fields plus
+                     `pipe_textures` (node, original path, published path,
+                     files), `pipe_dna` (node, attr, file name, original
+                     path, portable `$PIPE_SCRATCH` path), `pipe_plugins`
+                     (loaded plug-ins whose node types the scene uses, with
+                     versions), `pipe_rigRulesVersion`,
+                     `pipe_metahumanFaceControls`, `pipe_faceControlsAdded`.
+                     JSON text, locked. Shot publishes recognise the rig
+                     by its `pipe_sgAssetId` like other pipe groups.
+                   - DNA (`publishTool_textures.collect_dna()`): every
+                     MetaHuman DNA node's file, from wherever it is (dump
+                     folders included); missing -> publish refused, names
+                     the node and points at MH DNA Repair. Copied into the
+                     version's folder `...\<published name>\dna\`, one
+                     full copy per version, read-only; DNA nodes are always
+                     exported. In the published file `dnaFilePath` = the
+                     publisher's real scratch path; the summary lists
+                     "node -> file" for a head/body check (warning only).
+                     These four details are Claude's suggested defaults,
+                     built after the user's go-ahead; not explicitly
+                     confirmed one by one.
+                   - Following the drive: `pipeEnv.fix_dna_paths()` reads
+                     each rig group's `pipe_dna` and sets each DNA node (in
+                     the group's namespace) to the file on this drive; run
+                     by Build after building an asset, by Repair, and by a
+                     new mpPipe **after-open** callback registered beside
+                     the before-open one (`pipeEnv.install()`; the
+                     uninstaller removes both). Build/Repair pull DNA with
+                     the textures.
+                   - Test `pipeDev/publishDev/test_rigGroup_mayapy.py`
+                     21/21 (DNA from a Downloads dump folder, missing DNA,
+                     stamp contents, working scene restored, whole-scene
+                     publish with a clashing group name, failed export,
+                     Build pulls DNA and points the node at it, film moved
+                     to another drive -> after-open hook follows); DNA node
+                     stood in by a `network` node. All other Publish/Build
+                     tests still pass.
+                   - Not yet: Build warning when a rig's `pipe_plugins`
+                     aren't on this machine (decided 2026-10-19); the "a
+                     rig update lost controls" warning; trying a real
+                     MetaHuman rig publish end to end (Scout needs its
+                     sets first).
+               - Rig publish OPEN (pinned): rigs never strip anything /
+                 stop on unknown plug-in nodes (suggestion); references in a
+                 rig at publish: refuse or bring in?; ngSkinTools removal
+                 wording for the prompt; stamp location for rigs.
+               - Already built for rigs: `cache_SET` required (§ "Rig
+                 requirement"), namespaces stripped, unassigned shaders left
+                 out, script-node check. ~~Not yet: the pipe stamp~~ (built
+                 2026-10-20: rig group + stamp, see "Rig publish group +
+                 DNA" below); still no rig clean-up. Claude's earlier suggestions (wrap in
+                 `<asset>_rig_GRP` at export, don't freeze/delete
+                 history/remove hidden on rigs, import references) are NOT
+                 agreed; set aside to start from scratch.
+               - **Rig sets: controls and render geo (2026-10-20).**
+                 - **Render geo = `cache_SET` (DECIDED).** The user: "we
+                   need a way of flagging geo that is meant to be rendered
+                   vs geo that is there to help the rig. Sets seems like a
+                   good way ... leave it up to the rigger to define." Then:
+                   "the non renderable geo doesn't need to be cached. So
+                   maybe we just need one set that is cacheable renderable
+                   geo." So the existing `cache_SET` now means **renderable
+                   geo, and only that is cached**. Rig helpers (e.g. a
+                   wing's NURBS surfaces with joints riveted to them, which
+                   drive a skinned polygon membrane; collision geo) stay
+                   out of it and aren't cached. No code change; the rule
+                   goes in the spec and the Publish message (message
+                   updated 2026-10-20).
+                 - **Control sets (DECIDED).** The user: riggers make
+                   control sets; mGear and Advanced Skeleton already have
+                   their own, "if the pipe could recognise these that
+                   would be great"; ideally separate body and face sets;
+                   riggers may add custom sets.
+                   1. A rig publish **is refused without the pipe's
+                      control sets**.
+                   2. **The rigger makes the pipe sets** by hand (Publish
+                      doesn't make them).
+                   3. **MetaHuman face controls count as face controls
+                      automatically.**
+                 - Found in real rigs (set names read from the .ma text):
+                   Scout (`scoutPrevis_rig_006`, mGear) has `rig1_sets_grp`
+                   > `rig1_controllers_grp`, `rig1_deformers_grp`,
+                   `rig1_componentsRoots_grp`, `rig1_geo_grp` (prefix =
+                   the mGear rig's name), plus a hand-made
+                   `FacialControls`. mGear has one controls set, no
+                   body/face split. KAT, wobbert, ATKS have no control
+                   sets. Advanced Skeleton not seen yet (believed
+                   `ControlSet`, `FaceControlSet`; check on a real AS rig).
+                 - **CHANGED 2026-10-20 (user): `RMIT_publishSet`.** "The
+                   rigger builds the body control cache and face sets the
+                   pipe needs and the publish tool creates the
+                   RMIT_publishSet and adds the pipe dependant sets."
+                   Built: the rigger makes `cache_SET`, `body_controls_SET`
+                   and (MetaHuman: required) `face_controls_SET` at any
+                   level; `controls_SET` is no longer required. Publish
+                   makes `RMIT_publishSet` holding those three in the
+                   published file only (an existing one in the scene has
+                   its members swapped for the export and put back).
+                   `publishTool_api._PublishSet`. The older notes below
+                   about `controls_SET` are superseded.
+                 - **Names (DECIDED):** `controls_SET` >
+                   `body_controls_SET`, `face_controls_SET`, plus any
+                   custom sets the rigger adds inside `controls_SET`
+                   ("fine as long as it doesn't clash with mgear advanced
+                   skeleton or rapid rig"). No clash: mGear's sets end in
+                   `_grp`; the Advanced Skeleton rig on Winston
+                   (`E:\maya\projects\winston_PILOT\...\winston_RIG_v020.ma`,
+                   Maya 2018) has only `Sets` > `AllSet` (804 members: every
+                   rig node, not just controls) plus hand-made `cheeks`,
+                   `mouthAll`, `mouthTop`; no `ControlSet` (so Claude's
+                   belief about AS was wrong for that version). Rapid Rig
+                   names not found; scan a real one when available.
+                 - Sets can hold sets, so "recognising" mGear/AS sets means
+                   the rigger drops e.g. `rig1_controllers_grp` into
+                   `body_controls_SET`; Publish follows nested sets.
+                 - **Which are required (DECIDED, user: "whatever keeps
+                   things simple and flexible"):** `controls_SET` and
+                   `body_controls_SET` (inside it, with controls) always;
+                   `face_controls_SET` required for a MetaHuman rig (it may
+                   be empty), optional otherwise but not empty if present.
+                 - **MetaHuman face (DECIDED):** Publish adds the MetaHuman
+                   face controls to `face_controls_SET` in the published
+                   file only (the working scene ends as it was); controls
+                   the rigger already put there stay, only missing ones are
+                   added (user chose "a"). The two `lipsPressD` controls
+                   the rigger had left out count (user: "in").
+                 - **Updates (DECIDED):** the user: "we may need to account
+                   for metahuman and mgear updates". The names Publish
+                   relies on live in `pipeDev/publishDev/rig_rules.py`
+                   (data only, `VERSION`): MetaHuman DNA node type, face GUI
+                   group `headGui_grp`, prefix `CTRL_`, and six non-control
+                   `CTRL_` nodes (`CTRL_faceGUI`, `CTRL_faceTweakersGUI`,
+                   `CTRL_faceAndEyesAimFollowHeadGUI`, `CTRL_GUIswitch`,
+                   `CTRL_rigLogic`, `CTRL_expressions`), plus known sets
+                   of other tools named in messages. If MetaHuman DNA is
+                   found but the rule finds no face controls, Publish stops
+                   and says to fill the set by hand or update the rules.
+                   Shipped with the mPipe installer (`build_zip.SCRIPTS`).
+                 - **Built 2026-10-20:** `publishTool_api.check_control_sets()`
+                   (beside `check_cache_set`, run by `publish()` before
+                   ShotGrid/playblast/H drive and when a Rigging row is
+                   added); refusal messages list the other tools' sets
+                   found in the scene and where they go. Selected-object
+                   exports now carry every set (`plan["set_uuids"]`:
+                   `cache_SET` + the control set tree). A whole-scene rig
+                   with MetaHuman controls to add is exported, not copied.
+                   Test `test_rigControlSets_mayapy.py` 24/24 (Scout-like
+                   mGear + MetaHuman layout; DNA node type swapped for
+                   `network`). Checked on the real
+                   `D:\projects\nwf_PREVIS\scenes\rig\scoutPrevis_rig_002.ma`
+                   (opened headless, not saved): rule finds 175 face
+                   controls = the 173 in `FacialControls` + the two
+                   `lipsPressD`; the refusal names `FacialControls` and
+                   `rig1_controllers_grp` and where each goes.
+                 - Noticed: both DNA nodes in that rig are called
+                   `body_rl4Embedded` / `body_rl4Embedded1` though one
+                   points at head.dna; and both DNA paths are absolute into
+                   an old project folder (pinned DNA question above).
+                 - Not yet: recording rules version / face-control count in
+                   the rig's group stamp, and the "a rig update lost
+                   controls" warning (both wait for the rig group).
              - **Groups of models (user, 2026-10-19):** "if a model
                contains more than one individual model the student can
                select a group and the publish tool will perform a full clean
@@ -1726,6 +2230,169 @@ The tools are developed side by side:
 - **Per-department detail:** what exactly rigging, modelling and FX pull and
   publish (same workflow as animation, details not yet written up).
 
+### 4a. Rig reference paths, scratch wipes and the edit (2026-10-20)
+
+Discussed 2026-10-20 and parked ("lets document this issue so we can come
+back to it"); later that day the user chose to build option C for rigs
+(below). The wipe and edit items are still parked.
+
+**Facts from the user (DECIDED 2026-10-20):**
+- Student scratch drives at RMIT are **wiped every 3–4 weeks**, "for any
+  reason the IT department can think of" (unannounced). Replaces the
+  "every couple of weeks" note in §3h.
+- **Maya prefs survive the wipe.** Only work on scratch is lost, so the
+  mpPipe `userSetup.py` block / `$PIPE_SCRATCH` and mpToolSet stay.
+- **Students can publish any time** (not only after approval). The user:
+  "as long as they can rebuild from the h drive (and have been publishing
+  regularly) then this seems ok". So "publish at the end of every session"
+  is the WIP backup; no separate "back up to H" action is needed. Closes
+  the WIP backup item in §6.
+- **No per-shot version pinning (user preference).** By default every shot
+  follows the current rig. Reverses the per-shot update in §3i "Each
+  version is its own file" (2026-10-13), not yet changed in code.
+- **Shared scratch `publish\` folder stays** (user: "happy with it").
+- **Rigs not referenced live from the H drive**, for now ("I might change
+  my mind once we start testing"). The §4 H-drive referencing test stays
+  open.
+
+**The problem (user, 2026-10-20):** a reference path that changes on every
+rig update "tends to break maya's referencing system". The user has worked
+around this before with one fixed-name rig file that gets saved over. The
+current build changes the path every update (`scout_rig_v002.mb` ->
+`..._v003.mb`) and relies on Replace Reference. That keeps keys when used
+correctly, but breaks when a student references the new version instead
+(new namespace), clears an old version before repointing, or the format
+flips `.ma`/`.mb`.
+
+**Options compared:**
+
+| Option | Path never changes | Default update | Roll back one shot | Disk |
+|---|---|---|---|---|
+| A. One fixed-name file in shared `publish\`, saved over | yes | every shot | no, a rollback hits every shot (user's objection) | 1 copy |
+| B. Fixed-name copy inside each shot | yes | every shot | yes | 1 copy per shot |
+| C. Fixed name per shot, **hardlinked** to a version file in `publish\` | yes | every shot | yes | 1 copy per version |
+| Current build: version files + Replace Reference | no | per shot | yes | 1 copy per version |
+
+**DECIDED 2026-10-20 (user): "we are going to build option C for the rigs
+and test it."** Built the same day, rigs only (`LINKED_CODES = ("rig",)` in
+`pipeDev/buildDev/buildTool_api.py`); models and cameras unchanged:
+- `pull()` copies the version into `publish\` as before, then
+  `link_version()` points the shot's `<asset>_rig.<ext>` at it (hardlink,
+  else a read-only copy). Manifest entry gains `link` and `hardlink`.
+- `build_asset()` references the fixed name. A version change in a scene
+  that already has it is a **reload**, not a Replace Reference. Scenes
+  from before (referencing a `publish\` version file directly) are
+  repointed to the fixed name once.
+- After a rig update or rollback, Build Shot asks **"Switch … in your
+  other shots too?"** with *Every shot* as the default button and *Only
+  this shot* for a rollback (`other_shots_using()`, `update_shots()`).
+- Windows keeps the read-only flag per piece of data, not per name, so
+  removing a link unlocks the version too; Build locks `publish\` again
+  afterwards (`_lock_publish_folder()`), also after My Scratch removals.
+- Repair relinks a missing rig link from the shot's manifest. The Build
+  table shows "Rig file missing / out of date: Build to fix" and "Up to
+  date (full copy, not linked)". Building turns a copy back into a link
+  when the drive is NTFS.
+- Test: `pipeDev/buildDev/test_rigLink_mayapy.py` 35/35 (path never
+  changes on update/rollback, keys kept, one copy of the data, every shot
+  follows, one-shot rollback, Maya can't save over the link, cleared
+  version still opens, Repair, copied shot folder relinked, fallback
+  copy). Existing `test_buildTool_mayapy.py` 76/76 and
+  `test_blankSceneLatest_mayapy.py` 2/2 still pass.
+- Checked on this machine: hardlinks work on D: and G: (T7, NTFS), fail on
+  F: (exFAT) with WinError 1, which triggers the fallback.
+- Still to test by hand: in Maya with the UI on the T7 (incl. the "other
+  shots" question), and with an RMIT login on a lab machine. Not yet in
+  the mpPipe staff zip (rebuild with `pipelineInstaller/build_zip.py`).
+
+**Original suggestion: C with automatic fallback to B.**
+```
+publish\assets\character\scout\scenes\scout_rig_v003.mb                 <- real file, one per version
+sequences\EAP_010\EAP_010_010\assets\character\scout\rig\scout_rig.mb  <- hardlink to v003
+```
+- Maya references the shot's fixed name (`$PIPE_SCRATCH/.../rig/scout_rig.mb`).
+  A hardlink is a second name for the same data, so ten shots on v003 use
+  the disk of one v003.
+- **Update** (default, all shots): Build deletes each shot's name and
+  re-links it to v004 (`os.link`). Path unchanged, no Replace Reference, no
+  namespace change. **Roll back one shot:** re-link only that shot.
+- Which version each link points at: the manifest, verified with
+  `os.stat().st_ino` against the files in `publish\`.
+- Hardlinks need NTFS on the same drive and no admin rights (symlinks need
+  admin/Developer Mode, so not those). Here: D: and G: (T7) are NTFS, F:
+  (One Touch) is exFAT. Not reliable on network shares or Dropbox/OneDrive.
+- **Fallback:** if linking fails or the drive isn't NTFS, Build copies
+  instead (B) and says so. Shot scenes see the same path either way, so a
+  change in RMIT's setup never needs scene files fixed. It only costs disk.
+- Quirks: links look like normal full-size files in Explorer; copying a
+  shot folder elsewhere turns the link into a real copy (Update no longer
+  reaches it until Build re-links); linked files should be read-only so a
+  save through the link can't change the shared version.
+- Build would need a link check/repair view in plain language ("shot 020:
+  linked to v003", "shot 030: plain copy, Repair?"), so nobody has to use
+  `fsutil hardlink list`.
+- Rig publishes should keep one format (`.ma` or `.mb`), or the fixed name
+  changes.
+- Trade-off of every fixed-name option: a bad rig update reaches all shots
+  at once. Softened by rollback, the "don't rename controls" rule (§3i),
+  and maybe a rig Publish check that warns when controls disappear.
+- **Test on the T7 before deciding:** two shots hardlinked to one rig,
+  Update, roll back one shot, Maya save over a (read-only) link, copy a
+  shot folder, delete a version from `publish\`, and try it with an RMIT
+  login.
+- OPEN: models, cameras and other published assets fixed-name too, or rigs
+  only?
+
+**What the wipe means for the design (OPEN):**
+- **Rig version record must live on H.** `build_manifest.json` is on
+  scratch and gets wiped. With fixed names the shot's reference path no
+  longer says the version, so without a record a wipe silently resets
+  every shot to the latest rig (and loses a one-shot rollback). The §3i
+  suggestion of a version record saved with each shot publish on H
+  (`EAP_010_010_..._anim_v004.json`) + Build's "Restore versions from…"
+  becomes required if C is adopted.
+- **One "restore my scratch" action in Build:** skeleton, `publish\`,
+  links and shots back from H after a wipe; run Repair before students
+  open shots, so nobody removes "missing" references in a panic.
+- **Class-wide re-pull after each wipe:** slow, especially MetaHuman rigs.
+  Time it with a class; useful evidence for IT.
+- Hardlinks are recreated on restore like files, so the wipe hits A, B, C
+  and the current build equally.
+
+**The edit (OPEN, SUGGESTION not agreed):** the one thing that doesn't
+rebuild from H. Two halves:
+- **Shot movies** (`premiere\shotgridMovs\`): rebuildable. All on
+  ShotGrid, named by shot code, so a "Restore edit media" re-downloads the
+  latest Version per shot under the same names (the A3 editorial pull as a
+  button).
+- **The edit project** (`.prproj` / Resolve project): lost today.
+  - The user: EDLs will be produced for ShotGrid. An EDL keeps the
+    **picture cut** (shot order, in/out, simple transitions, shot-code reel
+    names) but not extra video tracks, music/SFX/voice, the mix, titles,
+    effects or colour. Premiere usually imports EDL clips offline (relink);
+    Resolve matches by name better.
+  - **Middle option (user: "sounds good"):** keep the EDL as the official
+    record for ShotGrid, and copy the project file (`.prproj` or exported
+    Resolve `.drp`) to H each time an EDL is produced, e.g.
+    `premiere\cuts\<login>\NWF_SHF_s1234567_edit_v004.prproj` + the `.edl`.
+  - **Where it lives (suggestion):** a small desktop tool beside
+    `pipeDev/desktopDev/h_sync.py` (plain Python, Windows + Mac), not Maya
+    (editors may never open it) and not a Premiere panel (CEP→UXP churn,
+    lab install, Resolve would need a second plugin). Student exports the
+    EDL by hand into `premiere\edl\`, saves the project, runs **Publish
+    Edit** (version + copy both to H, EDL to ShotGrid as a Cut). **Restore
+    Edit** re-downloads movies and pulls the project + EDL back.
+  - Launcher could run it with **mayapy** (on every lab machine, ships
+    `shotgun_api3` via mpToolSet), so IT installs nothing. Untested.
+  - Resolve keeps projects in a database (likely in the profile, so may
+    survive like Maya prefs; check at RMIT). Whether the free version can
+    script the `.drp`/EDL export is untested; fallback is a manual export.
+  - OPEN: music/SFX/voice/titles from outside ShotGrid need a home on H or
+    they come back offline (ties to "Non-software material" above); one
+    editor per group or everyone their own cut (`<login>` folders or one
+    shared); Premiere, Resolve or both first; how often EDLs are made and
+    whether they're saved on H as well as ShotGrid.
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:
@@ -1756,7 +2423,8 @@ nothing in the repo versions or protects `.ma` scene files themselves.
 - **Publish permission tied to the ShotGrid Task assignee**, so two people
   can't both publish the same asset/shot.
 - **Stale-version check** on pull or scene open ("newer version available").
-- **WIP backup:** work in progress lives only on scratch until approval
+- **WIP backup:** (answered 2026-10-20, §4a: students can publish any time,
+  so regular publishing is the backup.) Work in progress lives only on scratch until approval
   (possibly weeks). If scratch drives aren't reliable, consider a
   "back up to server" action that isn't a publish. The user's view so far is
   that the sandbox is disposable by design.
