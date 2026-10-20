@@ -363,12 +363,80 @@ def _export(nodes, path):
     api._lock(path)
 
 
-def camera_stamp(plan, scene_path, planes=()):
+# The shot's frame range in the edit (user, 2026-10-20: "the publish group
+# ... should also hold frame range data for the shot from the latest edl on
+# shotgrid"). An EDL imported to ShotGrid is a Cut with one CutItem per
+# shot; the newest Cut holding the shot wins. Without one, the Shot's own
+# cut fields; without those, nothing (a warning, never a refusal).
+EDIT_FIELDS = (("cutIn", "cut_item_in"), ("cutOut", "cut_item_out"),
+               ("cutDuration", "cut_item_duration"), ("editIn", "edit_in"),
+               ("editOut", "edit_out"), ("cutOrder", "cut_order"))
+SHOT_EDIT_FIELDS = (("cutIn", "sg_cut_in"), ("cutOut", "sg_cut_out"),
+                    ("cutDuration", "sg_cut_duration"), ("cutOrder", "sg_cut_order"),
+                    ("headIn", "sg_head_in"), ("tailOut", "sg_tail_out"))
+EDIT_NONE, EDIT_CUT, EDIT_SHOT = "none", "cut", "shot"
+
+
+def shot_edit_range(sg, shot):
+    """{"source", "cut", "cutId", "cutDate", ...frame fields} for a ShotGrid
+    Shot: frame fields from the newest Cut holding it (head/tail from the
+    Shot), else from the Shot's cut fields. Only values ShotGrid has."""
+    shot_data = sg.find_one("Shot", [["id", "is", shot["id"]]],
+                            [f for _, f in SHOT_EDIT_FIELDS]) or {}
+    items = sg.find("CutItem", [["shot", "is", {"type": "Shot", "id": shot["id"]}]],
+                    [f for _, f in EDIT_FIELDS] + ["cut", "cut.Cut.code",
+                                                   "cut.Cut.created_at"])
+    items = [i for i in items if i.get("cut") and i.get("cut.Cut.created_at")]
+    found = {"source": EDIT_NONE, "cut": ""}
+    if items:
+        item = max(items, key=lambda i: i["cut.Cut.created_at"])
+        found.update(source=EDIT_CUT, cut=item.get("cut.Cut.code") or "",
+                     cutId=item["cut"]["id"],
+                     cutDate=item["cut.Cut.created_at"].isoformat(timespec="seconds"))
+        fields = EDIT_FIELDS
+        data = item
+        for name, field in SHOT_EDIT_FIELDS:
+            if name in ("headIn", "tailOut") and shot_data.get(field) is not None:
+                found[name] = shot_data[field]
+    elif shot_data.get("sg_cut_in") is not None or shot_data.get("sg_cut_out") is not None:
+        found["source"] = EDIT_SHOT
+        fields, data = SHOT_EDIT_FIELDS, shot_data
+    else:
+        return found
+    for name, field in fields:
+        if data.get(field) is not None:
+            found[name] = int(data[field])
+    return found
+
+
+def edit_range_warning(edit, start, end):
+    """Say so when there's no edit range, or the timeline's length differs
+    from the shot's length in the edit (lengths only: the edit counts from
+    its own frame numbers)."""
+    if edit.get("source", EDIT_NONE) == EDIT_NONE:
+        return ("ShotGrid has no edit range for this shot yet (no EDL/Cut with it), so "
+                "none was recorded on the camera.")
+    length = end - start + 1
+    if edit.get("cutDuration") and edit["cutDuration"] != length:
+        return ("The timeline is %d frames (%d-%d) but the shot is %d frames in the edit "
+                "(%s). Check the frame range." % (length, start, end, edit["cutDuration"],
+                                                  edit.get("cut") or "ShotGrid shot fields"))
+    return None
+
+
+def camera_stamp(plan, scene_path, planes=(), start=None, end=None):
     """The pipe stamp for a published camera, on its <shot>_cam_GRP like the
     model publish's group (spec item 6a). Records which stage published it
-    (user, 2026-10-19: a camera published from Animation must say so) and
-    the image sequences the camera uses (2026-10-20)."""
+    (user, 2026-10-19: a camera published from Animation must say so), the
+    image sequences the camera uses, the baked frame range and the shot's
+    range in the latest edit on ShotGrid (2026-10-20)."""
     from datetime import datetime
+    edit = plan.get("edit_range") or {"source": EDIT_NONE, "cut": ""}
+    frames = [("frameStart", int(start)), ("frameEnd", int(end))] if start is not None else []
+    edit_stamp = [("editSource", edit["source"]), ("editCut", edit.get("cut") or "")]
+    edit_stamp += [("edit" + k[0].upper() + k[1:], edit[k])
+                   for k in ("cutId", "cutDate") if k in edit]
+    edit_stamp += [(name, edit[name]) for name, _ in SHOT_EDIT_FIELDS if name in edit]
     return [
         ("sgShotId", (plan.get("sg_shot") or {}).get("id") or 0),
         ("shot", plan["shot"]),
@@ -380,7 +448,7 @@ def camera_stamp(plan, scene_path, planes=()):
         ("published", datetime.now().isoformat(timespec="seconds")),
         ("sourceScene", os.path.normpath(scene_path)),
         ("imagePlanes", json.dumps(list(planes))),
-    ]
+    ] + frames + edit_stamp
 
 
 def _lock_transform(node):
@@ -437,7 +505,7 @@ def export_camera(camera, plan, start, end, scene_path):
             json.dump(mapping, f, indent=2, sort_keys=True)
         api._lock(plan["map_dest"])
         cmds.delete(list(curve_attrs))  # the camera file carries no keys
-        group = cmds.group(empty=True, world=True, name=group_name)
+        group = api.make_pipe_group(group_name)
         made = [group, pub_tr, data]
         pub_tr = cmds.parent(pub_tr, group)[0]
         data = cmds.parent(data, group)[0]
@@ -445,7 +513,7 @@ def export_camera(camera, plan, start, end, scene_path):
         for node in (pub_tr, data):
             _lock_transform(node)
         api.finish_pipe_group(group)    # icon, locked at the origin, channels hidden
-        api._stamp(group, camera_stamp(plan, scene_path, planes))
+        api._stamp(group, camera_stamp(plan, scene_path, planes, start, end))
         _export([group], plan["dest"])
     finally:
         existing = [n for n in made if cmds.objExists(n)]
@@ -506,10 +574,17 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     api.check_rv()
     start = int(cmds.playbackOptions(query=True, minTime=True))
     end = int(cmds.playbackOptions(query=True, maxTime=True))
+    try:
+        plan["edit_range"] = shot_edit_range(api._shotgrid().get_connection(), plan["sg_shot"])
+    except Exception as e:      # the range is a record, not a reason to stop
+        plan["edit_range"] = {"source": EDIT_NONE, "cut": "", "error": str(e)}
+    edit_warning = edit_range_warning(plan["edit_range"], start, end)
     plan["frames_folder"], files = api.playblast_frames(plan, frame_count, camera=camera)
 
     try:
         plan["warnings"] = export_camera(camera, plan, start, end, scene_path)
+        if edit_warning:
+            plan["warnings"] = list(plan["warnings"] or []) + [edit_warning]
     except Exception:
         # Nothing was published: don't leave this attempt's frames on scratch.
         api.remove_frames(plan["frames_folder"], plan["shot_project"])

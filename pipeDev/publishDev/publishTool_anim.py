@@ -106,6 +106,31 @@ def time_curves(nodes):
     return found
 
 
+# Lights made in the shot (user, 2026-10-20: "publish lights as part of the
+# animation publish process if necessary ... sometimes when it's important
+# for shot composition"). Each is written as its own small .ma (the light,
+# its settings and keys) for lighting to bring in; never cached, since an
+# Alembic can't carry a light.
+LIGHT_KIND = "light"
+GEOMETRY_TYPES = ("mesh", "nurbsSurface", "nurbsCurve", "subdiv")
+
+
+def _is_light_shape(shape):
+    if cmds.ls(shape, type="light"):        # Maya's own lights
+        return True
+    # Plug-in lights (Arnold's aiAreaLight, aiSkyDomeLight...) say so in
+    # their classification.
+    return any(part == "light" for c in cmds.getClassification(cmds.nodeType(shape)) or []
+               for part in re.split(r"[/:]", c))
+
+
+def is_light_item(nodes):
+    """True if nodes hold lights (Maya's or Arnold's) and no geometry."""
+    shapes = cmds.ls(nodes, shapes=True, long=True) or []
+    return (any(_is_light_shape(s) for s in shapes)
+            and not cmds.ls(shapes, type=GEOMETRY_TYPES))
+
+
 def classify(objects):
     """[item] for the selected objects, one per thing being published:
     {"name", "kind", "root", "nodes", "stamp", "animated", "label"}.
@@ -144,6 +169,8 @@ def classify(objects):
             continue
         roots.add(root)
         nodes = [root] + (cmds.listRelatives(root, allDescendents=True, fullPath=True) or [])
+        if kind == "shot" and is_light_item(nodes):
+            kind = LIGHT_KIND
         animated = bool(time_curves(nodes))
         items.append({"name": _clean(name), "kind": kind, "root": root, "nodes": nodes,
                       "stamp": stamp, "animated": animated})
@@ -154,6 +181,7 @@ def classify(objects):
                                % (item["name"], seen[item["name"]], item["root"]))
         seen[item["name"]] = item["root"]
         what = ("made in the shot" if item["kind"] == "shot" else
+                "light, made in the shot" if item["kind"] == LIGHT_KIND else
                 "%s v%03d" % (item["kind"], item["stamp"].get("version") or 0))
         item["label"] = "%s (%s, %s)" % (item["name"], what,
                                          "keyed" if item["animated"] else "no keys")
@@ -196,6 +224,8 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
             "cache": os.path.join(plan["cache_folder"], "%s_%s_%s_v%03d.abc"
                                   % (shot, item["name"], code, version)),
         }
+        if item["kind"] == LIGHT_KIND:
+            plan["item_files"][item["name"]]["light"] = os.path.join(folder, base + "_light.ma")
     return plan
 
 
@@ -295,6 +325,16 @@ def export_cache(item, path, start, end):
     api._lock(path)
 
 
+def export_light(item, path):
+    """The light itself: its transform, shape, settings and keys (a group
+    of lights: the group and everything in it)."""
+    cmds.select(item["root"], replace=True)
+    cmds.file(path, exportSelected=True, type="mayaAscii", force=True,
+              constructionHistory=True, channels=True, constraints=True,
+              expressions=True, shader=False, preserveReferences=False)
+    api._lock(path)
+
+
 def write_anim(items, plan, start, end, scene_path):
     """Everything for the H drive, all or nothing: if any file fails, the
     ones already written are removed again. Returns the files written."""
@@ -303,7 +343,9 @@ def write_anim(items, plan, start, end, scene_path):
         files = plan["item_files"][item["name"]]
         if item["animated"]:
             targets += [files["keys"], files["map"]]
-        if plan["stage"] == FINAL:
+        if item["kind"] == LIGHT_KIND:
+            targets.append(files["light"])
+        elif plan["stage"] == FINAL:
             targets.append(files["cache"])
     for path in targets:
         if os.path.exists(path):
@@ -324,7 +366,10 @@ def write_anim(items, plan, start, end, scene_path):
             if item["animated"]:
                 export_keys(item, files, plan, start, end, scene_path)
                 written += [files["keys"], files["map"]]
-            if plan["stage"] == FINAL:
+            if item["kind"] == LIGHT_KIND:
+                export_light(item, files["light"])
+                written.append(files["light"])
+            elif plan["stage"] == FINAL:
                 export_cache(item, files["cache"], start, end)
                 written.append(files["cache"])
     except Exception:

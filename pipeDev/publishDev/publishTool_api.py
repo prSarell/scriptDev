@@ -893,7 +893,7 @@ class _RigGroup(object):
             node = cmds.ls(uuid, long=True)[0]
             parent = cmds.listRelatives(node, parent=True, fullPath=True)
             self.roots.append((uuid, cmds.ls(parent[0], uuid=True)[0] if parent else None))
-        group = cmds.group(empty=True, world=True, name=name)
+        group = make_pipe_group(name)
         self.group = cmds.ls(group, long=True)[0]
         try:
             cmds.parent(cmds.ls(roots, long=True), self.group, relative=True)
@@ -918,7 +918,7 @@ class _RigGroup(object):
             elif current:
                 cmds.parent(node[0], world=True, relative=True)
         if group_uuid and cmds.ls(group_uuid):
-            cmds.delete(cmds.ls(group_uuid))
+            delete_pipe_group(cmds.ls(group_uuid)[0])   # the rig itself stays
         if self.aside and cmds.ls(self.aside):
             cmds.rename(cmds.ls(self.aside)[0], pipe_group_name(self.plan["asset"], RIG_CODE))
 
@@ -1056,7 +1056,8 @@ ID_ATTR = PIPE_ATTR_PREFIX + "sgAssetId"
 # Outliner icon on every pipe group, so it reads as "from the pipe" (user,
 # 2026-10-20). Just the file name: Maya finds it in the prefs icons folder
 # the pipe installer copies to (shelfDev/mpPipe/icons). Missing icon = the
-# normal group icon, nothing breaks.
+# normal container icon, nothing breaks. Only shown on a container, hence
+# make_pipe_group.
 PIPE_ICON = "iconPipeOutliner.png"
 GROUP_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY",
                   "rotateZ", "scaleX", "scaleY", "scaleZ", "visibility")
@@ -1064,6 +1065,27 @@ GROUP_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY"
 
 def pipe_group_name(asset, code):
     return "%s_%s_GRP" % (asset, code)
+
+
+def make_pipe_group(name):
+    """An empty pipe group at the world root. A dagContainer (Maya's own
+    "asset" node, no plug-in needed) rather than a plain group, because the
+    Outliner only shows a custom iconName on a container (tested
+    2026-10-20). It moves and parents like a group; children parented
+    under it become its members, and stop being when parented out."""
+    return cmds.container(type="dagContainer", name=name)
+
+
+def delete_pipe_group(group):
+    """Delete a pipe group but never its members: anything still inside is
+    taken out of the container first (cmds.delete on a container would
+    take its members with it)."""
+    members = []
+    if cmds.nodeType(group) == "dagContainer":
+        members = cmds.container(group, query=True, nodeList=True) or []
+    if members:
+        cmds.container(group, edit=True, removeNode=members)
+    cmds.delete(group)
 
 
 def finish_pipe_group(group):
@@ -1285,7 +1307,7 @@ def export_model_to_h_drive(objects, plan, scene_path):
                     cmds.delete(leftovers)     # e.g. "Orig" shapes from deformers
                 cmds.makeIdentity(copy_nodes, apply=True, translate=True, rotate=True,
                                   scale=True, normal=0, preserveNormals=True)
-                group = cmds.group(empty=True, world=True, name=group_name)
+                group = make_pipe_group(group_name)
                 made.append(cmds.ls(group, uuid=True)[0])
                 cmds.parent(cmds.ls(copies, long=True), group)
                 _stamp(group, info)
@@ -1434,6 +1456,10 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
         files = sorted(glob.glob(os.path.join(folder, "*.jpg")))
         if not files:
             raise PublishError("The playblast didn't produce any frames.")
+        try:
+            burn_in(files, burn_in_text(plan, camera))
+        except Exception as e:      # a movie without burn-ins beats no publish
+            cmds.warning("Publish: burn-ins not drawn: %s" % e)
     except Exception:
         # e.g. cancelled half way: no frames left on scratch.
         remove_frames(folder, plan["asset_project"])
@@ -1445,6 +1471,77 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
             cmds.isolateSelect(panel, state=False)
         cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
     return folder, files
+
+
+# Burn-ins on publish movies (user, 2026-10-20: "published shotsubs are
+# missing burn ins"). Same layout as shotSub's: frame rate top left, name
+# top middle (here the published name, so a reviewer knows which publish),
+# frame number top right, focal length bottom left, artist bottom right.
+
+def burn_in_text(plan, camera=None):
+    """{corner: text} for a publish's burn-ins. Frame numbers are per file."""
+    name = os.path.splitext(os.path.basename(plan.get("dest") or ""))[0]
+    login = plan.get("login") or ""
+    artist = artist_name(login) if login else ""
+    focal = ""
+    shapes = []
+    if camera:
+        shapes = cmds.listRelatives(camera, shapes=True, type="camera") or []
+    if shapes:
+        focal = "%.0fmm" % cmds.getAttr(shapes[0] + ".focalLength")
+    return {"top_left": "%g fps" % _scene_fps(),
+            "top_middle": name,
+            "bottom_left": focal,
+            "bottom_right": ("%s (%s)" % (artist, login)) if artist else login}
+
+
+def burn_in(files, text):
+    """Draw text (from burn_in_text) onto each JPEG, plus its frame number
+    top right, white with a drop shadow, as shotSub does. Needs Qt's
+    application (there in Maya; headless callers make one)."""
+    from PySide6 import QtCore, QtGui
+    if QtGui.QGuiApplication.instance() is None:
+        raise RuntimeError("no Qt application (headless Maya)")
+    for path in files:
+        image = QtGui.QImage(path)
+        if image.isNull():
+            continue
+        width, height = image.width(), image.height()
+        margin = max(36, int(width * 0.04))
+        band = max(34, int(height * 0.055))
+        inset = max(28, int(height * 0.04))
+        top, bottom = inset, height - inset - band
+        frame = re.search(r"\.(\d+)\.jpg$", path, re.IGNORECASE)
+        quarter, half = int(width * 0.25), int(width * 0.5)
+        middle = QtCore.Qt.AlignVCenter
+        left, centre, right = (int(QtCore.Qt.AlignLeft | middle), int(QtCore.Qt.AlignHCenter | middle),
+                               int(QtCore.Qt.AlignRight | middle))
+        blocks = [
+            (QtCore.QRect(margin, top, quarter - margin, band), text.get("top_left"), left),
+            (QtCore.QRect(quarter, top, half, band), text.get("top_middle"), centre),
+            (QtCore.QRect(width - quarter, top, quarter - margin, band),
+             frame.group(1) if frame else "", right),
+            (QtCore.QRect(margin, bottom, quarter - margin, band), text.get("bottom_left"), left),
+            # Doesn't clip: "Name (login)" is often wider than a quarter.
+            (QtCore.QRect(width - quarter, bottom, quarter - margin, band),
+             text.get("bottom_right"),
+             int(QtCore.Qt.AlignRight | middle | QtCore.Qt.TextDontClip)),
+        ]
+        painter = QtGui.QPainter(image)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
+        font = QtGui.QFont("Arial", max(12, int(height * 0.022)))
+        font.setBold(True)
+        painter.setFont(font)
+        for rect, words, align in blocks:
+            if not words:
+                continue
+            painter.setPen(QtGui.QColor(0, 0, 0, 180))
+            painter.drawText(rect.translated(2, 2), align, words)
+            painter.setPen(QtGui.QColor(255, 255, 255, 230))
+            painter.drawText(rect, align, words)
+        painter.end()
+        image.save(path, "JPG", 95)
 
 
 # ---------------------------------------------------------------------------

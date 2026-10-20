@@ -112,6 +112,7 @@ check("group stamp: image sequence location and name",
       planes[0]["folder"] == "D:/NWF_SHF/plates/EAP_010_010" and planes[0]["file"] == "plate.####.png"
       and planes[0]["useFrameExtension"] and planes[0]["frameOffset"] == 1000)
 check("group stamp locked", cmds.getAttr(grp + ".pipe_version", lock=True))
+check("group is a dagContainer", cmds.nodeType(grp) == "dagContainer")
 check("group: pipe icon, locked at the origin, channels hidden",
       cmds.getAttr(grp + ".iconName") == "iconPipeOutliner.png"
       and all(cmds.getAttr("%s.%s" % (grp, a), lock=True) and not cmds.getAttr("%s.%s" % (grp, a), channelBox=True)

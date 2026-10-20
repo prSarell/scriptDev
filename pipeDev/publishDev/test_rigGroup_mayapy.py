@@ -133,6 +133,9 @@ check("published file: rig root under scout_rig_GRP, its values kept",
       cmds.objExists(G + "|scout_rig") and abs(cmds.getAttr(G + "|scout_rig.ty") - 2) < 1e-6)
 check("published file: RMIT_publishSet made by Publish, holding cache_SET + body_controls_SET",
       sorted(cmds.sets(api.PUBLISH_SET, query=True) or []) == ["body_controls_SET", "cache_SET"])
+check("group is a dagContainer, the rig root a member of it",
+      cmds.nodeType(G) == "dagContainer"
+      and cmds.container(query=True, findContainer=[G + "|scout_rig"]) == "scout_rig_GRP")
 check("group: pipe icon, locked at the origin",
       cmds.getAttr(G + ".iconName") == api.PIPE_ICON and cmds.getAttr(G + ".tx", lock=True))
 stamp = dict((a, cmds.getAttr("%s.%s" % (G, a))) for a in cmds.listAttr(G, userDefined=True))

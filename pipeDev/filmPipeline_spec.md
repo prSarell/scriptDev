@@ -1417,6 +1417,26 @@ The tools are developed side by side:
               pipeline, is neither, so Publish warns and names it.
           - OPEN → DECIDED 2026-10-15, see "Shot (animation) publish v0"
             below.
+        - **Lights in shot publishes (built 2026-10-20).** The user: "we
+          need to be able to publish lights as part of the animation
+          publish process if necessary - this won't be a usual thing but
+          will happen sometimes when it's important for shot composition."
+          A light (or group of lights, Maya's or Arnold's) made in the shot
+          is a "light" item: written as `<shot>_<login>_<item>_<code>_v###
+          _light.ma` (light, settings, keys) beside its keys, never cached
+          (Alembic can't carry a light), even on Final. A group mixing
+          lights and geometry stays "made in the shot" (cached; its lights
+          only in the full file). Lights inside a referenced asset come
+          with that asset. Build doesn't bring lights back yet (later,
+          with Lighting). `publishTool_anim.is_light_item`; test
+          `test_animLights_mayapy`.
+        - **Publish movie burn-ins (built 2026-10-20).** The user:
+          "published shotsubs are missing burn ins". The publish's own
+          playblast had none; now shotSub's layout: fps top left, the
+          published name top middle, frame top right, focal length bottom
+          left (through a camera), "Name (login)" bottom right.
+          `publishTool_api.burn_in`; skipped with a warning without a Qt
+          app (headless). Test `test_burnIn_mayapy`.
         - **Shot (animation) publish v0 (DECIDED 2026-10-15).** The user
           confirmed the proposed defaults from 2026-10-13 and answered the
           remaining questions.
@@ -1479,6 +1499,24 @@ The tools are developed side by side:
                 Build makes it the live `camera1` at the top of the scene;~~
                 (superseded 2026-10-20: the stamp is on the camera group, see
                 "Camera group" below) the keys map also records `published_from`.
+              - **Camera group: edit frame range (built 2026-10-20).** The
+                user: "the publish group we just created ... should also
+                hold frame range data for the shot from the latest edl on
+                shotgrid." An EDL on ShotGrid is a Cut with CutItems; the
+                newest Cut (by date) holding the shot gives `cutIn`,
+                `cutOut`, `cutDuration`, `editIn`, `editOut`, `cutOrder`,
+                head/tail from the Shot (`sg_head_in`, `sg_tail_out`), plus
+                `pipe_editSource` (cut/shot/none), `pipe_editCut`,
+                `pipe_editCutId`, `pipe_editCutDate`. No Cut: the Shot's
+                `sg_cut_*` fields (source "shot"). Nothing: source "none"
+                and a warning, never a refusal. The baked range is stamped
+                too (`pipe_frameStart`/`pipe_frameEnd`). A warning when the
+                timeline's length differs from `cutDuration` (lengths only:
+                EDL frames count from 0, Maya shots may start at 1001; how
+                they map is OPEN). On 2026-10-20 ShotGrid had three SEQ010
+                Cuts; EAP_010_010 is in none (EAP_010_140 is).
+                `publishTool_camera.shot_edit_range`; test
+                `test_cameraEditRange_mayapy`.
               - **Camera group (DECIDED + built 2026-10-20).** The user:
                 (1) cameras parented under a publish group with the details
                 the model publish has; (2) the camera's keyframes and any
@@ -1672,14 +1710,26 @@ The tools are developed side by side:
                    via it's own transforms or connected to a locator in
                    the scene via a parent constraint." (Claude first
                    misread this as adding a place control; not built.)
-                   - **Icon PARKED 2026-10-20 (user: "lets not worry about
-                     the icon on the group for now"):** Scout rig v003's
-                     group has `.icn` set, the PNG is valid and on
-                     XBMLANGPATH, yet the Outliner shows no icon in the
-                     shot. Untested: whether the Outliner honours
-                     `iconName` on a plain transform at all, or only fails
-                     for referenced nodes (test snippet: two fresh groups,
-                     `sphere.png` vs `iconPipeOutliner.png`).
+                   - **Icon: pipe groups are now `dagContainer`s
+                     (2026-10-20).** Tested in Maya by the user: the
+                     Outliner ignores `iconName` on a plain group (even
+                     Maya's own `sphere.png`) but shows it on a
+                     `dagContainer` ("I can see the rmit logo in the
+                     outliner!"). A container is Maya's own node (no
+                     plug-in, unlike a custom MPxNode/MPxTransform type,
+                     which the user asked about: rejected because every
+                     published file would need the plug-in). It inherits
+                     transform, so moving, parenting, referencing, keying
+                     children, Alembic and every pipe check work unchanged
+                     (mayapy tests). Children parented under it become
+                     members and stop being when parented out;
+                     `delete_pipe_group` clears members before deleting
+                     so the rig publish never deletes the working rig.
+                     Clicking a child selects the child while Maya's
+                     container-centric selection pref is off (the
+                     default). Adds one `hyperLayout` node per file.
+                     `publishTool_api.make_pipe_group`. Older group-style
+                     publishes keep working.
                    - `publishTool_api.finish_pipe_group()`: `iconName` =
                      `iconPipeOutliner.png` (file name only, found in the
                      prefs icons folder; missing icon = normal group

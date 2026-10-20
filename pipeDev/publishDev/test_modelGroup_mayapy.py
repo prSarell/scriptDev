@@ -47,6 +47,7 @@ check("stamp locked", cmds.getAttr("backpack_model_GRP.pipe_sgAssetId", lock=Tru
 G = "backpack_model_GRP"
 chans = [G + "." + a for a in api.GROUP_CHANNELS]
 check("group shows the pipe icon in the Outliner", cmds.getAttr(G + ".iconName") == "iconPipeOutliner.png")
+check("group is a dagContainer (the Outliner only shows iconName on one)", cmds.nodeType(G) == "dagContainer")
 check("group locked at the origin, channels hidden",
       all(cmds.getAttr(c, lock=True) and not cmds.getAttr(c, keyable=True)
           and not cmds.getAttr(c, channelBox=True) for c in chans)
