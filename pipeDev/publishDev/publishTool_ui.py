@@ -20,6 +20,8 @@ Dev launch (Script Editor, Python tab):
 import sys
 import os
 import re
+import time
+import subprocess
 
 import maya.cmds as cmds
 from maya import OpenMayaUI as omui
@@ -73,6 +75,72 @@ class StatusLabel(QtWidgets.QLabel):
         self.setText('<span style="color:%s">%s</span>' % (colour, text.replace("\n", "<br>")))
         if text:
             print("Publish Tool: %s" % text)
+
+
+class ReviewDialog(QtWidgets.QDialog):
+    """Plays a publish's movie in RV and waits for RV to close, then asks
+    Publish or Cancel. Modal, so the scene can't change while it's watched;
+    Cancel works while RV is still open too."""
+
+    def __init__(self, movie, title, no_movie_reason="", parent=None):
+        super(ReviewDialog, self).__init__(parent)
+        self.setWindowTitle("Watch before publishing")
+        self._title = title
+        self._proc = None
+        self._started = time.monotonic()
+        self.label = QtWidgets.QLabel()
+        self.label.setWordWrap(True)
+        self.label.setMinimumWidth(360)
+        self.publish_btn = QtWidgets.QPushButton("Publish")
+        self.publish_btn.setEnabled(False)
+        self.publish_btn.clicked.connect(self.accept)
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.publish_btn)
+        buttons.addWidget(cancel_btn)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.label)
+        layout.addLayout(buttons)
+
+        rv = api.find_rv()
+        if movie and rv:
+            try:
+                self._proc = subprocess.Popen([rv, movie])
+            except OSError as e:
+                no_movie_reason = "RV wouldn't open: %s" % e
+        if self._proc:
+            self.label.setText("Watching %s in RV.\nClose RV to publish or cancel." % title)
+            self._timer = QtCore.QTimer(self)
+            self._timer.timeout.connect(self._poll)
+            self._timer.start(300)
+        else:
+            if not movie:
+                no_movie_reason = no_movie_reason or "No movie was made."
+            elif not rv:
+                no_movie_reason = "RV wasn't found on this machine."
+            self.label.setText("Can't show the movie for %s: %s\nPublish anyway?"
+                               % (title, no_movie_reason))
+            self._ready()
+
+    def _poll(self):
+        if self._proc.poll() is None:
+            return
+        self._timer.stop()
+        if time.monotonic() - self._started < 3:
+            # RV handed the movie to a window of its own and returned at once.
+            self.label.setText("%s is open in RV.\nPublish once you've watched it?" % self._title)
+        else:
+            self.label.setText("Publish %s?" % self._title)
+        self._ready()
+        self.raise_()
+        self.activateWindow()
+
+    def _ready(self):
+        self.publish_btn.setEnabled(True)
+        self.publish_btn.setDefault(True)
+        self.publish_btn.setFocus()
 
 
 def _cell(text, colour=None):
@@ -676,7 +744,7 @@ class PublishToolUI(QtWidgets.QDialog):
         self._sync_objects()    # anything renamed since the last refresh
         frame_count = None if self.timeline_chk.isChecked() else self.frames_spin.value()
         notes = self.notes_edit.toPlainText().strip()
-        lines, ok, published = [], True, False
+        lines, ok, published, cancelled = [], True, False, False
         # All the Animation items in a shot go out as ONE publish (one shared
         # version number, spec item 1), so they become a single job here.
         anim_rows = [r for r in self._rows if r["code"] == anim.ANIM_CODE]
@@ -692,18 +760,22 @@ class PublishToolUI(QtWidgets.QDialog):
                 # Anything published under a shot (cameras, characters' anim,
                 # ...) always uses the whole timeline (spec "Shot publishes").
                 frames = None if row["asset_type"] == "shot" else frame_count
+                if row["code"] == anim.ANIM_CODE:
+                    label = "%s %s" % (row["asset"],
+                                       anim.PUBLISH_FOR_LABELS[self._publish_for()])
+                review = self._review(label)
                 try:
                     if row["code"] == cam.CAM_CODE:
                         plan = cam.publish_camera(scene, *self._roots(),
                                                   camera=row["objects"][0],
                                                   frame_count=frames, notes=notes,
-                                                  publish_for=self._publish_for())
+                                                  publish_for=self._publish_for(),
+                                                  review=review)
                     elif row["code"] == anim.ANIM_CODE:
                         plan = anim.publish_anim(scene, *self._roots(),
                                                  objects=row["objects"], notes=notes,
-                                                 publish_for=self._publish_for())
-                        label = "%s %s" % (row["asset"],
-                                           anim.PUBLISH_FOR_LABELS[self._publish_for()])
+                                                 publish_for=self._publish_for(),
+                                                 review=review)
                         label += {
                             anim.FINAL: " (Final approved: caches made)",
                             anim.ANIMATION: " (no caches yet: they're made once a publish "
@@ -713,7 +785,13 @@ class PublishToolUI(QtWidgets.QDialog):
                         plan = api.publish(scene, *self._roots(), code=row["code"],
                                            frame_count=frames, notes=notes,
                                            objects=row["objects"],
-                                           target=(row["asset_type"], row["asset"]))
+                                           target=(row["asset_type"], row["asset"]),
+                                           review=review)
+                except api.PublishCancelled:
+                    lines.append("%s: cancelled after watching the movie, nothing published."
+                                 % label)
+                    cancelled = True
+                    continue
                 except Exception as e:
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
                     ok = False
@@ -739,11 +817,26 @@ class PublishToolUI(QtWidgets.QDialog):
                     lines.append(line)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
-        if ok:
-            # Kept after a failure so the student doesn't have to retype them.
+        if ok and not cancelled:
+            # Kept after a failure or cancel so the student doesn't have to
+            # retype them.
             self.notes_edit.clear()
         self._render_table()
         self.status.show_message("\n".join(lines), ok=ok)
+
+    def _review(self, label):
+        """The publish's review step: watch the movie in RV, then Publish or
+        Cancel (api.review_before_publish)."""
+        def review(movie, plan):
+            reason = "" if movie else (getattr(api._shotgrid(), "last_encode_problem", None)
+                                       or "RV's rvio wasn't found on this machine.")
+            QtWidgets.QApplication.restoreOverrideCursor()
+            try:
+                dialog = ReviewDialog(movie, "%s v%03d" % (label, plan["version"]), reason, self)
+                return dialog.exec() == QtWidgets.QDialog.Accepted
+            finally:
+                QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        return review
 
     def _back_up_studio_library(self, scene):
         """Every publish, iterative or final, backs up the film's Studio

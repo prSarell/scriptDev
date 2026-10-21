@@ -35,6 +35,11 @@ hand. One T7 session could cover most of it.
       appear ("NWF_SHF Show", "NWF_SHF <shot> (mine)"), the shot one opens
       by default, show-library poses are found 8 folders deep; a publish
       backs up; a wiped scratch comes back on Set Project.
+- [ ] **Watch before publishing** (2026-10-21): Publish opens the movie in
+      RV; closing RV asks Publish / Cancel. Check RV's window stays open
+      until you close it (if `rv.exe` hands off and returns at once, the
+      dialog says so and Publish is enabled straight away), and that
+      Cancel leaves nothing on H, ShotGrid or scratch.
 - [ ] **Environment publish** (spec §4c): publish `environment_001.ma`
       after fixing it (see section 4); check the sky image plane loads
       through `$PIPE_SCRATCH` in a shot (image planes weren't tested

@@ -552,7 +552,7 @@ def find_shotgrid_shot(plan, h_root):
 # ---------------------------------------------------------------------------
 
 def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, notes="",
-                   publish_for="layout"):
+                   publish_for="layout", review=None):
     """ShotGrid lookup -> playblast through the camera -> bake + write both
     files to the H drive -> ShotGrid Version on the Shot.
 
@@ -580,6 +580,9 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
         plan["edit_range"] = {"source": EDIT_NONE, "cut": "", "error": str(e)}
     edit_warning = edit_range_warning(plan["edit_range"], start, end)
     plan["frames_folder"], files = api.playblast_frames(plan, frame_count, camera=camera)
+    # Sound in the movie, for lip sync (same as shotSub).
+    plan["audio"], audio_offset = api.scene_audio(start)
+    api.review_before_publish(plan, review, plan["shot_project"], plan["audio"], audio_offset)
 
     try:
         plan["warnings"] = export_camera(camera, plan, start, end, scene_path)
@@ -601,8 +604,6 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
-    # Sound in the movie, for lip sync (same as shotSub).
-    plan["audio"], audio_offset = api.scene_audio(start)
     try:
         plan["sg_version"] = api.upload_with_audio(
             api._shotgrid(), plan, plan["audio"], audio_offset,

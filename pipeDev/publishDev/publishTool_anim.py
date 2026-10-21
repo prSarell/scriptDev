@@ -404,7 +404,8 @@ def copy_movie_for_edit(plan):
 # One-click animation publish
 # ---------------------------------------------------------------------------
 
-def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_for=ANIM_CODE):
+def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_for=ANIM_CODE,
+                 review=None):
     """Approval check -> playblast through the shot camera -> keys, full
     file (and caches if Final) to the H drive -> ShotGrid Version on the
     Shot, linked to its task -> movie copy for the edit.
@@ -424,6 +425,8 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     end = int(cmds.playbackOptions(query=True, maxTime=True))
     camera = SHOT_CAMERA if cam.camera_transform(SHOT_CAMERA) else None
     plan["frames_folder"], files = api.playblast_frames(plan, None, camera=camera)
+    plan["audio"], audio_offset = api.scene_audio(start)
+    api.review_before_publish(plan, review, plan["shot_project"], plan["audio"], audio_offset)
 
     try:
         plan["written"] = write_anim(items, plan, start, end, scene_path)
@@ -444,7 +447,6 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
-    plan["audio"], audio_offset = api.scene_audio(start)
     try:
         plan["sg_version"] = api.upload_with_audio(
             api._shotgrid(), plan, plan["audio"], audio_offset,

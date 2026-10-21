@@ -62,6 +62,10 @@ class PublishError(Exception):
     """A problem the student can fix (unsaved scene, wrong folder...)."""
 
 
+class PublishCancelled(PublishError):
+    """The student watched the movie and chose not to publish."""
+
+
 # ---------------------------------------------------------------------------
 # Settings — where the H drive is. Drive letters differ between setups
 # (home test rig, RMIT), so it's a setting, never hard-coded (§3h).
@@ -1698,16 +1702,53 @@ def upload_with_audio(sg, plan, audio_path, audio_offset, *args, **kwargs):
             plan.setdefault("warnings", []).append(
                 "The ShotGrid movie has no sound: this machine's shotgridConnect is "
                 "older than shotSub's audio support. Reinstall mpToolSet to fix.")
+    # The movie made for review (review_before_publish) is the one uploaded.
+    import inspect
+    if plan.get("movie_path") and "movie_path" in inspect.signature(sg.upload_playblast).parameters:
+        kwargs["movie_path"] = plan["movie_path"]
     return sg.upload_playblast(*args, **kwargs)
 
 
+def review_before_publish(plan, review, project, audio_path=None, audio_offset=0.0):
+    """Make the movie straight after the playblast, before anything is
+    written, and let the student watch it: review(movie_path or None, plan)
+    returns True to publish. On cancel the frames are removed and
+    PublishCancelled is raised. review=None (headless) skips the question;
+    the movie is still made here and uploaded as it is."""
+    plan["movie_path"] = None
+    rvio = find_rvio()
+    encode = getattr(_shotgrid(), "_encode_to_mp4", None)
+    if rvio and encode:
+        import inspect
+        kwargs = {}
+        if audio_path and "audio_path" in inspect.signature(encode).parameters:
+            kwargs = dict(audio_path=audio_path, audio_offset_seconds=audio_offset)
+        plan["movie_path"] = encode(plan["frames_folder"], _scene_fps(), rvio, **kwargs)
+    if review and not review(plan["movie_path"], plan):
+        remove_frames(plan["frames_folder"], project)
+        raise PublishCancelled("Cancelled after watching the movie: nothing was published.")
+
+
+def find_rv():
+    """RV itself (to watch a movie), next to rvio. "" if not found."""
+    rvio = find_rvio()
+    if not rvio:
+        return ""
+    folder = os.path.dirname(rvio)
+    for name in ("rv.exe", "rv", "RV"):
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
 def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
-            objects=None, target=None):
-    """Playblast -> H drive -> ShotGrid Version on the Asset.
+            objects=None, target=None, review=None):
+    """Playblast -> watch the movie -> H drive -> ShotGrid Version on the Asset.
 
     objects: publish only these (exported); empty/None = the whole scene
     file. target: (asset_type, asset) to publish to a different asset than
-    the scene's own folder.
+    the scene's own folder. review: see review_before_publish.
 
     Anything that can fail cleanly (ShotGrid lookup, playblast) happens
     before the H-drive write. Returns the plan dict plus 'sg_asset',
@@ -1752,6 +1793,8 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     if environment:
         shown = environment[env.LANDSCAPE] + environment[env.BUILDINGS] + environment[env.SKY]
     plan["frames_folder"], files = playblast_frames(plan, frame_count, shown)
+    plan["audio"], audio_offset = scene_audio(int(cmds.playbackOptions(query=True, minTime=True)))
+    review_before_publish(plan, review, plan["asset_project"], plan["audio"], audio_offset)
 
     plan["namespaces_removed"] = []
     try:
@@ -1816,7 +1859,6 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
-    plan["audio"], audio_offset = scene_audio(int(cmds.playbackOptions(query=True, minTime=True)))
     try:
         plan["sg_version"] = upload_with_audio(
             _shotgrid(), plan, plan["audio"], audio_offset,
