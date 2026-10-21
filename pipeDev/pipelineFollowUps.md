@@ -142,10 +142,9 @@ hand. One T7 session could cover most of it.
 
 ## 7. Housekeeping
 
-- [ ] **Commit today's work.** Nothing from 2026-10-21 is committed:
-      Studio Library pipe, Set Project, Build Remove/filter, review fixes,
-      environment publish, spec §4b/§4c.
-- [ ] **Private repo** for the pipeline tools. About 14 commits exist only on
+- [x] **Commit today's work**: committed locally 2026-10-21 (`8c02061`),
+      not pushed.
+- [ ] **Private repo** for the pipeline tools. 15 commits exist only on
       this machine (`main` must not be pushed to the public scriptDev;
       student fixes go out through a worktree from `origin/main`).
 - [ ] **Rebuild the staff zip** (`mayapy pipeDev/pipelineInstaller/build_zip.py`)
