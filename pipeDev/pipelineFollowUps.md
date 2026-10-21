@@ -27,10 +27,11 @@ hand. One T7 session could cover most of it.
       *before* open instead.
 - [ ] Everything with a real **RMIT login** (not `scout`).
 - [ ] **Picker row redesign** (2026-10-22), Publish and Build: Film |
-      Department | Asset or Shot | Type or Sequence | Asset or Shot, then
-      - / +, and ticks on the list. Check the row fits the window, the ticks
-      read clearly, Build follows a newly opened scene when the window is
-      clicked, and a new scene builds into the Project Tool's shot.
+      Asset or Shot | Department | Type or Sequence | Asset or Shot, then
+      - / +, and ticks on the list. Used for the shed environment publish
+      and build (2026-10-22). Still to check: Build follows a newly opened
+      scene when the window is clicked, and a new scene builds into the
+      Project Tool's shot.
 - [ ] **Set Project** in the Project Tool (Build's button was removed
       2026-10-22; Build still sets it): File > Open starts in
       the new project, it shows in Recent Projects, and it's remembered next
@@ -46,10 +47,12 @@ hand. One T7 session could cover most of it.
       away, and closing RV brings that window to the front. Check it does
       come to the front over Maya, and that Cancel leaves nothing on H,
       ShotGrid or scratch.
-- [ ] **Environment publish** (spec §4c): publish `environment_001.ma`
-      after fixing it (see section 4); check the sky image plane loads
-      through `$PIPE_SCRATCH` in a shot (image planes weren't tested
-      with the variable; DNA nodes couldn't read it).
+- [x] **Environment publish** (spec §4c): DONE by hand 2026-10-22 —
+      `shed` environment published from SEQ010_140 (`shed_scout_env_v001`,
+      cache + sky image on H) and built back into a shot, with the new
+      picker row and the `buildings` group. Still worth a look: does the
+      sky image plane show its picture in the built shot (through
+      `$PIPE_SCRATCH`)?
 
 ## 2. Decisions waiting on you
 
