@@ -83,12 +83,26 @@ def _strength_to_cutoff(strength):
 
 
 def smooth_channel(data, strength):
-    """Apply a zero-phase Butterworth low-pass to a single channel."""
-    if strength <= 0.0 or len(data) < 4:
+    """Apply a zero-phase Butterworth low-pass to a single channel.
+
+    The result starts and ends exactly on the first and last frames of the
+    range. Filtering on its own lets the ends drift at high strength,
+    worst on short ranges where the padding can't be long enough for the
+    filter to settle. So the straight line between the end values is
+    taken out, the remainder (zero at both ends) is filtered, the line is
+    put back, and whatever end error is left is ramped out.
+    """
+    n = len(data)
+    if strength <= 0.0 or n < 4:
         return list(data)
     cutoff = _strength_to_cutoff(strength)
     b, a = _butter2_coeffs(cutoff)
-    return _filtfilt(b, a, data)
+    first, last = data[0], data[-1]
+    line = [first + (last - first) * i / (n - 1) for i in range(n)]
+    smoothed = _filtfilt(b, a, [d - l for d, l in zip(data, line)])
+    e0, e1 = smoothed[0], smoothed[-1]
+    return [l + s - (e0 + (e1 - e0) * i / (n - 1))
+            for i, (l, s) in enumerate(zip(line, smoothed))]
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +311,10 @@ class SmoothToolCore:
             if cmds.timeControl(tc, q=True, rangeVisible=True):
                 raw = cmds.timeControl(tc, q=True, range=True)
                 parts = raw.replace('"', '').split(':')
-                return int(float(parts[0])), int(float(parts[1]))
+                # The range's end is one past the last highlighted frame
+                # (frames 10-20 come back as "10:21").
+                start = int(float(parts[0]))
+                return start, max(start, int(float(parts[1])) - 1)
         except Exception:
             pass
         return (int(cmds.playbackOptions(q=True, minTime=True)),
