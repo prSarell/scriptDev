@@ -22,7 +22,6 @@ Dev launch (Script Editor, Python tab):
 import sys
 import os
 import re
-import time
 import subprocess
 
 import maya.cmds as cmds
@@ -89,21 +88,21 @@ class StatusLabel(QtWidgets.QLabel):
 
 
 class ReviewDialog(QtWidgets.QDialog):
-    """Plays a publish's movie in RV and waits for RV to close, then asks
-    Publish or Cancel. Modal, so the scene can't change while it's watched;
-    Cancel works while RV is still open too."""
+    """Plays a publish's movie in RV as a reminder to watch it, and asks
+    Publish or Cancel. Nothing waits on RV (user, 2026-10-22): both
+    buttons work straight away, and closing RV brings this window back to
+    the front. Modal, so the scene can't change in the meantime."""
 
     def __init__(self, movie, title, no_movie_reason="", parent=None):
         super(ReviewDialog, self).__init__(parent)
         self.setWindowTitle("Watch before publishing")
         self._title = title
         self._proc = None
-        self._started = time.monotonic()
         self.label = QtWidgets.QLabel()
         self.label.setWordWrap(True)
         self.label.setMinimumWidth(360)
         self.publish_btn = QtWidgets.QPushButton("Publish")
-        self.publish_btn.setEnabled(False)
+        self.publish_btn.setDefault(True)
         self.publish_btn.clicked.connect(self.accept)
         cancel_btn = QtWidgets.QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -122,7 +121,8 @@ class ReviewDialog(QtWidgets.QDialog):
             except OSError as e:
                 no_movie_reason = "RV wouldn't open: %s" % e
         if self._proc:
-            self.label.setText("Watching %s in RV.\nClose RV to publish or cancel." % title)
+            self.label.setText("Playing %s in RV.\nPublish or cancel whenever you're ready."
+                               % title)
             self._timer = QtCore.QTimer(self)
             self._timer.timeout.connect(self._poll)
             self._timer.start(300)
@@ -133,25 +133,16 @@ class ReviewDialog(QtWidgets.QDialog):
                 no_movie_reason = "RV wasn't found on this machine."
             self.label.setText("Can't show the movie for %s: %s\nPublish anyway?"
                                % (title, no_movie_reason))
-            self._ready()
+        self.publish_btn.setFocus()
 
     def _poll(self):
+        """RV closed: bring the Publish / Cancel question to the front."""
         if self._proc.poll() is None:
             return
         self._timer.stop()
-        if time.monotonic() - self._started < 3:
-            # RV handed the movie to a window of its own and returned at once.
-            self.label.setText("%s is open in RV.\nPublish once you've watched it?" % self._title)
-        else:
-            self.label.setText("Publish %s?" % self._title)
-        self._ready()
+        self.label.setText("Publish %s?" % self._title)
         self.raise_()
         self.activateWindow()
-
-    def _ready(self):
-        self.publish_btn.setEnabled(True)
-        self.publish_btn.setDefault(True)
-        self.publish_btn.setFocus()
 
 
 def _cell(text, colour=None):
