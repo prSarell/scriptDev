@@ -46,6 +46,8 @@ LIVE_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
 # animation (spec §4 "Shot (animation) publish v0").
 SHOT_DEPARTMENTS = [(cam.CAM_LABEL, cam.CAM_CODE), (anim.ANIM_LABEL, anim.ANIM_CODE)]
 DEPT_LABELS = dict((c, l) for l, c in api.DEPARTMENTS + SHOT_DEPARTMENTS)
+# ShotSub frames for an environment published from a shot scene.
+ENV_SHOT_FRAMES = 2
 
 
 def _maya_main_window():
@@ -745,6 +747,8 @@ class PublishToolUI(QtWidgets.QDialog):
         frame_count = None if self.timeline_chk.isChecked() else self.frames_spin.value()
         notes = self.notes_edit.toPlainText().strip()
         lines, ok, published, cancelled = [], True, False, False
+        _, ctx = self._scene_context()
+        in_shot = bool(ctx) and ctx["kind"] == "shot"
         # All the Animation items in a shot go out as ONE publish (one shared
         # version number, spec item 1), so they become a single job here.
         anim_rows = [r for r in self._rows if r["code"] == anim.ANIM_CODE]
@@ -760,6 +764,10 @@ class PublishToolUI(QtWidgets.QDialog):
                 # Anything published under a shot (cameras, characters' anim,
                 # ...) always uses the whole timeline (spec "Shot publishes").
                 frames = None if row["asset_type"] == "shot" else frame_count
+                if row["code"] == env.ENV_CODE and in_shot:
+                    # The shot's timeline is locked on, but an environment
+                    # is a still: 2 frames, like any asset by default.
+                    frames = ENV_SHOT_FRAMES
                 if row["code"] == anim.ANIM_CODE:
                     label = "%s %s" % (row["asset"],
                                        anim.PUBLISH_FOR_LABELS[self._publish_for()])
