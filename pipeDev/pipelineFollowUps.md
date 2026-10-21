@@ -144,9 +144,10 @@ hand. One T7 session could cover most of it.
 
 - [x] **Commit today's work**: committed locally 2026-10-21 (`8c02061`),
       not pushed.
-- [ ] **Private repo** for the pipeline tools. 15 commits exist only on
-      this machine (`main` must not be pushed to the public scriptDev;
-      student fixes go out through a worktree from `origin/main`).
+- [x] **Pipeline tools backed up to git**: the user is fine with the public
+      scriptDev repo (2026-10-21); everything pushed (`e74fb3f`). Pushes of
+      `pipeDev/` never trigger a student release; only changes under
+      `mpToolSet/` or `studio4AnimToolset/` do, so check those before pushing.
 - [ ] **Rebuild the staff zip** (`mayapy pipeDev/pipelineInstaller/build_zip.py`)
       once you want to test on the T7; it now includes `pipeStudioLibrary.py`
       and `publishTool_env.py`.
