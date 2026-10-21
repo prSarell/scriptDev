@@ -174,4 +174,12 @@ def install():
         om.MSceneMessage.kBeforeOpenCheck, _before_open))
     setattr(sys, _AFTER_OPEN_ATTR, om.MSceneMessage.addCallback(
         om.MSceneMessage.kAfterOpen, _after_open))
+    try:
+        # Studio Library must look deep enough to find show library items
+        # (spec §4b); its config is read the first time it's opened.
+        import maya.cmds as cmds
+        import pipeStudioLibrary
+        pipeStudioLibrary.use_config(cmds.internalVar(userPrefDir=True))
+    except Exception as e:      # never break Maya starting up
+        print("mpPipe: couldn't set up Studio Library's search depth: %s" % e)
     return current()

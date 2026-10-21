@@ -109,6 +109,49 @@ rows["EAP_010_010"]["chosen"] = C2
 tab._build_shot()
 check("picking v002 for the camera does rebuild it", api.shot_camera()[1] == C2)
 
+# Loading a shot clears the last message (review 2026-10-21: the status
+# line had been cut off _load_shot, so old messages stayed up).
+tab._load_shot()
+check("loading a shot clears the old status message", tab.status._text == "")
+
+# -- Show filter + Remove from List (user, 2026-10-21) ----------------------
+names = lambda: sorted(r["asset"] for r in tab._rows)
+shown = lambda: sorted(tab._rows[i]["asset"] for i in range(len(tab._rows))
+                       if not tab.table.isRowHidden(i))
+labels = [tab.filter_combo.itemText(i) for i in range(tab.filter_combo.count())]
+check("Show menu: All + the list's departments", labels[0] == "All departments"
+      and "Camera" in labels and "Modeling" in labels)
+tab.filter_combo.setCurrentIndex(tab.filter_combo.findData("cam"))
+check("Show Camera: only the camera row is shown", shown() == ["EAP_010_010"])
+tab.filter_combo.setCurrentIndex(0)
+check("Show All: every row again", shown() == names())
+
+refs_before = sorted(n for n, _, _, _ in api.scene_references())
+tab.table.clearSelection()
+tab._remove_rows()
+check("Remove with nothing selected says what to do", "Click the rows" in tab.status._text)
+built = [i for i, r in enumerate(tab._rows) if r["asset"] == "backpack"][0]
+tab.table.selectRow(built)
+tab._remove_rows()
+check("a built asset comes off the list", "backpack" not in names()
+      and "Taken off the list: backpack" in tab.status._text)
+check("... the scene keeps its reference", sorted(n for n, _, _, _ in api.scene_references())
+      == refs_before)
+check("... and the shot's record keeps it", any(k.endswith("/backpack/model")
+                                                 for k in api.read_manifest(shot)))
+tab._refresh_list()
+check("Refresh doesn't bring it back", "backpack" not in names())
+tab._build_shot()
+check("Build Shot leaves the removed asset alone in the scene",
+      sorted(n for n, _, _, _ in api.scene_references()) == refs_before)
+tab.asset_combo.setCurrentIndex(tab.asset_combo.findData("prop/backpack"))
+tab.filter_combo.setCurrentIndex(tab.filter_combo.findData("cam"))
+tab._add_asset()
+check("adding it again puts it back, and the filter shows it",
+      "backpack" in names() and "backpack" in shown())
+tab._load_shot()
+check("switching/reloading the shot starts the list from the shot again", "backpack" in names())
+
 print("%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, files in os.walk(base):
     for f in files:

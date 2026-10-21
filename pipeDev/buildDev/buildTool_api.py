@@ -450,11 +450,21 @@ def texture_folder_of(path):
                         os.path.splitext(os.path.basename(path))[0])
 
 
+# Files published beside a version under the same name: an environment's
+# one-frame reference cache (spec §4c). Pulled and cleared with it.
+SIDE_FILES = (".abc",)
+
+
+def side_files(path):
+    stem = os.path.splitext(path)[0]
+    return [stem + ext for ext in SIDE_FILES if os.path.isfile(stem + ext)]
+
+
 def version_files(path):
-    """A pulled version in the publish folder plus its textures: what
-    clearing that version removes (spec "Clearing old versions": its
-    textures go with it)."""
-    found = [path]
+    """A pulled version in the publish folder plus its textures and side
+    files: what clearing that version removes (spec "Clearing old
+    versions": its textures go with it)."""
+    found = [path] + side_files(path)
     for dirpath, _, filenames in os.walk(texture_folder_of(path)):
         found += [os.path.join(dirpath, n) for n in filenames]
     return found
@@ -484,6 +494,8 @@ def copy_published(source, maya_dir):
             src = os.path.join(dirpath, name)
             _copy_if_changed(src, os.path.join(texture_folder_of(dest),
                                                os.path.relpath(src, textures)))
+    for side in side_files(source):
+        _copy_if_changed(side, os.path.splitext(dest)[0] + os.path.splitext(side)[1])
     return dest, _copy_if_changed(source, dest)
 
 
@@ -1212,7 +1224,7 @@ def reference_into_scene(path, namespace):
 
 
 def set_maya_project(shot_dir):
-    cmds.workspace(shot_dir, openWorkspace=True)
+    pub.set_maya_project(shot_dir)
 
 
 def ensure_maya_project(shot_dir):

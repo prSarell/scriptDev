@@ -97,6 +97,29 @@ except Exception:
     pass
 check("model publishes don't need a cache_SET", calls[:1] == ["shotgrid"])
 
+# -- The shot cache reads cache_SET the way the rig check does (review
+#    2026-10-21: shapes in the set made shots cache the whole rig) --------------
+import publishTool_anim as anim
+root = rig_scene(members=())
+cmds.sets(["body_geoShape", "eye_geoShape"], add=api.CACHE_SET)
+check("shapes straight in cache_SET pass the rig check", api.check_cache_set([]) == api.CACHE_SET)
+item = {"kind": api.RIG_CODE, "root": cmds.ls(root, long=True)[0]}
+check("... and the shot cache takes their meshes, not the whole rig",
+      sorted(r.split("|")[-1] for r in anim.cache_roots(item)) == ["body_geo", "eye_geo"])
+rig_scene(members=())
+cmds.sets(["body_geo.f[0:2]"], add=api.CACHE_SET)
+check("a component counts as its mesh", [r.split("|")[-1] for r in anim.cache_roots(
+    {"kind": api.RIG_CODE, "root": cmds.ls("scout_rig", long=True)[0]})] == ["body_geo"])
+rig_scene(members=("geo", "body_geo"))
+check("a group and a mesh inside it: refused at rig publish (Alembic can't take both)",
+      refused([], "both groups and things inside them"))
+check("... naming the one inside", refused([], "body_geo"))
+rig_scene(members=("geo", "body_geoShape"))
+check("... a shape inside the group counts too", refused([], "body_geo"))
+rig_scene(members=("body_geo", "body_geoShape"))
+check("a mesh and its own shape are the same thing, not nested",
+      api.check_cache_set([]) == api.CACHE_SET)
+
 print("\n%d/%d passed" % (sum(results), len(results)))
 for root, dirs, files in os.walk(base):
     for f in files:

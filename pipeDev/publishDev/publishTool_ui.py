@@ -33,11 +33,13 @@ if _DIR not in sys.path:
 import publishTool_api as api
 import publishTool_camera as cam
 import publishTool_anim as anim
+import publishTool_env as env
+import pipeStudioLibrary as slib
 
 
 # Departments that can publish an asset scene today. The rest (shot work:
 # Previs, Anim, FX, Render) show as "coming soon" until shot publishing exists.
-LIVE_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
+LIVE_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
 # What a shot scene can publish: its camera (spec §3i "Cameras") and its
 # animation (spec §4 "Shot (animation) publish v0").
 SHOT_DEPARTMENTS = [(cam.CAM_LABEL, cam.CAM_CODE), (anim.ANIM_LABEL, anim.ANIM_CODE)]
@@ -165,6 +167,21 @@ class PublishToolUI(QtWidgets.QDialog):
         pick.addWidget(self.shot_hint, 1)
         pick.addWidget(self.add_btn)
 
+        # A shot's layout scene can also publish its environment (spec §4c):
+        # what goes is decided by environment_SET, so only the asset is picked.
+        self.env_lbl = QtWidgets.QLabel("Environment:")
+        self.env_combo = QtWidgets.QComboBox()
+        self.env_combo.setMinimumWidth(200)
+        self.env_btn = QtWidgets.QPushButton("Add Environment")
+        self.env_btn.setToolTip(
+            "Publish this scene's environment_SET (landscape, buildings, sky) to the "
+            "environment asset picked here.")
+        self.env_btn.clicked.connect(self._add_environment)
+        env_row = QtWidgets.QHBoxLayout()
+        env_row.addWidget(self.env_lbl)
+        env_row.addWidget(self.env_combo, 1)
+        env_row.addWidget(self.env_btn)
+
         # The publish list.
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
@@ -226,6 +243,7 @@ class PublishToolUI(QtWidgets.QDialog):
         layout.addLayout(roots)
         layout.addLayout(scene_row)
         layout.addLayout(pick)
+        layout.addLayout(env_row)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
         layout.addLayout(frames_row)
@@ -295,10 +313,16 @@ class PublishToolUI(QtWidgets.QDialog):
             self._picker_key = key
             self.asset_combo.blockSignals(True)
             self.asset_combo.clear()
+            self.env_combo.clear()
             if ctx and ctx["kind"] == "shot":
-                # A shot scene publishes for its own shot only.
+                # A shot scene publishes for its own shot only (plus its
+                # environment, to an environment asset).
                 self.asset_combo.addItem("%s  (shot)" % ctx["shot"],
                                          "shot/%s" % ctx["shot"])
+                if h_root and os.path.isdir(h_root):
+                    for asset_type, asset in api.list_h_assets(h_root, ctx["film"]):
+                        if asset_type == env.ENV_TYPE:
+                            self.env_combo.addItem(asset, asset)
             elif ctx and h_root and os.path.isdir(h_root):
                 for asset_type, asset in api.list_h_assets(h_root, ctx["film"]):
                     self.asset_combo.addItem("%s  (%s)" % (asset, asset_type),
@@ -311,6 +335,7 @@ class PublishToolUI(QtWidgets.QDialog):
             # Start on the department the file name says (scout_rig_v002 ->
             # Rigging), so a rig isn't published as a model by default.
             words = re.split(r"[_.]", os.path.basename(scene).lower())
+            words = [env.ENV_CODE if w == "environment" else w for w in words]
             for code in LIVE_DEPARTMENTS:
                 if code.lower() in words and self.dept_combo.findData(code) >= 0:
                     self.dept_combo.setCurrentIndex(self.dept_combo.findData(code))
@@ -325,7 +350,8 @@ class PublishToolUI(QtWidgets.QDialog):
         for widget in (self.asset_lbl, self.asset_combo, self.dept_lbl, self.dept_combo,
                        self.objects_btn, self.whole_btn):
             widget.setVisible(not shot)
-        for widget in (self.shot_hint, self.publish_for_lbl, self.publish_for_combo):
+        for widget in (self.shot_hint, self.publish_for_lbl, self.publish_for_combo,
+                       self.env_lbl, self.env_combo, self.env_btn):
             widget.setVisible(shot)
         self.add_btn.setText("Add Selected" if shot else "Add to List")
         self.add_btn.setToolTip(
@@ -373,6 +399,10 @@ class PublishToolUI(QtWidgets.QDialog):
         if row["code"] == anim.ANIM_CODE:
             return anim.plan_anim(scene, *self._roots(), items=anim.classify(row["objects"]),
                                   publish_for=self._publish_for())
+        if row["code"] == env.ENV_CODE:
+            env.check_environment()
+            return env.plan_environment(scene, *self._roots(),
+                                        target=(row["asset_type"], row["asset"]))
         return api.plan_publish(scene, *self._roots(), code=row["code"],
                                 target=(row["asset_type"], row["asset"]))
 
@@ -404,6 +434,8 @@ class PublishToolUI(QtWidgets.QDialog):
         for r, row in enumerate(self._rows):
             type_label = row.get("type_label", row["asset_type"])
             objects = ", ".join(row["objects"]) if row["objects"] else "(whole scene)"
+            if row["code"] == env.ENV_CODE:
+                objects = "(what's in %s)" % env.ENVIRONMENT_SET
             item = None
             if row["code"] == anim.ANIM_CODE:
                 try:
@@ -498,6 +530,27 @@ class PublishToolUI(QtWidgets.QDialog):
         self.status.show_message("\n".join([l for l in lines if l] + problems),
                                  ok=not problems)
 
+    def _add_environment(self):
+        """Shot scene: a row publishing environment_SET to the picked
+        environment asset (spec §4c)."""
+        asset = self.env_combo.currentData()
+        if not asset:
+            self.status.show_message("There's no environment asset on the H drive for this "
+                                     "film yet.", ok=False)
+            return
+        if any(r["code"] == env.ENV_CODE for r in self._rows):
+            self.status.show_message("The environment is already in the list.", ok=False)
+            return
+        try:
+            env.check_environment()
+        except api.PublishError as e:
+            self.status.show_message(str(e), ok=False)
+            return
+        self._rows.append({"asset_type": env.ENV_TYPE, "asset": asset, "code": env.ENV_CODE,
+                           "objects": [], "uuids": [], "type_label": env.ENV_TYPE})
+        self._render_table()
+        self.status.show_message("Added the environment, to %s." % asset)
+
     def _add_row(self):
         scene, ctx = self._scene_context()
         if ctx and ctx["kind"] == "shot":
@@ -540,6 +593,13 @@ class PublishToolUI(QtWidgets.QDialog):
             # Publish works out what each thing is (spec item 6a).
             try:
                 anim.classify(objects)
+            except api.PublishError as e:
+                return str(e)
+            return None
+        if code == env.ENV_CODE:
+            # environment_SET decides what goes, not the selection.
+            try:
+                env.check_environment()
             except api.PublishError as e:
                 return str(e)
             return None
@@ -616,7 +676,7 @@ class PublishToolUI(QtWidgets.QDialog):
         self._sync_objects()    # anything renamed since the last refresh
         frame_count = None if self.timeline_chk.isChecked() else self.frames_spin.value()
         notes = self.notes_edit.toPlainText().strip()
-        lines, ok = [], True
+        lines, ok, published = [], True, False
         # All the Animation items in a shot go out as ONE publish (one shared
         # version number, spec item 1), so they become a single job here.
         anim_rows = [r for r in self._rows if r["code"] == anim.ANIM_CODE]
@@ -658,6 +718,7 @@ class PublishToolUI(QtWidgets.QDialog):
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
                     ok = False
                     continue
+                published = True
                 version = "v%03d (%s)" % (plan["version"], plan["login"])
                 if plan["sg_error"]:
                     lines.append("%s: %s saved to the H drive, but the ShotGrid "
@@ -672,6 +733,10 @@ class PublishToolUI(QtWidgets.QDialog):
                 if plan["movie_warning"]:
                     lines.append("  " + plan["movie_warning"])
                     ok = False
+            if published:
+                line = self._back_up_studio_library(scene)
+                if line:
+                    lines.append(line)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         if ok:
@@ -679,6 +744,18 @@ class PublishToolUI(QtWidgets.QDialog):
             self.notes_edit.clear()
         self._render_table()
         self.status.show_message("\n".join(lines), ok=ok)
+
+    def _back_up_studio_library(self, scene):
+        """Every publish, iterative or final, backs up the film's Studio
+        Library folders to the H drive (spec §4b). A problem here never
+        undoes the publish; it's reported as a line."""
+        try:
+            h_root, scratch_root = (api.resolve_root(r) for r in self._roots())
+            _, rel = api.find_film_folder(scene)
+            return slib.describe(slib.back_up(scratch_root, h_root, rel[0]),
+                                 "backed up to the H drive")
+        except Exception as e:
+            return "Studio Library not backed up: %s" % e
 
     def changeEvent(self, event):
         # Re-check the open scene whenever the window is brought forward.

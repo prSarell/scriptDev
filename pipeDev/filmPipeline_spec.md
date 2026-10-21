@@ -2443,6 +2443,254 @@ rebuild from H. Two halves:
     shared); Premiere, Resolve or both first; how often EDLs are made and
     whether they're saved on H as well as ShotGrid.
 
+### 4c. Environment publishes and layout placement (started 2026-10-21)
+
+Raised by the user after the scoutsHouse publish test. The model rules
+(freeze, delete history, leave out hidden/empty, Mesh Cleanup, pipe group
+at the origin, §4 item 6a) stay for **props, vehicles and character
+models** (the backpack's rules). Environments need different ones.
+
+- USER DIRECTION (2026-10-21):
+  1. scoutsHouse should be **modelled at 0,0,0 and positioned in the
+     shot**; the pipe has no way to do that yet.
+  2. **Environment creation is part of the layout workflow**, which the
+     pipe doesn't consider yet: sketch a camera and a performance of
+     Scout, build a terrain and position a (placeholder) building in it.
+     An environment publish must **keep the position of everything**,
+     since it matters relative to the camera and the world layout for
+     continuity: the **landscape and placeholder buildings stay where they
+     are** in the initial publish.
+  3. scoutsHouse is modelled and published at 0,0,0, then **matched back
+     to the position of its placeholder** from the initial layout publish.
+- Note (Claude): freezing keeps geometry in place but zeroes the
+  transform, which is exactly the placement the real asset has to match,
+  so placeholders' transforms must survive an environment publish.
+- USER DIRECTION (2026-10-21): **use sets, as the pipe already does**
+  (rig `cache_SET` / control sets). In layout the artist makes a
+  **landscape set** and a **building set**; Publish has rules for how
+  each is treated differently. Set names and rules not decided yet.
+  - DECIDED (user, 2026-10-21): **landscape set** = stays where it is in
+    the world, cleaned up like a model (freeze, delete history, Mesh
+    Cleanup; the geometry doesn't move).
+  - DECIDED (user, 2026-10-21): **building set** = **transforms kept**
+    (never frozen). Publish **creates a locator** for each building at
+    its placement, and the locators are **published with the landscape**.
+    A **single-frame cache of the buildings and the landscape** is made
+    for **visual reference when a shot is rebuilt**. The real building
+    (modelled and published at 0,0,0) is later matched to its locator.
+  - DECIDED (user, 2026-10-21):
+    1. Tools to **build and name the sets** come later, e.g. a building
+       set and a landscape set **nested in an environment set**.
+    2. A locator **takes its name from the top group of the building
+       asset**, so **every model or collection of models** (e.g. Scout's
+       House) must be **parented under one group**.
+    3. **Students match real assets to the locators themselves** and make
+       a new environment publish with the updated assets; Build doesn't
+       place anything.
+    4. **Buildings are published with the environment** for now.
+  - DECIDED (user, 2026-10-21): a **sky set** too, holding **image planes
+    and/or skydomes, possibly cloud models**, maybe linked to an **image
+    sequence**. Sky assets **keep their transforms** but are **locked on
+    publish**.
+    - Notes (Claude, for the questions): a skydome is usually a light
+      (Arnold `aiSkyDomeLight`), which model publishes never carry; image
+      planes are normally attached to a camera rather than free in the
+      world; sky images/sequences would need to travel with the publish
+      the way rig textures do (`publishTool_textures`, which already
+      handles image sequences and UDIMs).
+  - DECIDED (user, 2026-10-21), sky details:
+    1. For layout and animation a **skydome is just geometry** (e.g. a
+       big textured sphere), not a light, so no light rules are needed.
+    2. Image planes are **free-standing** in the world (not on a camera).
+    3. Sky images and image sequences **travel with the publish** like rig
+       textures (copied to H per version, pulled to scratch by Build).
+  - Example scene (user, 2026-10-21):
+    `D:\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\scenes\environment_001.ma`:
+    `environment` > `sky` (free image plane `imagePlanesky`), `landscape`
+    (`ground`), `shed` (placeholder `pCube1` + `pPlane2`); `camera1` stays
+    outside (camera publish). In it, `shed` sits at 0,0,0 and its pieces
+    carry the placement (moved, rotated -9.7 deg).
+  - DECIDED (user, 2026-10-21), after weighing groups vs sets (sets can
+    overlap and don't move anything; Alembic carries neither sets nor
+    shader assignments, so lookdev will need re-linking by name or a
+    per-mesh tag later):
+    1. **Sets + groups**: groups say where things are (placement), sets
+       say what they are (the rules: landscape, building, sky now; water,
+       vegetation, junk and look sets later).
+    2. A **building's group holds its world-space placement** (move and
+       rotate the group, pieces at zero inside). The **locator is still
+       made**: it lets someone zero a building out, add a prop, and snap
+       it back.
+    3. Source images belong in the **asset's own Maya project**
+       (`<asset>\sourceimages\`), not in folders outside the film (the
+       example's sky image is in `D:\projects\nwf_PREVIS\sourceimages`).
+  - **BUILT 2026-10-21** with the defaults proposed that day (user: "ok
+    are you good to build it?"), mayapy-tested
+    (`publishDev/test_envPublish_mayapy.py`), not yet tried in Maya:
+    `publishDev/publishTool_env.py` + an **Environment** department
+    (`env`). Sets `environment_SET` > `landscape_SET` / `building_SET` /
+    `sky_SET`; group names free except each building's group is named
+    after its asset (warned if no such asset on H); refused: no sets, one
+    thing in two roles, a building that isn't a group, two buildings with
+    one name. **Changed same day (user): "if there are no transforms on a
+    building the pipe shouldn't reject it. It should just be able to cope
+    with it if there are."** A building group with transforms gives its
+    locator its placement; one with none (like `environment_001.ma`'s
+    `shed`) gets its locator at the **bottom-centre of its pieces, turned
+    like them if they share a rotation**, and the publish report says so.
+    The building itself is published as it is. Publishes from a
+    shot's layout scene ("Add Environment" in the Publish window) or an
+    asset scene, to an environment asset. Published file:
+    `<asset>_env_GRP` > `landscape` / `buildings` / `sky` / `locators`
+    (`<group>_LOC` at each building's world placement) + the sets on the
+    copies; sky images travel (image planes added to the texture
+    collector, environments only); images outside an asset's
+    `sourceimages` are warned about and copied anyway; one-frame `.abc`
+    of landscape + buildings beside the publish, pulled by Build with it
+    (`SIDE_FILES`) but **not put in the scene** (OPEN). Follow-ups:
+    `pipeDev/pipelineFollowUps.md`.
+  - Suggested pipe answer to "students match real assets to locators"
+    (Claude, 2026-10-21, not confirmed): published model groups are locked
+    at 0,0,0, so the student parents `<asset>_model_GRP` under its
+    locator; it stays locked, at the locator's placement.
+  - OPEN: the set names (suggested `environment_SET` holding
+    `landscape_SET` + `building_SET`) and the locator name
+    (`<group>_LOC`?); props/vegetation placed the same way or not; where
+    the environment publish goes (the environment's own asset, e.g.
+    `scoutsHouseLandscape`); what Build brings into a shot (the
+    environment file, the one-frame reference cache, or both).
+- OPEN: questions below, being worked through with the user.
+
+### 4b. Studio Library data (started 2026-10-21)
+
+The film folder already has an empty `maya\studioLibrary\` placeholder
+(§3f). Nothing in the pipe tools touches Studio Library yet; it's
+installed separately from both toolsets.
+
+- DECIDED (user, 2026-10-21): the pipe helps with **where libraries
+  live**, **sharing them between students**, and **pointing each
+  student's Studio Library at the right library** (not the install).
+- DECIDED (user, 2026-10-21): the libraries are mainly **rig-level and
+  shared**: a pose/clip library per character that every animator uses.
+- DECIDED (user, 2026-10-21): **both** a live working library people save
+  into directly (Studio Library's normal way of working) **and** some
+  poses promoted/published through the pipe (versioned, read-only).
+- Facts that bear on it (not decisions):
+  - Studio Library stores poses by control name, so a pose lives as long
+    as the rig keeps its control names (§3i "don't rename controls").
+  - Build references rigs as `<asset>_rig:` and published rigs carry no
+    namespace, so poses saved in a shot record `scout_rig:`; Studio
+    Library can remap namespaces on load.
+  - RMIT scratch is wiped every 3-4 weeks; Maya prefs (where Studio
+    Library keeps its library path) survive (§4a).
+  - H publishes are read-only; Studio Library edits its own folders, so a
+    live library can't be locked like a publish.
+  - RMIT H is partitioned per login today; the pipe is built for the
+    shared-server target (T7 stands in).
+- User's goals (2026-10-21): (1) the Project Tool sets where Studio
+  Library saves; (2) the data is backed up on the server; (3) a global
+  library per project, a private sandbox per student, and shot-by-shot
+  work; mocap-specific libraries later.
+- Studio Library 2.20.2 (bundled) facts: named libraries, each a root
+  folder, set from code (`studiolibrary.setLibraries`), kept in
+  `%APPDATA%\StudioLibrary\LibraryWidget.json`; a window can be locked
+  with `superusers` (logins allowed to edit); each library root keeps a
+  cache, `.studiolibrary/database.json`, that rebuilds itself.
+- SUGGESTION (Claude, not agreed): layout `studioLibrary\global\<type>\
+  <asset>\{pose,anim}\`, `sandbox\<login>\`, `shots\<SEQ>\<SHOT>\<login>\
+  {pose,anim}\` (A3 pattern), `mocap\` later; library list in the film's
+  `pipeline.json`; Project Tool registers Global (locked unless a lead),
+  Sandbox and the current shot.
+- USER DIRECTION (2026-10-21): the data lives in **both places**: on
+  scratch, so students can take it home on a drive, and on H as the
+  backup. Proposed: an **animation publish checks the student's Studio
+  Library folders for new/changed items and copies them to H**.
+  - Points raised by Claude, not decided: shot publishes only happen after
+    shotSub approval, but scratch can be wiped every 3-4 weeks, so poses
+    made before approval could be lost (backup on shotSub submit too, or a
+    Back Up button?); copy only the student's own folders, add-only, never
+    delete on H; skip the `.studiolibrary` cache; Global goes H -> scratch
+    only; a pull back down (Project Tool Update Scratch) after a wipe or at
+    home; the same student on two drives -> newest item wins?
+  - DECIDED (user, 2026-10-21): the backup runs on **every** pipe
+    publish, iterative or final (not just approved shot publishes): check
+    the folders, update H. The whole project's `studioLibrary\` is checked
+    each time (the data is small), not just the publisher's folders.
+  - OPEN: whether a student's publish may update folders that aren't
+    theirs on H (Global, other students' sandboxes/shot folders) when their
+    scratch copy is newer.
+  - USER DIRECTION (2026-10-21, "maybe" on the exact place): a student's
+    shot-by-shot Studio Library work goes in a `<login>` folder (e.g.
+    `s1234567\`) **inside the shot's own Maya project**, perhaps its
+    `data\` folder. The **show-level `maya\studioLibrary\`** is where
+    motion gets **shared**. This replaces the suggested
+    `studioLibrary\shots\...` layout.
+  - DECIDED (user, 2026-10-21):
+    1. Shot work folder: `<shot project>\data\studioLibrary\<login>\`.
+    2. No private sandbox for now.
+    3. Any student can save straight into the show library (so the
+       publish backup copies show-library changes up to H too).
+    4. The show library **mirrors the shot structure**, with a **face**
+       (motion + pose) and a **body** (motion + pose) folder **per
+       character**. The same again for **motion capture**, shot-specific
+       and show-specific. The folders are made by the **desktop tool**
+       (staff setup, `desktopDev/h_sync.py`).
+  - DECIDED tree (user, 2026-10-21): keyframe/mocap sit **inside**
+    shot/character; **every character gets folders in every shot** ("any
+    character could be in any shot at any time during a production"), so
+    no Shot -> Asset links are needed. (The student's shot folder was
+    first going to use the same split; changed, see below the tree.)
+    ```
+    maya\studioLibrary\
+      show\<character>\{keyframe,mocap}\{face,body}\{pose,motion}\
+      sequences\<SEQ>\<SHOT>\<character>\{keyframe,mocap}\{face,body}\{pose,motion}\
+    <shot project>\data\studioLibrary\<login>\      <- plain folder, students organise it
+    ```
+    Changed same day (user, 2026-10-21, "I was being too prescriptive"):
+    the student's shot folder is just `data\studioLibrary\<login>\`, made
+    by the tool; students organise what's inside. Only the show library
+    has the fixed character/keyframe/mocap/face/body/pose/motion folders.
+    `<character>` = the film's ShotGrid Character assets, named like their
+    `maya\assets\character\` folders. A new character added in ShotGrid
+    gets its folders in every shot on the next desktop-tool sync (add
+    only, like the rest of `h_sync.py`).
+  - DECIDED (user, 2026-10-21): the desktop tool makes the show library
+    (`show\` + `sequences\`); the Project Tool makes the student's own
+    `data\studioLibrary\<login>\` when they set that shot as their
+    project, so H doesn't get folders for every student in every shot.
+  - **BUILT 2026-10-21** (mayapy-tested, not yet tried in Maya by the user):
+    - `desktopDev/h_sync.py`: plans/builds the show library folders for
+      every ShotGrid Character, show-wide and per worked-on shot; add only;
+      a new character gets folders everywhere on the next sync.
+    - `publishDev/pipeStudioLibrary.py`: `back_up()` (scratch -> H, the
+      show library + every shot's `data\studioLibrary`), `restore()` (H ->
+      scratch, the show library + the person's own shot folders),
+      `configure()` (Studio Library settings), `use_config()` (startup).
+      Sync rules: copy what's missing or newer, times kept, via a temp
+      name; never delete; never write an older copy over a newer one (the
+      student is told); skip `.studiolibrary\database.json` (per-item
+      `.studiolibrary\metadata.json`, tags/colours, does travel).
+    - Project Tool `set_project`: makes `data\studioLibrary\<login>` for a
+      shot, restores, and registers "`<FILM>` Show" + "`<FILM>` `<SHOT>`
+      (mine)" (the shot one opens by default; for an asset, the show one).
+      The pipe's entries are tagged `mpPipe_film` and replaced on each
+      switch; the person's own libraries are kept. Studio Library folders
+      are left out of the 1:1 folder mirror and its banner (they'd nag
+      every time someone shared a pose, and make empty shells of others'
+      items); `restore()` brings them down with their files instead.
+    - Publish UI: one backup after any successful publish; a backup
+      problem is a line in the report, never a failed publish.
+    - Studio Library only searches 5 folders deep by default; show
+      library items sit 8 deep. `pipeEnv.install()` (startup) points
+      `STUDIO_LIBRARY_CONFIG_PATH` at `<prefs>\mpPipe_studioLibrary_config.json`
+      (`recursiveSearchDepth` 12) unless something else set it; the Project
+      Tool also raises it in the running session.
+    - Known limits: a deleted item comes back on the next restore
+      (removing for good is a staff job on H); "reopen Studio Library if
+      it's open" after switching project; restore walks the H show library
+      on every Set Project (fine for NWF's ~3,600 folders; time it at
+      RMIT).
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:

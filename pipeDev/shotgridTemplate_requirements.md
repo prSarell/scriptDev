@@ -104,6 +104,10 @@ built yet), **SUGGESTION** (not agreed), **OPEN**.
 
 ## Not needed
 
+- No Shot -> Character links or mocap flag for the Studio Library folders:
+  every character gets keyframe + mocap folders in every shot (DECIDED
+  2026-10-21, spec §4b). Only the film's Character assets are read.
+
 - No new entities for cameras, caches or keyframes: they're identified by
   Shot/Asset id + department + version (spec §3, "The ID rule").
 - Students never have to create anything in ShotGrid for the tools to work.

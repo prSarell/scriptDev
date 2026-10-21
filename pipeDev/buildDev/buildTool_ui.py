@@ -98,6 +98,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self._get_roots = get_roots
         self._published = []     # everything on the H drive
         self._rows = []          # the shot's list: published entries shown in the table
+        self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
 
         # Which shot.
         self.film_combo = QtWidgets.QComboBox()
@@ -124,18 +125,27 @@ class BuildShotTab(QtWidgets.QWidget):
         add_btn = QtWidgets.QPushButton("Add to Shot")
         add_btn.clicked.connect(self._add_asset)
         pick = QtWidgets.QHBoxLayout()
-        pick.addWidget(QtWidgets.QLabel("Asset:"))
+        pick.addWidget(QtWidgets.QLabel("Add asset:"))
         pick.addWidget(self.asset_combo, 1)
-        pick.addWidget(QtWidgets.QLabel("Department:"))
+        pick.addWidget(QtWidgets.QLabel("as"))
         pick.addWidget(self.dept_combo)
         pick.addWidget(add_btn)
 
-        # The shot's asset list.
+        # The shot's asset list, filtered by department (user, 2026-10-21).
+        self.filter_combo = QtWidgets.QComboBox()
+        self.filter_combo.setToolTip("Show only one department's assets in the list. "
+                                     "Build Shot still builds the whole list.")
+        self.filter_combo.currentIndexChanged.connect(self._apply_filter)
+        show = QtWidgets.QHBoxLayout()
+        show.addWidget(QtWidgets.QLabel("Show:"))
+        show.addWidget(self.filter_combo)
+        show.addStretch(1)
         self.table = _table(["Asset", "Type", "Department", "Version",
                              "In this shot", "Status"])
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         remove_btn = QtWidgets.QPushButton("Remove from List")
-        remove_btn.setToolTip("Take assets that haven't been built yet off the list.")
+        remove_btn.setToolTip("Take the selected assets off the list. Only the list "
+                              "changes: anything already in your scene stays there.")
         remove_btn.clicked.connect(self._remove_rows)
         refresh_btn = QtWidgets.QPushButton("Refresh")
         refresh_btn.setToolTip("Look at the H drive again for new publishes. "
@@ -164,6 +174,7 @@ class BuildShotTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
         layout.addLayout(pick)
+        layout.addLayout(show)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
         layout.addWidget(build_btn)
@@ -217,7 +228,7 @@ class BuildShotTab(QtWidgets.QWidget):
         with whatever is already in this shot."""
         h_root, scratch_root = self._get_roots()
         film = self.film_combo.currentText()
-        self._published, self._rows = [], []
+        self._published, self._rows, self._removed = [], [], set()
         self.asset_combo.clear()
         self._render_table()
         try:
@@ -263,6 +274,9 @@ class BuildShotTab(QtWidgets.QWidget):
             elif p.get("kind") == "camera":
                 self._rows.append(self._row(p, p["latest"]))
         self._render_table()
+        self.status.show_message(
+            "" if self._published else "Nothing has been published for %s yet." % film,
+            ok=bool(self._published))
 
     def _row(self, p, chosen):
         """A list row. 'in_scene' is what the open scene already has (see
@@ -284,9 +298,6 @@ class BuildShotTab(QtWidgets.QWidget):
         entry = api.read_manifest(shot_dir).get(api.manifest_key(
             p["asset_type"], p["asset"], p["code"]))
         return api.link_state(shot_dir, entry) not in (api.MISSING, api.STALE)
-        self.status.show_message(
-            "" if self._published else "Nothing has been published for %s yet." % film,
-            ok=bool(self._published))
 
     def _on_refresh_clicked(self):
         # A scene opened from another drive since the tool opened: follow it.
@@ -304,9 +315,13 @@ class BuildShotTab(QtWidgets.QWidget):
         built yet stay, and version choices stay where they still exist."""
         kept = [(self._key(r), r.get("chosen")) for r in self._rows]
         picked = (self.asset_combo.currentData(), self.dept_combo.currentData())
+        removed = self._removed
         self._load_shot()
         if not self._published:
             return
+        # Taken off the list stays off on a refresh (until the shot changes).
+        self._removed = removed
+        self._rows = [r for r in self._rows if self._key(r) not in removed]
         by_key = dict((self._key(p), p) for p in self._published)
         in_list = dict((self._key(r), r) for r in self._rows)
         for key, chosen in kept:
@@ -385,6 +400,31 @@ class BuildShotTab(QtWidgets.QWidget):
                         "Up to date" + (" (full copy, not linked)" if state == api.COPY else ""),
                         "#7fbf7f"))
         self.table.resizeColumnsToContents()
+        self._fill_filter()
+
+    def _fill_filter(self):
+        """The Show menu: All, plus each department in the list. Keeps the
+        current choice while that department is still in the list."""
+        current = self.filter_combo.currentData()
+        codes = []
+        for p in self._rows:
+            if p["code"] not in codes:
+                codes.append(p["code"])
+        order = api.DEPT_CODES + [api.CAMERA_CODE]
+        codes.sort(key=lambda c: order.index(c) if c in order else len(order))
+        self.filter_combo.blockSignals(True)
+        self.filter_combo.clear()
+        self.filter_combo.addItem("All departments", None)
+        for code in codes:
+            self.filter_combo.addItem(api.DEPT_LABELS.get(code, code), code)
+        self.filter_combo.setCurrentIndex(max(self.filter_combo.findData(current), 0))
+        self.filter_combo.blockSignals(False)
+        self._apply_filter()
+
+    def _apply_filter(self, *args):
+        code = self.filter_combo.currentData()
+        for row, p in enumerate(self._rows):
+            self.table.setRowHidden(row, bool(code) and p["code"] != code)
 
     # -- list -------------------------------------------------------------
 
@@ -399,25 +439,31 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("%s %s is already in the list."
                                      % (p["asset"], api.DEPT_LABELS.get(code, code)), ok=False)
             return
+        self._removed.discard(self._key(p))
         self._rows.append(self._row(p, p["latest"]))
+        if self.filter_combo.currentData() not in (None, code):
+            self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
 
     def _remove_rows(self):
-        shot_dir = self._shot_dir()
-        manifest = api.read_manifest(shot_dir) if shot_dir else {}
-        rows = sorted(set(i.row() for i in self.table.selectedIndexes()), reverse=True)
-        kept = []
+        """Take the selected rows off the list (user, 2026-10-21: list only).
+        The open scene and the shot's record aren't touched, so Build Shot
+        simply leaves those assets alone."""
+        rows = sorted(set(i.row() for i in self.table.selectedIndexes()
+                          if not self.table.isRowHidden(i.row())), reverse=True)
+        if not rows:
+            self.status.show_message("Click the rows to remove first (on their name, "
+                                     "not the Version menu).", ok=False)
+            return
+        gone = []
         for r in rows:
-            if self._key(self._rows[r]) in manifest:
-                kept.append(self._rows[r]["asset"])
-            else:
-                del self._rows[r]
+            self._removed.add(self._key(self._rows[r]))
+            gone.insert(0, "%s %s" % (self._rows[r]["asset"], api.DEPT_LABELS.get(
+                self._rows[r]["code"], self._rows[r]["code"])))
+            del self._rows[r]
         self._render_table()
-        if kept:
-            self.status.show_message(
-                "Already built into the shot, so left in the list: %s\n"
-                "(Removing built assets from a shot isn't supported yet.)"
-                % ", ".join(kept), ok=False)
+        self.status.show_message("Taken off the list: %s\n(Anything already in your scene "
+                                 "stays there.)" % ", ".join(gone))
 
     # -- actions ----------------------------------------------------------
 
@@ -425,7 +471,11 @@ class BuildShotTab(QtWidgets.QWidget):
         shot_dir = self._shot_dir()
         if not shot_dir:
             return
-        api.set_maya_project(shot_dir)
+        try:
+            api.set_maya_project(shot_dir)
+        except Exception as e:
+            self.status.show_message(str(e), ok=False)
+            return
         self.status.show_message("Maya project set to %s" % shot_dir)
 
     def _build_shot(self):
@@ -445,8 +495,11 @@ class BuildShotTab(QtWidgets.QWidget):
                 return
 
         lines, warnings, replaced, changed_rigs = [], [], [], []
-        if api.ensure_maya_project(shot_dir):
-            lines.append("Maya project set to %s" % os.path.basename(shot_dir))
+        try:
+            if api.ensure_maya_project(shot_dir):
+                lines.append("Maya project set to %s" % os.path.basename(shot_dir))
+        except Exception as e:
+            warnings.append(str(e))
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for p in self._rows:

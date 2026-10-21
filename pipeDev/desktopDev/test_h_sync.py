@@ -52,5 +52,29 @@ except RuntimeError:
     check("never writes over an existing folder", open(os.path.join(house, "workspace.mel")).read() == "// edited")
 check("case differences count as the same folder (macOS)",
       h_sync._key(os.path.join(maya, "assets", "prop", "Backpack")) == h_sync._key(os.path.join(maya, "assets", "prop", "backpack")))
+# -- Studio Library show folders (spec §4b) ----------------------------------
+chars = assets + [{"code": "Scout", "type": "Character"}, {"code": "Willie Wagtail", "type": "Character"}]
+plan = h_sync.plan_sync(H, film, shots, chars)
+lib = os.path.join(maya, "studioLibrary")
+check("library: characters from ShotGrid, folder-named", plan["characters"] == ["scout", "willieWagtail"])
+check("library: 2 characters x (show + 2 shots) x 8 end folders",
+      len(plan["library"]) == 2 * 3 * 8)
+check("library: no folders for reference or sequence-less shots",
+      not any("FULL_CUT" in p or "LOOSE" in p for p in plan["library"]))
+h_sync.apply_sync(H, film, plan, log=logs.append)
+check("library: show + shot folders built",
+      os.path.isdir(os.path.join(lib, "show", "scout", "keyframe", "face", "pose"))
+      and os.path.isdir(os.path.join(lib, "sequences", "SEQ010", "SEQ010_020", "willieWagtail",
+                                     "mocap", "body", "motion")))
+pose = os.path.join(lib, "show", "scout", "keyframe", "face", "pose", "smile.pose")
+os.makedirs(pose)
+open(os.path.join(pose, "pose.json"), "w").write("{}")
+plan = h_sync.plan_sync(H, film, shots, chars)
+check("library: second run adds nothing", not plan["library"])
+h_sync.apply_sync(H, film, plan, log=logs.append)
+check("library: what students saved is never touched", os.path.isfile(os.path.join(pose, "pose.json")))
+plan = h_sync.plan_sync(H, film, shots, chars + [{"code": "ATKS", "type": "Character"}])
+check("library: a new character gets folders everywhere, the rest left as is",
+      len(plan["library"]) == 3 * 8 and all(os.sep + "ATKS" + os.sep in p for p in plan["library"]))
 check("Maya never loaded", not any(m == "maya" or m.startswith("maya.") for m in sys.modules))
 print("%d/%d passed" % (sum(ok), len(ok)))

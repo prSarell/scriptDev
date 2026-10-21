@@ -21,6 +21,13 @@ def check(label, cond):
     ok.append(bool(cond)); print("PASS" if cond else "FAIL", label)
 
 base = tempfile.mkdtemp(prefix="projtool_")
+# Set Project also sets up Studio Library (spec §4b): its settings go to a
+# temp file here, never the real ones.
+try:
+    import studiolibrary
+    studiolibrary.config.set("settingsPath", os.path.join(base, "LibraryWidget.json"))
+except ImportError:
+    pass
 H, SC = os.path.join(base, "H"), os.path.join(base, "scratch")
 os.makedirs(SC)
 

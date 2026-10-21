@@ -25,6 +25,7 @@ import shutil
 import maya.cmds as cmds
 
 import publishTool_api as pub
+import pipeStudioLibrary as slib
 from publishTool_api import PublishError
 
 WORKSPACE = "workspace.mel"
@@ -139,6 +140,10 @@ def _dirs(root, film):
     if not os.path.isdir(top):
         return dirs, workspaces
     for dirpath, dirnames, filenames in os.walk(top):
+        # Studio Library folders aren't structure: they come and go with
+        # people's poses, and set_studio_library brings them down with
+        # their files (spec §4b).
+        dirnames[:] = [d for d in dirnames if d != slib.FOLDER]
         rel = (film,) + tuple(p for p in os.path.relpath(dirpath, top).split(os.sep) if p != ".")
         dirs.add(rel)
         if WORKSPACE in filenames:
@@ -258,6 +263,41 @@ def set_project(h_root, scratch_root, rel, login=None, progress=None):
     if not os.path.isdir(mine):
         os.makedirs(mine)
         done.append("made your scenes\\%s folder" % login)
-    cmds.workspace(project, openWorkspace=True)
+    done += set_studio_library(h_root, scratch_root, rel, login)
+    pub.set_maya_project(project)
     done.append("Maya project set")
     return project, done
+
+
+def set_studio_library(h_root, scratch_root, rel, login):
+    """Spec §4b: a shot gets the person's own data\\studioLibrary\\<login>
+    folder; the show library and their shot libraries come down from the H
+    drive; Studio Library is pointed at the show library and (for a shot)
+    their shot library. Never stops the project being set: problems come
+    back as a line in what was done."""
+    done = []
+    film = rel[0]
+    project = scratch_project(scratch_root, rel)
+    is_shot = len(rel) == 5 and rel[2] == "sequences"
+    try:
+        shot_lib = slib.shot_library(project, login) if is_shot else None
+        if shot_lib and not os.path.isdir(shot_lib):
+            os.makedirs(shot_lib)
+            done.append("made your Studio Library folder for this shot "
+                        "(data\\studioLibrary\\%s)" % login)
+        text = slib.describe(dict(slib.restore(h_root, scratch_root, film, login), kept=[]),
+                             "brought down from the H drive")
+        if text:
+            done.append(text)
+        show_lib = slib.show_library(scratch_root, film)
+        if not os.path.isdir(show_lib):
+            os.makedirs(show_lib)
+        names = slib.configure(film, show_lib, shot_lib, rel[-1] if is_shot else None)
+        if names:
+            done.append("Studio Library set to %s (reopen Studio Library if it's open)"
+                        % " and ".join(names))
+        elif names is None:
+            done.append("Studio Library isn't installed, so it wasn't set up")
+    except Exception as e:
+        done.append("Studio Library not set up: %s" % e)
+    return done

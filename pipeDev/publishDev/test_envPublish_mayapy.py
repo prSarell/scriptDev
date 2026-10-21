@@ -1,0 +1,216 @@
+# Environment publish (spec §4c, DECIDED 2026-10-21): published from a
+# shot's layout scene to an environment asset by its sets. landscape_SET
+# stays put and is cleaned up like a model; building_SET keeps transforms
+# and gets a <group>_LOC per building; sky_SET keeps transforms, locked,
+# its image travels; a one-frame .abc of landscape + buildings goes beside
+# the publish; the working scene is never changed. Built like the user's
+# SEQ010_140 environment_001.ma. ShotGrid and the playblast are stubbed.
+# Run: mayapy test_envPublish_mayapy.py
+import sys, os, stat, json, shutil, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "buildDev")]
+from PySide6 import QtGui
+import maya.standalone; maya.standalone.initialize()
+import maya.cmds as cmds
+import publishTool_api as api
+import publishTool_env as env
+import buildTool_api as build
+
+ok = []
+def check(label, cond):
+    ok.append(bool(cond)); print("PASS" if cond else "FAIL", label)
+
+base = tempfile.mkdtemp(prefix="envpub_")
+H, SC = os.path.join(base, "H"), os.path.join(base, "scratch")
+FILM = "NWF_SHF"
+for asset in ("scoutsHouseLandscape", "shed"):
+    os.makedirs(os.path.join(H, FILM, "maya", "assets", "environment", asset, "scenes"))
+shot_scenes = os.path.join(SC, FILM, "maya", "sequences", "SEQ010", "SEQ010_140", "scenes")
+os.makedirs(shot_scenes)
+outside = os.path.join(base, "projects", "nwf_PREVIS", "sourceimages", "skys")
+os.makedirs(outside)
+sky_png = os.path.join(outside, "sky_blue_wispy_001.png")
+image = QtGui.QImage(4, 4, QtGui.QImage.Format_RGB32); image.fill(0x6699cc); image.save(sky_png)
+
+api.who = lambda: "scout"
+api.artist_name = lambda login: "Test Person"
+api.check_rv = lambda: None
+api.find_rvio = lambda: ""
+api.find_shotgrid_asset = lambda plan, h_root: {"id": 4242, "code": plan["asset"]}
+frames = os.path.join(base, "frames")
+def fake_playblast(plan, count, objects=None, camera=None):
+    shown.append(sorted(o.split("|")[-1] for o in objects or []))
+    os.makedirs(frames, exist_ok=True)
+    return frames, []
+shown = []
+api.playblast_frames = fake_playblast
+class FakeSG(object):
+    def upload_playblast(self, *a, **k): return {"id": 1, "type": "Version"}
+    def get_connection(self): raise RuntimeError("no ShotGrid in the test")
+api._shotgrid = lambda: FakeSG()
+TARGET = ("environment", "scoutsHouseLandscape")
+
+
+def layout_scene(pieces_moved=False):
+    """environment > sky / landscape / shed, as in environment_001.ma, but
+    with shed's placement on the group (or on its pieces, the problem case)."""
+    cmds.file(new=True, force=True)
+    top = cmds.group(empty=True, name="environment")
+    sky = cmds.group(empty=True, name="sky", parent=top)
+    plane = cmds.imagePlane(fileName=sky_png.replace("\\", "/"))
+    plane = cmds.parent(cmds.rename(plane[0], "imagePlanesky"), sky)[0]
+    cmds.rename(cmds.listRelatives(plane, shapes=True, fullPath=True)[0], "imagePlaneskyShape")
+    cmds.setAttr("imagePlanesky.translate", -6700, 11748, -89214)
+    land = cmds.group(empty=True, name="landscape", parent=top)
+    ground = cmds.polyPlane(name="ground")[0]
+    cmds.parent(ground, land)
+    cmds.setAttr(ground + ".translate", 0, -169, -41792); cmds.setAttr(ground + ".scale", 800, 800, 800)
+    shed = cmds.group(empty=True, name="shed", parent=top)
+    box = cmds.polyCube(name="pCube1")[0]
+    cmds.parent(box, shed)
+    cmds.setAttr(box + ".scale", 24, 5, 58)
+    where = (shed if not pieces_moved else box)
+    cmds.setAttr(where + ".translate", -8759, 61, -64975); cmds.setAttr(where + ".rotateY", -9.67)
+    camera = cmds.camera(name="camera1")[0]
+    sets = [cmds.sets(["environment|landscape|ground"], name="landscape_SET"),
+            cmds.sets(["environment|shed"], name="building_SET"),
+            cmds.sets(["environment|sky|imagePlanesky"], name="sky_SET")]
+    cmds.sets(sets, name="environment_SET")
+    scene = os.path.join(shot_scenes, "environment_001.ma")
+    cmds.file(rename=scene); cmds.file(save=True, type="mayaAscii")
+    return scene
+
+
+def refused(text, **kw):
+    try:
+        api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, **kw)
+    except api.PublishError as e:
+        print("   ", str(e).splitlines()[0])
+        return text in str(e)
+    return False
+
+# -- Refusals, before anything is made -----------------------------------------
+scene = layout_scene()
+cmds.delete("environment_SET")
+check("no environment_SET: refused, explaining the sets", refused("no environment_SET"))
+scene = layout_scene()
+cmds.sets("environment|shed", add="landscape_SET")
+check("one thing in two roles: refused", refused("Each thing has one role"))
+scene = layout_scene()
+cmds.sets("environment|shed", remove="building_SET")
+cmds.sets("environment|shed|pCube1", add="building_SET")
+check("a building that isn't a group: refused", refused("isn't a group"))
+check("nothing reached the H drive", not os.listdir(os.path.join(
+    H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape", "scenes")))
+
+# -- The publish ---------------------------------------------------------------
+scene = layout_scene()
+before = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|shed.translate"),
+          cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
+          sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
+plan = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|shed.translate"),
+         cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
+         sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
+check("published from the shot's layout scene to the environment asset",
+      os.path.basename(plan["dest"]) == "scoutsHouseLandscape_scout_env_v001.ma"
+      and os.sep + os.path.join("environment", "scoutsHouseLandscape", "scenes", "scout") in plan["dest"])
+check("read-only on H", not os.access(plan["dest"], os.W_OK))
+check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
+check("working scene unchanged (names, placements, history, sets, image path)", before == after)
+check("playblast showed the environment's things", shown[-1] == ["ground", "imagePlanesky", "shed"])
+check("warned: the sky image isn't in an asset's sourceimages",
+      any("sourceimages" in w for w in plan.get("warnings", [])))
+check("no warning about shed's name (shed is an asset on H)",
+      not any("No asset on the H drive" in w for w in plan.get("warnings", [])))
+
+cmds.file(new=True, force=True); cmds.file(plan["dest"], open=True, force=True)
+G = "scoutsHouseLandscape_env_GRP"
+check("top is the stamped pipe group, locked", cmds.nodeType(G) == "dagContainer"
+      and cmds.getAttr(G + ".pipe_department") == "env" and cmds.getAttr(G + ".tx", lock=True))
+check("laid out by role", sorted(cmds.listRelatives(G, children=True)) ==
+      ["buildings", "landscape", "locators", "sky"])
+g = G + "|landscape|ground"
+bb = cmds.exactWorldBoundingBox(g)
+check("landscape frozen and history gone, but still where it was",
+      cmds.getAttr(g + ".translate")[0] == (0, 0, 0) and abs((bb[2] + bb[5]) / 2 + 41792) < 1
+      and not cmds.ls(type="polyPlane"))
+s = G + "|buildings|shed"
+check("building keeps its transforms", [round(v, 2) for v in cmds.getAttr(s + ".translate")[0]]
+      == [-8759, 61, -64975] and round(cmds.getAttr(s + ".rotateY"), 2) == -9.67)
+loc = G + "|locators|shed_LOC"
+same = all(abs(a - b) < 1e-3 for a, b in zip(cmds.xform(loc, query=True, worldSpace=True, matrix=True),
+                                             cmds.xform(s, query=True, worldSpace=True, matrix=True)))
+check("shed_LOC sits exactly at the building's placement", cmds.objExists(loc) and same)
+k = G + "|sky|imagePlanesky"
+check("sky keeps its transforms, locked", round(cmds.getAttr(k + ".tx")) == -6700
+      and cmds.getAttr(k + ".tx", lock=True) and cmds.getAttr(k + ".ry", lock=True))
+check("sets come with it, holding the copies",
+      sorted(cmds.sets("environment_SET", query=True)) == ["building_SET", "landscape_SET", "sky_SET"]
+      and [n.split("|")[-1] for n in cmds.sets("building_SET", query=True)] == ["shed"])
+imn = cmds.getAttr(cmds.listRelatives(k, shapes=True, fullPath=True)[0] + ".imageName")
+check("sky image points at the publish's copy through $PIPE_SCRATCH",
+      imn.startswith("$PIPE_SCRATCH/NWF_SHF/maya/publish/assets/environment/scoutsHouseLandscape/"
+                     "sourceimages/scout/scoutsHouseLandscape_scout_env_v001/"))
+tex_dir = os.path.join(H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape",
+                       "sourceimages", "scout", "scoutsHouseLandscape_scout_env_v001")
+check("sky image copied to H for this version", os.path.isfile(os.path.join(tex_dir, "sky_blue_wispy_001.png")))
+check("stamp lists buildings and locators",
+      json.loads(cmds.getAttr(G + ".pipe_locators")) == ["shed_LOC"]
+      and json.loads(cmds.getAttr(G + ".pipe_buildings")) == ["shed"])
+
+cmds.file(new=True, force=True)
+cmds.loadPlugin("AbcImport", quiet=True)
+cmds.AbcImport(env.cache_path(plan).replace("\\", "/"), mode="import")
+check("the cache holds the landscape and buildings, not the sky",
+      cmds.objExists("ground") and cmds.objExists("pCube1") and not cmds.ls(type="imagePlane"))
+
+# -- Build: pulled with its cache; a real house snapped to the locator ----------
+published = [p for p in build.list_published(H, FILM) if p["code"] == env.ENV_CODE]
+check("Build lists the environment publish", len(published) == 1
+      and published[0]["asset"] == "scoutsHouseLandscape")
+maya_dir = os.path.join(SC, FILM, "maya")
+dest, _ = build.copy_published(plan["dest"], maya_dir)
+check("pulled with its cache and its sky image",
+      os.path.isfile(os.path.splitext(dest)[0] + ".abc")
+      and os.path.isfile(os.path.join(build.texture_folder_of(dest), "sky_blue_wispy_001.png")))
+check("clearing that version takes the cache too", os.path.splitext(dest)[0] + ".abc"
+      in build.version_files(dest))
+cmds.file(new=True, force=True)
+cmds.file(dest, reference=True, namespace="scoutsHouseLandscape_env")
+house = api.make_pipe_group("shed_model_GRP")          # a model publish's group: locked at 0,0,0
+cube = cmds.polyCube(name="shedModel")[0]
+cmds.parent(cube, house)
+api.finish_pipe_group(house)
+rloc = "scoutsHouseLandscape_env:shed_LOC"
+cmds.parent(house, cmds.ls(rloc, long=True)[0], relative=True)
+placed = cmds.xform(cmds.ls("shedModel", long=True)[0], query=True, worldSpace=True, translation=True)
+check("a published house parented under its locator lands at the placement, still locked",
+      [round(v) for v in placed] == [-8759, 61, -64975]
+      and cmds.getAttr(cmds.ls("shed_model_GRP", long=True)[0] + ".tx", lock=True))
+
+# -- A building group with no transforms (like environment_001.ma's shed):
+#    published, not refused; the locator comes from its pieces ---------------
+scene = layout_scene(pieces_moved=True)
+box = cmds.exactWorldBoundingBox("environment|shed")
+plan2 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+check("no transforms on the building: still published", plan2["version"] == 2)
+check("... and the report says how its locator was placed",
+      any("shed has no transforms" in w and "-9.7" in w for w in plan2.get("warnings", [])))
+cmds.file(new=True, force=True); cmds.file(plan2["dest"], open=True, force=True)
+loc = G + "|locators|shed_LOC"
+t = cmds.xform(loc, query=True, worldSpace=True, translation=True)
+check("locator at the bottom-centre of the pieces",
+      abs(t[0] - (box[0] + box[3]) / 2) < 1e-2 and abs(t[1] - box[1]) < 1e-2
+      and abs(t[2] - (box[2] + box[5]) / 2) < 1e-2)
+check("... turned like the pieces", abs(cmds.xform(loc, query=True, worldSpace=True,
+                                                   rotation=True)[1] + 9.67) < 1e-2)
+check("... and the building itself is left as it was (group at 0, pieces placed)",
+      cmds.getAttr(G + "|buildings|shed.translate")[0] == (0, 0, 0)
+      and round(cmds.getAttr(G + "|buildings|shed|pCube1.translateX")) == -8759)
+print("%d/%d passed" % (sum(ok), len(ok)))
+for root, dirs, files in os.walk(base):
+    for f in files:
+        os.chmod(os.path.join(root, f), stat.S_IWRITE)
+shutil.rmtree(base, ignore_errors=True)

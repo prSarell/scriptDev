@@ -32,7 +32,16 @@ from publishTool_api import PublishError
 FOLDER = "sourceimages"
 # Node type -> the attribute holding its file path.
 TEXTURE_NODES = {"file": "fileTextureName", "aiImage": "filename"}
+# Free-standing image planes (an environment's sky, spec §4c) carry their
+# picture too, but only when asked: a rig's or model's camera reference
+# planes never travel.
+IMAGE_PLANES = {"imagePlane": "imageName"}
 VAR = "PIPE_SCRATCH"            # same variable as references (pipeEnv)
+
+
+def _attr(node):
+    node_type = cmds.nodeType(node)
+    return TEXTURE_NODES.get(node_type) or IMAGE_PLANES[node_type]
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +69,14 @@ def texture_nodes(objects):
     return sorted(n for n in nodes if not cmds.referenceQuery(n, isNodeReferenced=True))
 
 
+def image_plane_nodes(objects):
+    """Image plane shapes in (or under) the given objects."""
+    nodes = cmds.listRelatives(objects, allDescendents=True, fullPath=True,
+                               type="imagePlane") or []
+    nodes += cmds.ls(objects, type="imagePlane", long=True) or []
+    return sorted(set(n for n in nodes if not cmds.referenceQuery(n, isNodeReferenced=True)))
+
+
 def _short(node):
     """Name without path or namespace: what the node is called in the
     published file (Publish takes namespaces off)."""
@@ -78,14 +95,14 @@ def node_files(node):
     """(path as the node stores it, [files on disk]) for one texture node.
     UDIM tiles and image sequences give every matching file; an Arnold .tx
     beside a texture comes with it. [] = missing."""
-    attr = TEXTURE_NODES[cmds.nodeType(node)]
-    written = cmds.getAttr("%s.%s" % (node, attr)) or ""
+    node_type = cmds.nodeType(node)
+    written = cmds.getAttr("%s.%s" % (node, _attr(node))) or ""
     if not written.strip():
         return written, None            # no texture set: nothing to carry
     path = _resolve(written)
     files = []
-    if cmds.nodeType(node) == "file":
-        tiling = cmds.getAttr(node + ".uvTilingMode")
+    if node_type in ("file", "imagePlane"):
+        tiling = cmds.getAttr(node + ".uvTilingMode") if node_type == "file" else 0
         frames = cmds.getAttr(node + ".useFrameExtension")
         if tiling or frames:
             from maya.app.general import fileTexturePathResolver as ftr
@@ -100,11 +117,14 @@ def node_files(node):
     return written, files
 
 
-def collect(objects):
-    """[{uuid, node, attr, written, files}] for the publish's textures.
-    Raises PublishError listing any that are missing on disk."""
+def collect(objects, image_planes=False):
+    """[{uuid, node, attr, written, files}] for the publish's textures
+    (plus image planes' pictures if image_planes). Raises PublishError
+    listing any that are missing on disk."""
     entries, missing = [], []
-    for node in texture_nodes(objects):
+    nodes = texture_nodes(objects) + (image_plane_nodes(objects) if image_planes and objects
+                                      else [])
+    for node in nodes:
         written, files = node_files(node)
         if files is None:
             continue
@@ -112,8 +132,7 @@ def collect(objects):
             missing.append("%s: %s" % (node.split("|")[-1], written))
             continue
         entries.append({"uuid": cmds.ls(node, uuid=True)[0], "node": node,
-                        "attr": TEXTURE_NODES[cmds.nodeType(node)],
-                        "written": written, "files": files})
+                        "attr": _attr(node), "written": written, "files": files})
     if missing:
         raise PublishError(
             "These textures are missing, so the publish would show them broken "

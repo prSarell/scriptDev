@@ -306,9 +306,11 @@ def cache_roots(item):
         namespace = _namespace(item["root"])
         cache_set = ("%s:%s" % (namespace, api.CACHE_SET)) if namespace else api.CACHE_SET
         if cmds.objExists(cache_set):
-            members = cmds.ls(cmds.sets(cache_set, query=True) or [], long=True, type="transform")
+            # Shapes and components count as their transforms (the rig
+            # publish accepts meshes put straight in the set).
+            members = api.cache_transforms(cmds.sets(cache_set, query=True) or [])
             if members:
-                return members
+                return [m for m in members if m not in api.nested_in(members)]
     return [item["root"]]
 
 

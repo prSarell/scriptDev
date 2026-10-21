@@ -40,6 +40,7 @@ import maya.cmds as cmds
 
 DEPARTMENTS = [
     ("Modeling", "model"),
+    ("Environment", "env"),     # spec §4c: publishTool_env
     ("Rigging",  "rig"),
     ("Previs",   "previs"),
     ("Anim",     "anim"),
@@ -139,6 +140,33 @@ def resolve_root(path):
 
 def _same_path(a, b):
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def set_maya_project(path):
+    """Set the Maya project the way File > Set Project does, for the Build
+    and Project tools. A bare `workspace -openWorkspace` (what both used
+    to do) leaves File > Open in the old project, and the project isn't in
+    Recent Projects or remembered next time, so it looked like it hadn't
+    been set (user, 2026-10-21). A folder without a workspace.mel gets
+    Maya's default one, as Set Project does. Raises PublishError if the
+    project didn't change."""
+    import maya.mel as mel
+    if not os.path.isdir(path):
+        raise PublishError("Can't set the Maya project: %s isn't there." % path)
+    mel_path = os.path.normpath(path).replace("\\", "/")
+    if cmds.about(batch=True):
+        # No UI (mayapy): Set Project's file-browser and menu steps don't apply.
+        if not os.path.isfile(os.path.join(path, "workspace.mel")):
+            mel.eval('source "setProject.mel"')
+            mel.eval('sp_createAndSetDefaultProject("%s", false)' % mel_path)
+        cmds.workspace(mel_path, openWorkspace=True)
+    else:
+        mel.eval('setProject "%s"' % mel_path)
+    now = cmds.workspace(query=True, rootDirectory=True) or ""
+    if not _same_path(now, path):
+        raise PublishError("Maya didn't switch project (it's still %s). Try File > Set "
+                           "Project and pick %s." % (now, path))
+    return path
 
 
 def check_roots(h_root, scratch_root):
@@ -557,6 +585,7 @@ class _NoNamespaces(object):
 CACHE_SET = "cache_SET"
 RIG_CODE = "rig"
 MODEL_CODE = "model"
+ENV_CODE = "env"
 GEOMETRY_TYPES = ("mesh", "nurbsSurface", "subdiv")
 # A Model publish freezes transforms and deletes history, which would wreck
 # a rig (user, 2026-10-20), so it refuses anything carrying these.
@@ -602,6 +631,25 @@ def _under(node, roots):
     return False
 
 
+def cache_transforms(members):
+    """The transforms a cache_SET's members stand for (long names, no
+    repeats): a shape or a component counts as its transform. What a shot
+    publish gives Alembic as roots, so the rig check and the shot cache
+    read the set the same way."""
+    found = []
+    for node in cmds.ls(members, objectsOnly=True, long=True) or []:
+        if cmds.objectType(node, isAType="shape"):
+            node = (cmds.listRelatives(node, parent=True, fullPath=True) or [node])[0]
+        if cmds.objectType(node, isAType="transform") and node not in found:
+            found.append(node)
+    return found
+
+
+def nested_in(nodes):
+    """The nodes (long names) that sit below another one of them."""
+    return [n for n in nodes if any(n.startswith(o + "|") for o in nodes if o != n)]
+
+
 def check_cache_set(objects):
     """A Rigging publish needs exactly one cache_SET (made by the rigger,
     never by the tool) holding geometry, all of it inside what's being
@@ -634,6 +682,14 @@ def check_cache_set(objects):
     if not geometry:
         raise PublishError("%s has no geometry in it (only %s). Add the meshes to cache."
                            % (cache_set, ", ".join(members[:5])) + how)
+    # Alembic can't take a group and something inside it as separate roots,
+    # so a shot's cache of this rig would fail.
+    nested = nested_in(cache_transforms(members))
+    if nested:
+        raise PublishError(
+            "%s holds both groups and things inside them: %s\nA shot's cache can't take "
+            "both. Keep the group or the meshes inside it in %s, not both."
+            % (cache_set, ", ".join(n.split("|")[-1] for n in nested[:5]), CACHE_SET))
     if objects:
         outside = [m for m in members if not _under(m, objects)]
         if outside:
@@ -1659,7 +1715,20 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     after the H-drive write succeeded)."""
     h_root = resolve_root(h_root)
     check_script_nodes()
-    plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
+    environment = None
+    if code == ENV_CODE:
+        # From a shot's layout scene or an asset scene, to an environment
+        # asset, by its sets (spec §4c).
+        import publishTool_env as env
+        import publishTool_textures as tex
+        plan = env.plan_environment(scene_path, h_root, scratch_root, target)
+        environment = env.check_environment(h_root, plan["film"])
+        plan.setdefault("warnings", []).extend(environment["warnings"])
+        # A missing picture stops the publish here, before anything is made.
+        tex.collect(environment[env.LANDSCAPE] + environment[env.BUILDINGS]
+                    + environment[env.SKY], image_planes=True)
+    else:
+        plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
     plan["objects"] = list(objects or [])
     face_fill = (None, [])
     textures, dna = [], []
@@ -1679,11 +1748,17 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
         dna = tex.collect_dna()
     plan["sg_asset"] = find_shotgrid_asset(plan, h_root)
     check_rv()
-    plan["frames_folder"], files = playblast_frames(plan, frame_count, plan["objects"])
+    shown = plan["objects"]
+    if environment:
+        shown = environment[env.LANDSCAPE] + environment[env.BUILDINGS] + environment[env.SKY]
+    plan["frames_folder"], files = playblast_frames(plan, frame_count, shown)
 
     plan["namespaces_removed"] = []
     try:
-        if code == MODEL_CODE:
+        if environment:
+            env.export_environment_to_h_drive(plan, scene_path, environment,
+                                              plan.setdefault("warnings", []))
+        elif code == MODEL_CODE:
             # Always a clean copy in its pipe group (spec §4 item 6a).
             export_model_to_h_drive(plan["objects"], plan, scene_path)
         elif code == RIG_CODE:
