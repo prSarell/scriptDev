@@ -2,11 +2,12 @@
 Pipe Picker — the row of dropdowns the Publish and Build tools share
 (user, 2026-10-22): how a student says what they're publishing or building.
 
-    Film | Department | Asset or Shot | Type or Sequence | Asset or Shot   [-] [+]
+    Film | Asset or Shot | Department | Type or Sequence | Asset or Shot   [-] [+]
 
-The department decides Asset or Shot (Rigging is always an asset,
-Animation always a shot), so that dropdown follows it. The last two list
-what the tool says fits: asset types and assets, or sequences and shots.
+Asset or Shot is the student's choice; the Department list shows only
+that side's departments (Rigging is an asset department, Animation a shot
+one). The last two list what the tool says fits: asset types and assets,
+or sequences and shots.
 + adds the picked thing to the tool's list, - takes the highlighted rows
 off it. Each tool does the adding and removing itself.
 """
@@ -44,7 +45,8 @@ def _set_items(combo, items, keep=None):
 
 
 class TargetPicker(QtWidgets.QWidget):
-    """departments: [(label, code, kind, live)], kind ASSET or SHOT; not
+    """departments: [(label, code, kind, live)], kind ASSET or SHOT (the
+    side it's listed under); not
     live shows as "(coming soon)". items_for(film, code, kind) returns the
     [(group, name)] that fit, group being the asset type or sequence."""
 
@@ -60,15 +62,12 @@ class TargetPicker(QtWidgets.QWidget):
 
         self.film_combo = QtWidgets.QComboBox()
         self.film_combo.setToolTip("Film")
-        self.dept_combo = QtWidgets.QComboBox()
-        self.dept_combo.setToolTip("Department")
-        _set_items(self.dept_combo, [(label if live else "%s (coming soon)" % label, code, live)
-                                     for label, code, _, live in departments])
         self.kind_combo = QtWidgets.QComboBox()
         _set_items(self.kind_combo, [(label, kind, True) for kind, label in KIND_LABELS])
-        self.kind_combo.setEnabled(False)
-        self.kind_combo.setToolTip("Set by the department: Rigging is always an asset, "
-                                   "Animation always a shot.")
+        self.kind_combo.setToolTip("Asset or Shot: sets which departments are listed.")
+        self.dept_combo = QtWidgets.QComboBox()
+        self.dept_combo.setToolTip("Department")
+        self._fill_departments()
         self.group_combo = QtWidgets.QComboBox()
         self.name_combo = QtWidgets.QComboBox()
         self.name_combo.setMinimumWidth(160)
@@ -81,13 +80,14 @@ class TargetPicker(QtWidgets.QWidget):
 
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
-        for combo in (self.film_combo, self.dept_combo, self.kind_combo, self.group_combo):
+        for combo in (self.film_combo, self.kind_combo, self.dept_combo, self.group_combo):
             row.addWidget(combo)
         row.addWidget(self.name_combo, 1)
         row.addWidget(self.remove_btn)
         row.addWidget(self.add_btn)
 
         self.film_combo.currentIndexChanged.connect(lambda *_: self.refill())
+        self.kind_combo.currentIndexChanged.connect(lambda *_: self._fill_departments(True))
         self.dept_combo.currentIndexChanged.connect(lambda *_: self.refill())
         self.group_combo.currentIndexChanged.connect(lambda *_: self._fill_names())
         self.remove_btn.clicked.connect(self.remove_clicked)
@@ -102,7 +102,7 @@ class TargetPicker(QtWidgets.QWidget):
         return self.dept_combo.currentData()
 
     def kind(self):
-        return self._kinds.get(self.department(), ASSET)
+        return self.kind_combo.currentData() or ASSET
 
     def group(self):
         return self.group_combo.currentData()
@@ -118,19 +118,30 @@ class TargetPicker(QtWidgets.QWidget):
 
     def set_current(self, film=None, code=None, group=None, name=None):
         """Pick these (any left out stay as they are), e.g. what the open
-        scene is."""
-        for combo, data in ((self.film_combo, film), (self.dept_combo, code)):
+        scene is. A department also picks its side, Asset or Shot."""
+        for combo, data in ((self.film_combo, film), (self.kind_combo, self._kinds.get(code))):
             index = combo.findData(data) if data else -1
             if index >= 0:
                 combo.blockSignals(True)
                 combo.setCurrentIndex(index)
                 combo.blockSignals(False)
+        if code in self._kinds:
+            self._fill_departments(code=code)
         self.refill(group, name)
 
-    def refill(self, group=None, name=None):
-        """Re-read what fits the film and department."""
+    def _fill_departments(self, refill=False, code=None):
+        """The departments on the picked side (Asset or Shot), keeping the
+        current one if it's there."""
         kind = self.kind()
-        self.kind_combo.setCurrentIndex(self.kind_combo.findData(kind))
+        _set_items(self.dept_combo, [(label if live else "%s (coming soon)" % label, c, live)
+                                     for label, c, k, live in self._departments if k == kind],
+                   code or self.department())
+        if refill:
+            self.refill()
+
+    def refill(self, group=None, name=None):
+        """Re-read what fits the film, side and department."""
+        kind = self.kind()
         group_label, name_label = GROUP_LABELS[kind]
         self.group_combo.setToolTip(group_label)
         self.name_combo.setToolTip(name_label)

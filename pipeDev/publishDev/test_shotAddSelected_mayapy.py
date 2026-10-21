@@ -55,13 +55,19 @@ p = w.picker
 check("shot scene: picker starts on Animation for this shot",
       (p.film(), p.department(), p.kind(), p.group(), p.name())
       == ("NWF_SHF", "anim", "shot", "EAP_010", "EAP_010_010")
-      and p.kind_combo.currentText() == "Shot" and not p.kind_combo.isEnabled())
-model = p.dept_combo.model()
-depts = [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
-check("Department: asset departments, then Layout/Animation, Lighting/FX coming soon",
-      depts == [("Modeling", True), ("Environment", True), ("Rigging", True),
-                ("Creature", True), ("LookDev", True), ("Layout", True), ("Animation", True),
-                ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
+      and p.kind_combo.currentText() == "Shot" and p.kind_combo.isEnabled())
+def dept_list():
+    model = p.dept_combo.model()
+    return [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
+check("Shot: Department lists Layout/Animation, Lighting/FX coming soon",
+      dept_list() == [("Layout", True), ("Animation", True),
+                      ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
+p.kind_combo.setCurrentIndex(p.kind_combo.findData("asset"))
+check("picking Asset lists the asset departments",
+      dept_list() == [("Modeling", True), ("Environment", True), ("Rigging", True),
+                      ("Creature", True), ("LookDev", True)] and p.department() == "model")
+p.kind_combo.setCurrentIndex(p.kind_combo.findData("shot"))
+check("back to Shot: first live shot department", p.department() == "layout")
 p.set_current(code="model")
 check("an asset department switches the picker to Asset", p.kind() == "asset"
       and p.kind_combo.currentText() == "Asset" and p.name_combo.toolTip() == "Asset")

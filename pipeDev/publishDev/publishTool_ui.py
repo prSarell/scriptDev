@@ -1,7 +1,7 @@
 """
 Publish Tool — UI
-Same layout as the Build tool: the picker row (pipePicker: Film,
-Department, Asset or Shot, Type or Sequence, Asset or Shot) adds to a
+Same layout as the Build tool: the picker row (pipePicker: Film, Asset or Shot,
+Department, Type or Sequence, Asset or Shot) adds to a
 list with +, and one Publish click publishes every ticked row (spec §3i).
 Each row is one publish: its own asset, department and objects (empty =
 whole scene).
@@ -212,8 +212,8 @@ class PublishToolUI(QtWidgets.QDialog):
         scene_row.addWidget(QtWidgets.QLabel("Scene:"))
         scene_row.addWidget(self.scene_lbl, 1)
 
-        # What to add to the list (user, 2026-10-22): Film | Department |
-        # Asset or Shot | Type or Sequence | Asset or Shot, then - and +.
+        # What to add to the list (user, 2026-10-22): Film | Asset or Shot |
+        # Department | Type or Sequence | Asset or Shot, then - and +.
         self.picker = picker.TargetPicker(PICKER_DEPARTMENTS, self._items_for)
         self.picker.dept_combo.setToolTip(
             "Layout: publishes the camera and what's selected; never caches.\n"

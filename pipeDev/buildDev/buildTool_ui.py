@@ -2,7 +2,7 @@
 Build Tool — UI
 Two tabs:
   Build Shot  — list the assets the open scene's shot needs (picker row:
-                Film, Department, Asset or Shot, Type or Sequence, Asset
+                Film, Asset or Shot, Department, Type or Sequence, Asset
                 or Shot, then - and +); one click pulls every ticked one
                 from the H drive and references it into the open scene.
   My Scratch  — what's on the scratch drive, how safe it is to remove,
@@ -127,7 +127,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self.target_lbl = QtWidgets.QLabel()
         self.target_lbl.setWordWrap(True)
 
-        # What to add (user, 2026-10-22): Film | Department | Asset or Shot |
+        # What to add (user, 2026-10-22): Film | Asset or Shot | Department |
         # Type or Sequence | Asset or Shot, then - and +.
         self.picker = picker.TargetPicker(BUILD_DEPARTMENTS, self._items_for)
         self.picker.add_clicked.connect(self._add_asset)
