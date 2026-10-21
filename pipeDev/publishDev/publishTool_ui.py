@@ -1,8 +1,10 @@
 """
 Publish Tool — UI
-Same layout as the Build tool: pick an Asset + Department, add it to a
-list, and one Publish click publishes every row (spec §3i). Each row is
-one publish: its own asset, department and objects (empty = whole scene).
+Same layout as the Build tool: the picker row (pipePicker: Film,
+Department, Asset or Shot, Type or Sequence, Asset or Shot) adds to a
+list with +, and one Publish click publishes every ticked row (spec §3i).
+Each row is one publish: its own asset, department and objects (empty =
+whole scene).
 
 Needs shotgridConnect (ships with shotSub) for the ShotGrid step.
 
@@ -12,8 +14,8 @@ Dev launch (Script Editor, Python tab):
     for p in (r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\shelfDev\\mpAnim\\tools",
               r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\publishDev"):
         if p not in sys.path: sys.path.insert(0, p)
-    import publishTool_api, publishTool_camera, publishTool_ui
-    for m in (publishTool_api, publishTool_camera, publishTool_ui): importlib.reload(m)
+    import publishTool_api, publishTool_camera, pipePicker, publishTool_ui
+    for m in (publishTool_api, publishTool_camera, pipePicker, publishTool_ui): importlib.reload(m)
     publishTool_ui.show()
 """
 
@@ -37,15 +39,22 @@ import publishTool_camera as cam
 import publishTool_anim as anim
 import publishTool_env as env
 import pipeStudioLibrary as slib
+import pipePicker as picker
 
 
-# Departments that can publish an asset scene today. The rest (shot work:
-# Previs, Anim, FX, Render) show as "coming soon" until shot publishing exists.
+# Departments that publish from an asset scene.
 LIVE_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
 # What a shot scene can publish: its camera (spec §3i "Cameras") and its
 # animation (spec §4 "Shot (animation) publish v0").
 SHOT_DEPARTMENTS = [(cam.CAM_LABEL, cam.CAM_CODE), (anim.ANIM_LABEL, anim.ANIM_CODE)]
 DEPT_LABELS = dict((c, l) for l, c in api.DEPARTMENTS + SHOT_DEPARTMENTS)
+# The picker's Department dropdown (user, 2026-10-22): the asset
+# departments, then the stages a shot publishes for (Layout / Animation;
+# Lighting and FX later), which set the approval needed and where things go.
+PICKER_DEPARTMENTS = (
+    [(label, code, picker.ASSET, True) for label, code in api.DEPARTMENTS
+     if code in LIVE_DEPARTMENTS] +
+    [(label, code, picker.SHOT, live) for label, code, live in anim.PUBLISH_FOR])
 # ShotSub frames for an environment published from a shot scene.
 ENV_SHOT_FRAMES = 2
 
@@ -152,6 +161,15 @@ def _cell(text, colour=None):
     return item
 
 
+def _check_cell(text, checked):
+    """A row's first cell: its name with the tick that says it's published."""
+    item = _cell(text)
+    item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+                  | QtCore.Qt.ItemIsUserCheckable)
+    item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+    return item
+
+
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
@@ -194,65 +212,20 @@ class PublishToolUI(QtWidgets.QDialog):
         scene_row.addWidget(QtWidgets.QLabel("Scene:"))
         scene_row.addWidget(self.scene_lbl, 1)
 
-        # Which asset + department to add to the list.
-        self.asset_combo = QtWidgets.QComboBox()
-        self.asset_combo.setMinimumWidth(200)
-        self.dept_combo = QtWidgets.QComboBox()
-        self.asset_combo.currentIndexChanged.connect(self._fill_departments)
-        self.add_btn = QtWidgets.QPushButton("Add to List")
-        self.add_btn.clicked.connect(self._add_row)
-        self.asset_lbl = QtWidgets.QLabel("Asset:")
-        self.dept_lbl = QtWidgets.QLabel("Department:")
-        # In a shot scene there's nothing to pick: Publish works out what
-        # each selected thing is (spec §4 item 6a).
-        self.shot_hint = QtWidgets.QLabel(
-            "Select everything you want to publish in Maya (cameras, characters, "
-            "props...) and click Add Selected. The tool works out what each one is.")
-        self.shot_hint.setWordWrap(True)
-        # Which stage a shot publish is for (Layout / Animation; Lighting and
-        # FX later). It sets the approval needed and where things go.
-        self.publish_for_lbl = QtWidgets.QLabel("Publish for:")
-        self.publish_for_combo = QtWidgets.QComboBox()
-        model = QtGui.QStandardItemModel(self.publish_for_combo)
-        for label, code, live in anim.PUBLISH_FOR:
-            item = QtGui.QStandardItem(label if live else "%s (coming soon)" % label)
-            item.setData(code, QtCore.Qt.UserRole)
-            item.setEnabled(live)
-            model.appendRow(item)
-        self.publish_for_combo.setModel(model)
-        self.publish_for_combo.setCurrentIndex(
-            self.publish_for_combo.findData(anim.ANIM_CODE))
-        self.publish_for_combo.setToolTip(
+        # What to add to the list (user, 2026-10-22): Film | Department |
+        # Asset or Shot | Type or Sequence | Asset or Shot, then - and +.
+        self.picker = picker.TargetPicker(PICKER_DEPARTMENTS, self._items_for)
+        self.picker.dept_combo.setToolTip(
             "Layout: publishes the camera and what's selected; never caches.\n"
             "Animation: the same, plus caches once a publish is approved for Final.\n"
-            "Ask for approval in the notes (e.g. \"please approve for lighting\").")
-        self.publish_for_combo.currentIndexChanged.connect(lambda *_: self._render_table())
-        pick = QtWidgets.QHBoxLayout()
-        pick.addWidget(self.asset_lbl)
-        pick.addWidget(self.asset_combo, 1)
-        pick.addWidget(self.dept_lbl)
-        pick.addWidget(self.dept_combo)
-        pick.addWidget(self.publish_for_lbl)
-        pick.addWidget(self.publish_for_combo)
-        pick.addWidget(self.shot_hint, 1)
-        pick.addWidget(self.add_btn)
+            "Ask for approval in the notes (e.g. \"please approve for lighting\").\n"
+            "Environment: this scene's environment_SET (landscape, buildings, sky).")
+        self.picker.add_clicked.connect(self._add_row)
+        self.picker.remove_clicked.connect(self._remove_rows)
+        self.hint = QtWidgets.QLabel()
+        self.hint.setWordWrap(True)
 
-        # A shot's layout scene can also publish its environment (spec §4c):
-        # what goes is decided by environment_SET, so only the asset is picked.
-        self.env_lbl = QtWidgets.QLabel("Environment:")
-        self.env_combo = QtWidgets.QComboBox()
-        self.env_combo.setMinimumWidth(200)
-        self.env_btn = QtWidgets.QPushButton("Add Environment")
-        self.env_btn.setToolTip(
-            "Publish this scene's environment_SET (landscape, buildings, sky) to the "
-            "environment asset picked here.")
-        self.env_btn.clicked.connect(self._add_environment)
-        env_row = QtWidgets.QHBoxLayout()
-        env_row.addWidget(self.env_lbl)
-        env_row.addWidget(self.env_combo, 1)
-        env_row.addWidget(self.env_btn)
-
-        # The publish list.
+        # The publish list. Only ticked rows are published.
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
             ["Asset / Shot", "Type", "Department", "Objects", "Publishes as"])
@@ -261,6 +234,7 @@ class PublishToolUI(QtWidgets.QDialog):
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemChanged.connect(self._on_item_changed)
         self.objects_btn = QtWidgets.QPushButton("Set Objects from Selection")
         self.objects_btn.setToolTip("Publish only the objects selected in Maya (and "
                                     "their children) for the selected row(s).")
@@ -268,13 +242,10 @@ class PublishToolUI(QtWidgets.QDialog):
         self.whole_btn = QtWidgets.QPushButton("Whole Scene")
         self.whole_btn.setToolTip("Publish the whole scene file for the selected row(s).")
         self.whole_btn.clicked.connect(self._clear_objects)
-        remove_btn = QtWidgets.QPushButton("Remove from List")
-        remove_btn.clicked.connect(self._remove_rows)
         list_btns = QtWidgets.QHBoxLayout()
         list_btns.addWidget(self.objects_btn)
         list_btns.addWidget(self.whole_btn)
         list_btns.addStretch(1)
-        list_btns.addWidget(remove_btn)
 
         # shotSub of each publish: 2 frames by default, more if wanted.
         self.frames_spin = QtWidgets.QSpinBox()
@@ -312,8 +283,8 @@ class PublishToolUI(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(roots)
         layout.addLayout(scene_row)
-        layout.addLayout(pick)
-        layout.addLayout(env_row)
+        layout.addWidget(self.picker)
+        layout.addWidget(self.hint)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
         layout.addLayout(frames_row)
@@ -378,58 +349,57 @@ class PublishToolUI(QtWidgets.QDialog):
         h_root = self._roots()[0]
         key = (scene, h_root)
         if key != self._picker_key:
-            # New scene or H drive: refill the picker, defaulting to the
-            # asset whose folder the scene is in.
+            # New scene or H drive: refill the picker, starting on what the
+            # open scene is. The student can still pick anything.
             self._picker_key = key
-            self.asset_combo.blockSignals(True)
-            self.asset_combo.clear()
-            self.env_combo.clear()
+            films = api.list_films(h_root) if h_root else []
+            if ctx and ctx["film"] not in films:
+                films.append(ctx["film"])
+            self.picker.set_films(films, ctx["film"] if ctx else None)
             if ctx and ctx["kind"] == "shot":
-                # A shot scene publishes for its own shot only (plus its
-                # environment, to an environment asset).
-                self.asset_combo.addItem("%s  (shot)" % ctx["shot"],
-                                         "shot/%s" % ctx["shot"])
-                if h_root and os.path.isdir(h_root):
-                    for asset_type, asset in api.list_h_assets(h_root, ctx["film"]):
-                        if asset_type == env.ENV_TYPE:
-                            self.env_combo.addItem(asset, asset)
-            elif ctx and h_root and os.path.isdir(h_root):
-                for asset_type, asset in api.list_h_assets(h_root, ctx["film"]):
-                    self.asset_combo.addItem("%s  (%s)" % (asset, asset_type),
-                                             "%s/%s" % (asset_type, asset))
-                index = self.asset_combo.findData(
-                    "%s/%s" % (ctx["asset_type"], ctx["asset"]))
-                self.asset_combo.setCurrentIndex(max(index, 0))
-            self.asset_combo.blockSignals(False)
-            self._fill_departments()
-            # Start on the department the file name says (scout_rig_v002 ->
-            # Rigging), so a rig isn't published as a model by default.
-            words = re.split(r"[_.]", os.path.basename(scene).lower())
-            words = [env.ENV_CODE if w == "environment" else w for w in words]
-            for code in LIVE_DEPARTMENTS:
-                if code.lower() in words and self.dept_combo.findData(code) >= 0:
-                    self.dept_combo.setCurrentIndex(self.dept_combo.findData(code))
-                    break
+                self.picker.set_current(code=anim.ANIM_CODE, group=ctx["seq"],
+                                        name=ctx["shot"])
+            elif ctx:
+                # Start on the department the file name says (scout_rig_v002
+                # -> Rigging), so a rig isn't published as a model by default.
+                words = re.split(r"[_.]", os.path.basename(scene).lower())
+                words = [env.ENV_CODE if w == "environment" else w for w in words]
+                code = next((c for c in LIVE_DEPARTMENTS if c.lower() in words),
+                            LIVE_DEPARTMENTS[0])
+                self.picker.set_current(code=code, group=ctx["asset_type"], name=ctx["asset"])
             self._set_frame_defaults(ctx)
             self._set_shot_mode(bool(ctx) and ctx["kind"] == "shot")
         self._render_table()
 
+    def _items_for(self, film, code, kind):
+        """The picker's last two dropdowns: the film's shots, or its assets
+        (environment assets only, for Environment)."""
+        h_root = self._roots()[0]
+        if not (h_root and os.path.isdir(h_root)):
+            return []
+        if kind == picker.SHOT:
+            shots = api.list_shots(h_root, film)
+            _, ctx = self._scene_context()
+            if (ctx and ctx["kind"] == "shot" and ctx["film"] == film
+                    and (ctx["seq"], ctx["shot"]) not in shots):
+                shots.append((ctx["seq"], ctx["shot"]))
+            return shots
+        assets = api.list_h_assets(h_root, film)
+        if code == env.ENV_CODE:
+            assets = [a for a in assets if a[0] == env.ENV_TYPE]
+        return assets
+
     def _set_shot_mode(self, shot):
-        """Shot scene: no Asset/Department pickers, one Add Selected button.
-        Asset scene: pick the asset and department as before."""
-        for widget in (self.asset_lbl, self.asset_combo, self.dept_lbl, self.dept_combo,
-                       self.objects_btn, self.whole_btn):
+        """Set Objects / Whole Scene are for asset rows only."""
+        for widget in (self.objects_btn, self.whole_btn):
             widget.setVisible(not shot)
-        for widget in (self.shot_hint, self.publish_for_lbl, self.publish_for_combo,
-                       self.env_lbl, self.env_combo, self.env_btn):
-            widget.setVisible(shot)
-        self.add_btn.setText("Add Selected" if shot else "Add to List")
-        self.add_btn.setToolTip(
-            "Add everything selected in Maya. Cameras publish as the shot camera; "
-            "published assets and things made in the shot publish their animation."
+        self.hint.setText(
+            "Select what you want to publish in Maya (cameras, characters, props...), "
+            "pick Layout or Animation and click +. The tool works out what each one is. "
+            "For the Environment, environment_SET decides what goes."
             if shot else
-            "Add this asset to the publish list. Whatever is selected in Maya is what "
-            "gets published; with nothing selected, the whole scene is.")
+            "Select what you want to publish in Maya and click +. "
+            "With nothing selected, the whole scene is published.")
 
     def _set_frame_defaults(self, ctx):
         """ShotSub frames for a newly opened scene: a shot scene uses the
@@ -444,41 +414,19 @@ class PublishToolUI(QtWidgets.QDialog):
         if not shot:
             self.frames_spin.setValue(2)
 
-    def _fill_departments(self, *args):
-        """Asset departments for an asset, Camera for a shot."""
-        data = self.asset_combo.currentData() or ""
-        current = self.dept_combo.currentData()
-        model = QtGui.QStandardItemModel(self.dept_combo)
-        if data.startswith("shot/"):
-            departments, live = SHOT_DEPARTMENTS, [c for _, c in SHOT_DEPARTMENTS]
-        else:
-            departments, live = api.DEPARTMENTS, LIVE_DEPARTMENTS
-        for label, code in departments:
-            item = QtGui.QStandardItem(label if code in live else "%s (coming soon)" % label)
-            item.setData(code, QtCore.Qt.UserRole)
-            item.setEnabled(code in live)
-            model.appendRow(item)
-        self.dept_combo.setModel(model)
-        index = self.dept_combo.findData(current)
-        self.dept_combo.setCurrentIndex(max(index, 0))
-
     def _plan(self, row):
         scene = cmds.file(query=True, sceneName=True)
         if row["code"] == cam.CAM_CODE:
             return cam.plan_camera(scene, *self._roots(), camera=row["objects"][0])
         if row["code"] == anim.ANIM_CODE:
             return anim.plan_anim(scene, *self._roots(), items=anim.classify(row["objects"]),
-                                  publish_for=self._publish_for())
+                                  publish_for=row["publish_for"])
         if row["code"] == env.ENV_CODE:
             env.check_environment()
             return env.plan_environment(scene, *self._roots(),
                                         target=(row["asset_type"], row["asset"]))
         return api.plan_publish(scene, *self._roots(), code=row["code"],
                                 target=(row["asset_type"], row["asset"]))
-
-    def _publish_for(self):
-        """The shot publish's stage: anim.LAYOUT_CODE or anim.ANIM_CODE."""
-        return self.publish_for_combo.currentData() or anim.ANIM_CODE
 
     def _sync_objects(self):
         """Rows remember their objects by UUID, so renaming or reparenting
@@ -495,6 +443,7 @@ class PublishToolUI(QtWidgets.QDialog):
     def _render_table(self):
         self._sync_objects()
         scene, ctx = self._scene_context()
+        self.table.blockSignals(True)
         self.table.setRowCount(len(self._rows))
         problems = []
         try:
@@ -502,6 +451,7 @@ class PublishToolUI(QtWidgets.QDialog):
         except api.PublishError as e:
             problems.append(str(e))
         for r, row in enumerate(self._rows):
+            stage = row.get("publish_for")
             type_label = row.get("type_label", row["asset_type"])
             objects = ", ".join(row["objects"]) if row["objects"] else "(whole scene)"
             if row["code"] == env.ENV_CODE:
@@ -515,11 +465,14 @@ class PublishToolUI(QtWidgets.QDialog):
                     objects = "%s (%s)" % (objects, "keyed" if item["animated"] else "no keys")
                 except api.PublishError:
                     pass        # shown as "can't publish" in the last column
-            self.table.setItem(r, 0, _cell(row["asset"]))
+            self.table.setItem(r, 0, _check_cell(row["asset"], row["checked"]))
             self.table.setItem(r, 1, _cell(type_label))
-            self.table.setItem(r, 2, _cell(
-                anim.PUBLISH_FOR_LABELS[self._publish_for()] if row["code"] == anim.ANIM_CODE
-                else DEPT_LABELS[row["code"]]))
+            dept = DEPT_LABELS[row["code"]]
+            if row["code"] == anim.ANIM_CODE:
+                dept = anim.PUBLISH_FOR_LABELS[stage]
+            elif row["code"] == cam.CAM_CODE:
+                dept = "%s (%s)" % (dept, anim.PUBLISH_FOR_LABELS[stage])
+            self.table.setItem(r, 2, _cell(dept))
             self.table.setItem(r, 3, _cell(objects, None if row["objects"] else "#999999"))
             try:
                 plan = self._plan(row)
@@ -535,13 +488,16 @@ class PublishToolUI(QtWidgets.QDialog):
                         ["Full shot file: " + plan["dest"]] +
                         ([files["keys"], files["map"]] if item["animated"] else []) +
                         (["If the shot's Final is approved, also: " + files["cache"]]
-                         if self._publish_for() == anim.ANIM_CODE else []))
+                         if stage == anim.ANIM_CODE else []))
                 self.table.setItem(r, 4, _cell(text))
                 self.table.item(r, 4).setToolTip(dest)
             except api.PublishError as e:
                 self.table.setItem(r, 4, _cell("can't publish", "#e0a060"))
-                problems.append(str(e))
+                if row["checked"]:      # an unticked row doesn't hold up the rest
+                    problems.append(str(e))
         self.table.resizeColumnsToContents()
+        self.table.blockSignals(False)
+        ticked = any(row["checked"] for row in self._rows)
 
         if not scene:
             self.status.show_message("Save your scene on the scratch drive first.", ok=False)
@@ -554,14 +510,22 @@ class PublishToolUI(QtWidgets.QDialog):
             self.status.show_message(problems[0], ok=False)
         elif not self._rows:
             self.status.show_message("")
-        self.publish_btn.setEnabled(bool(self._rows) and not problems and bool(ctx))
+        self.publish_btn.setEnabled(ticked and not problems and bool(ctx))
+
+    def _on_item_changed(self, item):
+        """A row's tick: only ticked rows are published."""
+        if item.column() != 0 or item.row() >= len(self._rows):
+            return
+        self._rows[item.row()]["checked"] = item.checkState() == QtCore.Qt.Checked
+        # Re-render after this signal: the item can't be replaced inside it.
+        QtCore.QTimer.singleShot(0, self._render_table)
 
     # -- list -------------------------------------------------------------
 
     def _selected_rows(self):
         return sorted(set(i.row() for i in self.table.selectedIndexes()))
 
-    def _add_selected_in_shot(self, shot):
+    def _add_selected_in_shot(self, shot, publish_for):
         """Shot scene: every selected thing becomes a row, sorted by what it
         is. Cameras -> a Camera row each; published assets (pipe stamp) and
         things made in the shot -> an Animation item each. Things that can't
@@ -586,6 +550,7 @@ class PublishToolUI(QtWidgets.QDialog):
                     uuid = cmds.ls(item["root"], uuid=True)[0]
                     row = {"asset_type": "shot", "asset": item["name"], "code": anim.ANIM_CODE,
                            "objects": [cmds.ls(item["root"])[0]], "uuids": [uuid]}
+                row.update(publish_for=publish_for, checked=True)
             except api.PublishError as e:
                 problems.append(str(e))
                 continue
@@ -600,14 +565,9 @@ class PublishToolUI(QtWidgets.QDialog):
         self.status.show_message("\n".join([l for l in lines if l] + problems),
                                  ok=not problems)
 
-    def _add_environment(self):
+    def _add_environment(self, asset):
         """Shot scene: a row publishing environment_SET to the picked
         environment asset (spec §4c)."""
-        asset = self.env_combo.currentData()
-        if not asset:
-            self.status.show_message("There's no environment asset on the H drive for this "
-                                     "film yet.", ok=False)
-            return
         if any(r["code"] == env.ENV_CODE for r in self._rows):
             self.status.show_message("The environment is already in the list.", ok=False)
             return
@@ -617,36 +577,65 @@ class PublishToolUI(QtWidgets.QDialog):
             self.status.show_message(str(e), ok=False)
             return
         self._rows.append({"asset_type": env.ENV_TYPE, "asset": asset, "code": env.ENV_CODE,
-                           "objects": [], "uuids": [], "type_label": env.ENV_TYPE})
+                           "objects": [], "uuids": [], "type_label": env.ENV_TYPE,
+                           "checked": True})
         self._render_table()
         self.status.show_message("Added the environment, to %s." % asset)
 
     def _add_row(self):
+        """+ : add what the picker says. A shot department adds what's
+        selected in the shot; an asset department adds that asset with
+        the selection as its objects (nothing selected = whole scene)."""
         scene, ctx = self._scene_context()
-        if ctx and ctx["kind"] == "shot":
-            return self._add_selected_in_shot(ctx["shot"])
-        data, code = self.asset_combo.currentData(), self.dept_combo.currentData()
-        if not data or code not in LIVE_DEPARTMENTS + (cam.CAM_CODE, anim.ANIM_CODE):
+        if not ctx:
+            self.status.show_message("Save your scene in an asset's or a shot's scenes "
+                                     "folder first.", ok=False)
             return
-        asset_type, asset = data.split("/")
-        if any((r["asset_type"], r["asset"], r["code"]) == (asset_type, asset, code)
+        code, label = self.picker.department(), self.picker.dept_combo.currentText()
+        group, name = self.picker.group(), self.picker.name()
+        in_shot = ctx["kind"] == "shot"
+        shot_dept = self.picker.kind() == picker.SHOT
+        if in_shot and not shot_dept and code != env.ENV_CODE:
+            self.status.show_message(
+                "%s is published from an asset's scene. A shot scene publishes Layout, "
+                "Animation or its Environment." % label, ok=False)
+            return
+        if not name:
+            self.status.show_message("There's nothing to pick for %s in %s yet."
+                                     % (label, self.picker.film()), ok=False)
+            return
+        if shot_dept:
+            if not in_shot or (ctx["film"], ctx["seq"], ctx["shot"]) != (
+                    self.picker.film(), group, name):
+                self.status.show_message(
+                    "%s for %s is published from that shot's own scene: open one of its "
+                    "scenes first." % (label, name), ok=False)
+                return
+            return self._add_selected_in_shot(ctx["shot"], code)
+        if self.picker.film() != ctx["film"]:
+            self.status.show_message("This scene is in %s, so it publishes to %s's assets."
+                                     % (ctx["film"], ctx["film"]), ok=False)
+            return
+        if in_shot:
+            return self._add_environment(name)
+        if any((r["asset_type"], r["asset"], r["code"]) == (group, name, code)
                for r in self._rows):
-            self.status.show_message("%s %s is already in the list."
-                                     % (asset, self.dept_combo.currentText()), ok=False)
+            self.status.show_message("%s %s is already in the list." % (name, label), ok=False)
             return
         # Whatever is selected in Maya becomes this row's objects; nothing
-        # selected = the whole scene.
-        selection = cmds.ls(selection=True) or []
+        # selected = the whole scene. environment_SET decides an environment.
+        selection = [] if code == env.ENV_CODE else cmds.ls(selection=True) or []
         problem = self._check_objects(code, selection)
         if problem:
             self.status.show_message(problem, ok=False)
             return
-        self._rows.append({"asset_type": asset_type, "asset": asset,
+        self._rows.append({"asset_type": group, "asset": name,
                            "code": code, "objects": list(selection),
-                           "uuids": cmds.ls(selection, uuid=True) if selection else []})
+                           "uuids": cmds.ls(selection, uuid=True) if selection else [],
+                           "checked": True})
         self._render_table()
         self.status.show_message(
-            "Added %s %s: %s" % (asset, self.dept_combo.currentText(),
+            "Added %s %s: %s" % (name, label,
                                  ", ".join(selection) if selection else "whole scene"))
 
     @staticmethod
@@ -749,14 +738,18 @@ class PublishToolUI(QtWidgets.QDialog):
         lines, ok, published, cancelled = [], True, False, False
         _, ctx = self._scene_context()
         in_shot = bool(ctx) and ctx["kind"] == "shot"
-        # All the Animation items in a shot go out as ONE publish (one shared
-        # version number, spec item 1), so they become a single job here.
-        anim_rows = [r for r in self._rows if r["code"] == anim.ANIM_CODE]
-        jobs = [r for r in self._rows if r["code"] != anim.ANIM_CODE]
-        if anim_rows:
-            jobs.append({"asset_type": "shot", "asset": ", ".join(r["asset"] for r in anim_rows),
-                         "code": anim.ANIM_CODE,
-                         "objects": [r["objects"][0] for r in anim_rows]})
+        # Only the ticked rows. All the Animation items for one stage go out
+        # as ONE publish (one shared version number, spec item 1), so they
+        # become a single job here.
+        rows = [r for r in self._rows if r["checked"]]
+        anim_rows = [r for r in rows if r["code"] == anim.ANIM_CODE]
+        jobs = [r for r in rows if r["code"] != anim.ANIM_CODE]
+        for _, stage, _ in anim.PUBLISH_FOR:
+            items = [r for r in anim_rows if r["publish_for"] == stage]
+            if items:
+                jobs.append({"asset_type": "shot", "asset": ", ".join(r["asset"] for r in items),
+                             "code": anim.ANIM_CODE, "publish_for": stage,
+                             "objects": [r["objects"][0] for r in items]})
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for row in jobs:
@@ -770,19 +763,19 @@ class PublishToolUI(QtWidgets.QDialog):
                     frames = ENV_SHOT_FRAMES
                 if row["code"] == anim.ANIM_CODE:
                     label = "%s %s" % (row["asset"],
-                                       anim.PUBLISH_FOR_LABELS[self._publish_for()])
+                                       anim.PUBLISH_FOR_LABELS[row["publish_for"]])
                 review = self._review(label)
                 try:
                     if row["code"] == cam.CAM_CODE:
                         plan = cam.publish_camera(scene, *self._roots(),
                                                   camera=row["objects"][0],
                                                   frame_count=frames, notes=notes,
-                                                  publish_for=self._publish_for(),
+                                                  publish_for=row["publish_for"],
                                                   review=review)
                     elif row["code"] == anim.ANIM_CODE:
                         plan = anim.publish_anim(scene, *self._roots(),
                                                  objects=row["objects"], notes=notes,
-                                                 publish_for=self._publish_for(),
+                                                 publish_for=row["publish_for"],
                                                  review=review)
                         label += {
                             anim.FINAL: " (Final approved: caches made)",

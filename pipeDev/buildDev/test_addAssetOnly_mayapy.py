@@ -82,14 +82,26 @@ cmds.file(scene_a, open=True, force=True)
 parent = QtWidgets.QWidget()
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-tab.shot_combo.setCurrentIndex(tab.shot_combo.findData("EAP_010/EAP_010_010"))
+p = tab.picker
+check("builds into the open scene's shot", tab._target_shot == (FILM, "EAP_010", "EAP_010_010")
+      and "EAP_010_010" in tab.target_lbl.text())
 rows = dict((r["asset"], r) for r in tab._rows)
 check("camera row starts at what the scene has (v001), not the manifest's v002",
       rows["EAP_010_010"]["chosen"] == C1 and rows["EAP_010_010"]["in_scene"] == C1)
-tab.asset_combo.setCurrentIndex(tab.asset_combo.findData("environment/scoutsHouse"))
+check("rows already in the scene start unticked",
+      not rows["EAP_010_010"]["checked"] and not rows["backpack"]["checked"])
+p.set_current(film=FILM, code="rig")
+check("picker: Rigging lists no assets (nothing published for it)", p.name() is None)
+p.set_current(code="model", group="environment", name="scoutsHouse")
+check("picker: Modeling lists the published models", (p.kind(), p.group(), p.name())
+      == ("asset", "environment", "scoutsHouse"))
 tab._add_asset()
-check("scoutsHouse added to the list, not in the scene",
-      [r["in_scene"] for r in tab._rows if r["asset"] == "scoutsHouse"] == [None])
+check("scoutsHouse added to the list, ticked, not in the scene",
+      [(r["in_scene"], r["checked"]) for r in tab._rows if r["asset"] == "scoutsHouse"]
+      == [(None, True)])
+p.set_current(code="cam", group="EAP_010", name="EAP_010_010")
+tab._add_asset()
+check("picker: the shot's camera is already in the list", "already in the list" in tab.status._text)
 tab._build_shot()
 print("   ", tab.status._text.replace("\n", " | "))
 
@@ -99,13 +111,14 @@ check("camera1 not renamed, no camera1_old", cmds.objExists("|EAP_010_010_cam_GR
 check("camera1 still v001", api.shot_camera()[1] == C1)
 check("backpack untouched, keys kept", api.scene_version(shot, published("backpack")) == "scout/v001"
       and cmds.keyframe("backpack:backpack_geo.tx", query=True, keyframeCount=True) == 2)
-check("status says camera and backpack were left as is",
-      "EAP_010_010 Camera: already in the scene, left as is" in tab.status._text
-      and "backpack Modeling: already in the scene, left as is" in tab.status._text)
+check("only the ticked row was built", "scoutsHouse" in tab.status._text
+      and "EAP_010_010" not in tab.status._text and "backpack" not in tab.status._text)
+check("a built row is unticked", not [r for r in tab._rows if r["checked"]])
 
-# Picking another version in the list still updates it.
+# Picking another version in the list ticks it, and Build updates it.
 rows = dict((r["asset"], r) for r in tab._rows)
-rows["EAP_010_010"]["chosen"] = C2
+tab._on_version_changed(rows["EAP_010_010"], C2)
+check("picking v002 for the camera ticks it", rows["EAP_010_010"]["checked"])
 tab._build_shot()
 check("picking v002 for the camera does rebuild it", api.shot_camera()[1] == C2)
 
@@ -141,10 +154,12 @@ check("... and the shot's record keeps it", any(k.endswith("/backpack/model")
                                                  for k in api.read_manifest(shot)))
 tab._refresh_list()
 check("Refresh doesn't bring it back", "backpack" not in names())
+for r in tab._rows:
+    r["checked"] = True
 tab._build_shot()
 check("Build Shot leaves the removed asset alone in the scene",
       sorted(n for n, _, _, _ in api.scene_references()) == refs_before)
-tab.asset_combo.setCurrentIndex(tab.asset_combo.findData("prop/backpack"))
+p.set_current(code="model", group="prop", name="backpack")
 tab.filter_combo.setCurrentIndex(tab.filter_combo.findData("cam"))
 tab._add_asset()
 check("adding it again puts it back, and the filter shows it",

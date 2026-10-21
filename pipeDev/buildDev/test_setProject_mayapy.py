@@ -49,15 +49,5 @@ try:
 except pub.PublishError as e:
     check("a missing folder is refused, with why", "isn't there" in str(e) and here(no_ws))
 
-# The Build tab's button reports instead of failing silently.
-parent = QtWidgets.QWidget()
-tab = ui.BuildShotTab(lambda: (base, base), parent)
-tab._shot_dir = lambda: gone
-tab._set_project()
-check("Build's Set Project button shows the problem", "isn't there" in tab.status._text)
-tab._shot_dir = lambda: with_ws
-tab._set_project()
-check("Build's Set Project button sets it and says so",
-      here(with_ws) and "Maya project set" in tab.status._text)
 print("%d/%d passed" % (sum(ok), len(ok)))
 shutil.rmtree(base, ignore_errors=True)

@@ -317,6 +317,30 @@ def list_h_assets(h_root, film):
     return found
 
 
+def list_films(root):
+    """Film folders (<FILM>_<TYPE>) under a drive root."""
+    if not root or not os.path.isdir(root):
+        return []
+    return sorted(n for n in os.listdir(root)
+                  if FILM_FOLDER_RE.match(n) and os.path.isdir(os.path.join(root, n)))
+
+
+def list_shots(root, film):
+    """[(sequence, shot), ...] from <root>/<film>/maya/sequences."""
+    seq_dir = os.path.join(root, film, "maya", "sequences")
+    shots = []
+    if not os.path.isdir(seq_dir):
+        return shots
+    for seq in sorted(os.listdir(seq_dir)):
+        seq_path = os.path.join(seq_dir, seq)
+        if not os.path.isdir(seq_path):
+            continue
+        for shot in sorted(os.listdir(seq_path)):
+            if os.path.isdir(os.path.join(seq_path, shot)):
+                shots.append((seq, shot))
+    return shots
+
+
 def plan_publish(scene_path, h_root, scratch_root, code, target=None):
     """Work out where a publish would go, without touching anything.
 

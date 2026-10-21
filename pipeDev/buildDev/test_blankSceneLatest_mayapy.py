@@ -39,13 +39,11 @@ tab = ui.BuildShotTab(lambda: (H, SC), parent)
 
 def chosen():
     tab.refresh()
-    i = tab.shot_combo.findData("EAP_010/EAP_010_010")
-    tab.shot_combo.setCurrentIndex(i)
-    tab._load_shot()
     return [r["chosen"] for r in tab._rows if r["asset"] == "backpack"]
 
 
 cmds.file(new=True, force=True)
+api.ensure_maya_project(shot)       # a new scene builds into the Maya project's shot
 check("blank scene: starts at the latest (v005), not the shot's old v003", chosen() == ["scout/v005"])
 cmds.file(os.path.join(pub_dir, "backpack_scout_model_v003.ma"), reference=True, namespace="backpack")
 check("scene with the shot's assets: starts at the version it has (v003)", chosen() == ["scout/v003"])

@@ -1,7 +1,8 @@
-# The Publish window in a shot scene: no Asset/Department pickers, one Add
-# Selected that sorts each selected thing (camera / published asset / made
-# in the shot), and one Publish click = the camera publish(es) + ONE
-# animation publish with every item. Runs the real window offscreen.
+# The Publish window's picker row (user, 2026-10-22). In a shot scene, +
+# with Layout/Animation sorts each selected thing (camera / published
+# asset / made in the shot), and one Publish click = the camera
+# publish(es) + ONE animation publish with every ticked item. In an asset
+# scene, + adds the picked asset. Runs the real window offscreen.
 # Run: mayapy test_shotAddSelected_mayapy.py
 import sys, os, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -50,15 +51,25 @@ cmds.file(save=True, type="mayaAscii")
 parent = QtWidgets.QWidget()
 w = ui.PublishToolUI(parent)
 w.refresh()
-check("shot scene: Asset/Department pickers hidden", not w.asset_combo.isVisibleTo(w)
-      and not w.dept_combo.isVisibleTo(w) and w.shot_hint.isVisibleTo(w))
-check("shot scene: the button says Add Selected", w.add_btn.text() == "Add Selected")
-model = w.publish_for_combo.model()
-stages = [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
-check("shot scene: Publish for dropdown, Animation picked, Lighting/FX coming soon",
-      w.publish_for_combo.isVisibleTo(w) and w.publish_for_combo.currentText() == "Animation"
-      and stages == [("Layout", True), ("Animation", True),
-                     ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
+p = w.picker
+check("shot scene: picker starts on Animation for this shot",
+      (p.film(), p.department(), p.kind(), p.group(), p.name())
+      == ("NWF_SHF", "anim", "shot", "EAP_010", "EAP_010_010")
+      and p.kind_combo.currentText() == "Shot" and not p.kind_combo.isEnabled())
+model = p.dept_combo.model()
+depts = [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
+check("Department: asset departments, then Layout/Animation, Lighting/FX coming soon",
+      depts == [("Modeling", True), ("Environment", True), ("Rigging", True),
+                ("Creature", True), ("LookDev", True), ("Layout", True), ("Animation", True),
+                ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
+p.set_current(code="model")
+check("an asset department switches the picker to Asset", p.kind() == "asset"
+      and p.kind_combo.currentText() == "Asset" and p.name_lbl.text() == "Asset")
+cmds.select("ball", replace=True)
+w._add_row()
+check("... and + refuses it in a shot scene", not w._rows
+      and "published from an asset's scene" in w.status._text)
+p.set_current(code=anim.ANIM_CODE, group="EAP_010", name="EAP_010_010")
 
 # One click, a mixed selection (geo inside the backpack, the ball, the camera).
 cmds.select(["backpack:backPack_geo", "ball", "camera1"], replace=True)
@@ -88,8 +99,22 @@ check("one camera publish + ONE animation publish with both items",
       sorted(c[0] for c in calls) == ["anim", "cam"]
       and [c for c in calls if c[0] == "anim"][0][1] == ["backpack:backpack_model_GRP", "ball"])
 
-# Switch to Layout: same items, Layout publish.
-w.publish_for_combo.setCurrentIndex(w.publish_for_combo.findData(anim.LAYOUT_CODE))
+# Untick the ball: only ticked rows publish.
+row = [i for i, r in enumerate(w._rows) if r["asset"] == "ball"][0]
+w.table.item(row, 0).setCheckState(ui.QtCore.Qt.Unchecked)
+app.processEvents()
+calls[:] = []
+w._publish()
+check("an unticked row isn't published", [c[1] for c in calls if c[0] == "anim"]
+      == [["backpack:backpack_model_GRP"]])
+
+# Take them off and add them again for Layout: Layout publish.
+w.table.selectAll()
+w._remove_rows()
+check("- takes the highlighted rows off", not w._rows)
+p.set_current(code=anim.LAYOUT_CODE)
+cmds.select(["backpack:backPack_geo", "ball", "camera1"], replace=True)
+w._add_row()
 depts = dict((w.table.item(i, 0).text(), w.table.item(i, 2).text()) for i in range(w.table.rowCount()))
 publishes = dict((w.table.item(i, 0).text(), w.table.item(i, 4).text()) for i in range(w.table.rowCount()))
 check("Layout picked: list says Layout and layout file names",
@@ -98,13 +123,27 @@ calls[:] = []
 w._publish()
 check("Layout publish gets publish_for=layout", [c[0] for c in calls if c[0] != "cam"] == ["layout"])
 
-# Asset scenes keep the pickers.
+# Asset scenes: the picker starts on the scene's asset, + adds it.
 cmds.file(new=True, force=True)
-asset_scene = os.path.join(SC, "NWF_SHF", "maya", "assets", "prop", "backpack", "scenes", "work.ma")
+os.makedirs(os.path.join(H, "NWF_SHF", "maya", "assets", "prop", "backpack"))
+asset_scene = os.path.join(SC, "NWF_SHF", "maya", "assets", "prop", "backpack", "scenes",
+                           "backpack_rig_work.ma")
 os.makedirs(os.path.dirname(asset_scene))
 cmds.file(rename=asset_scene)
 cmds.file(save=True, type="mayaAscii")
 w.refresh()
-check("asset scene: pickers back, button says Add to List",
-      w.asset_combo.isVisibleTo(w) and w.add_btn.text() == "Add to List")
+check("asset scene: picker on Rigging (from the file name), prop, backpack",
+      (p.department(), p.kind(), p.group(), p.name()) == ("rig", "asset", "prop", "backpack")
+      and w.objects_btn.isVisibleTo(w))
+p.set_current(code=anim.ANIM_CODE)
+w._rows[:] = []
+w._add_row()
+check("a shot department from an asset scene is refused", not w._rows
+      and "open one of its scenes first" in w.status._text)
+p.set_current(code="model", group="prop", name="backpack")
+cmds.polyCube(name="box")
+cmds.select("box", replace=True)
+w._add_row()
+check("+ adds the asset with the selection", [(r["asset"], r["code"], r["objects"])
+                                                for r in w._rows] == [("backpack", "model", ["box"])])
 print("%d/%d passed" % (sum(ok), len(ok)))

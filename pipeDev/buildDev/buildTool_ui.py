@@ -1,8 +1,10 @@
 """
 Build Tool — UI
 Two tabs:
-  Build Shot  — list the assets a shot needs; one click pulls them from
-                the H drive and references them into the open scene.
+  Build Shot  — list the assets the open scene's shot needs (picker row:
+                Film, Department, Asset or Shot, Type or Sequence, Asset
+                or Shot, then - and +); one click pulls every ticked one
+                from the H drive and references it into the open scene.
   My Scratch  — what's on the scratch drive, how safe it is to remove,
                 and removal to the Recycle Bin.
 
@@ -12,8 +14,8 @@ Dev launch (Script Editor, Python tab):
     for p in (r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\publishDev",
               r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\buildDev"):
         if p not in sys.path: sys.path.insert(0, p)
-    import publishTool_api, pipeEnv, buildTool_api, buildTool_ui
-    for m in (publishTool_api, pipeEnv, buildTool_api, buildTool_ui): importlib.reload(m)
+    import publishTool_api, pipeEnv, buildTool_api, pipePicker, buildTool_ui
+    for m in (publishTool_api, pipeEnv, buildTool_api, pipePicker, buildTool_ui): importlib.reload(m)
     buildTool_ui.show()
 """
 
@@ -30,7 +32,16 @@ if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 
 import buildTool_api as api
+import pipePicker as picker
 pub = api.pub
+
+# The picker's Department dropdown: the asset departments that publish,
+# then the shot's camera (spec "Cameras").
+ASSET_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
+BUILD_DEPARTMENTS = (
+    [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
+     if code in ASSET_DEPARTMENTS] +
+    [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True)])
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -85,51 +96,42 @@ def _cell(text, colour=None):
     return item
 
 
+def _check_cell(text, checked):
+    """A row's first cell: its name with the tick that says it's built."""
+    item = _cell(text)
+    item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+                  | QtCore.Qt.ItemIsUserCheckable)
+    item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+    return item
+
+
 # ---------------------------------------------------------------------------
 # Build Shot tab
 # ---------------------------------------------------------------------------
 
 class BuildShotTab(QtWidgets.QWidget):
     """Pick assets from the H drive into a list for the shot, then Build
-    Shot pulls + references (or updates) all of them in one click."""
+    Shot pulls + references (or updates) every ticked one in one click.
+    The shot is the open scene's (user, 2026-10-22)."""
 
     def __init__(self, get_roots, parent=None):
         super(BuildShotTab, self).__init__(parent)
         self._get_roots = get_roots
-        self._published = []     # everything on the H drive
+        self._target_shot = None     # (film, seq, shot) being built into
+        self._published = []     # everything on the H drive for the shot's film
+        self._other_films = {}   # film -> list_published, for the picker
         self._rows = []          # the shot's list: published entries shown in the table
         self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
 
-        # Which shot.
-        self.film_combo = QtWidgets.QComboBox()
-        self.film_combo.currentIndexChanged.connect(self._fill_shots)
-        self.shot_combo = QtWidgets.QComboBox()
-        self.shot_combo.setMinimumWidth(180)
-        self.shot_combo.currentIndexChanged.connect(self._load_shot)
-        project_btn = QtWidgets.QPushButton("Set Maya Project")
-        project_btn.setToolTip("Make this shot the current Maya project. "
-                               "Build Shot also does this for you.")
-        project_btn.clicked.connect(self._set_project)
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(QtWidgets.QLabel("Film:"))
-        top.addWidget(self.film_combo)
-        top.addWidget(QtWidgets.QLabel("Shot:"))
-        top.addWidget(self.shot_combo, 1)
-        top.addWidget(project_btn)
+        # Which shot: always the open scene's.
+        self.target_lbl = QtWidgets.QLabel()
+        self.target_lbl.setWordWrap(True)
 
-        # Which asset to add from the H drive.
-        self.asset_combo = QtWidgets.QComboBox()
-        self.asset_combo.setMinimumWidth(200)
-        self.asset_combo.currentIndexChanged.connect(self._fill_departments)
-        self.dept_combo = QtWidgets.QComboBox()
-        add_btn = QtWidgets.QPushButton("Add to Shot")
-        add_btn.clicked.connect(self._add_asset)
-        pick = QtWidgets.QHBoxLayout()
-        pick.addWidget(QtWidgets.QLabel("Add asset:"))
-        pick.addWidget(self.asset_combo, 1)
-        pick.addWidget(QtWidgets.QLabel("as"))
-        pick.addWidget(self.dept_combo)
-        pick.addWidget(add_btn)
+        # What to add (user, 2026-10-22): Film | Department | Asset or Shot |
+        # Type or Sequence | Asset or Shot, then - and +.
+        self.picker = picker.TargetPicker(BUILD_DEPARTMENTS, self._items_for)
+        self.picker.add_clicked.connect(self._add_asset)
+        self.picker.remove_clicked.connect(self._remove_rows)
 
         # The shot's asset list, filtered by department (user, 2026-10-21).
         self.filter_combo = QtWidgets.QComboBox()
@@ -143,10 +145,10 @@ class BuildShotTab(QtWidgets.QWidget):
         self.table = _table(["Asset", "Type", "Department", "Version",
                              "In this shot", "Status"])
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        remove_btn = QtWidgets.QPushButton("Remove from List")
-        remove_btn.setToolTip("Take the selected assets off the list. Only the list "
-                              "changes: anything already in your scene stays there.")
-        remove_btn.clicked.connect(self._remove_rows)
+        self.table.itemChanged.connect(self._on_item_changed)
+        self.picker.remove_btn.setToolTip(
+            "Take the highlighted assets off the list. Only the list changes: anything "
+            "already in your scene stays there.")
         refresh_btn = QtWidgets.QPushButton("Refresh")
         refresh_btn.setToolTip("Look at the H drive again for new publishes. "
                                "Your list and version choices are kept.")
@@ -159,21 +161,19 @@ class BuildShotTab(QtWidgets.QWidget):
         list_btns.addWidget(refresh_btn)
         list_btns.addWidget(repair_btn)
         list_btns.addStretch(1)
-        list_btns.addWidget(remove_btn)
 
         build_btn = QtWidgets.QPushButton("Build Shot")
         build_btn.setMinimumHeight(36)
         build_btn.setToolTip(
-            "Adds every asset in the list that isn't in the open scene yet "
-            "(pulled from the H drive into your scratch publish folder). Assets "
-            "already in the scene are left as they are, unless you pick another "
-            "version for them in the list.")
+            "Builds every ticked asset into the open scene (pulled from the H drive "
+            "into your scratch publish folder). New assets, and ones you pick another "
+            "version for, start ticked; ones already in the scene start unticked.")
         build_btn.clicked.connect(self._build_shot)
 
         self.status = StatusLabel()
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addLayout(pick)
+        layout.addWidget(self.target_lbl)
+        layout.addWidget(self.picker)
         layout.addLayout(show)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
@@ -183,75 +183,92 @@ class BuildShotTab(QtWidgets.QWidget):
     # -- filling ----------------------------------------------------------
 
     def refresh(self):
+        """Find the shot to build into, refill the picker's films and load
+        the shot's list."""
         h_root, scratch_root = self._get_roots()
-        current = self.film_combo.currentText()
-        self.film_combo.blockSignals(True)
-        self.film_combo.clear()
+        self._target_shot = self._find_target()
         films = api.list_films(h_root) if h_root else []
-        self.film_combo.addItems(films)
-        if current in films:
-            self.film_combo.setCurrentText(current)
-        self.film_combo.blockSignals(False)
-        self._fill_shots()
-
-    def _fill_shots(self, *args):
-        h_root, scratch_root = self._get_roots()
-        film = self.film_combo.currentText()
-        current = self.shot_combo.currentData()
-        scene_shot = api.shot_of_scene(cmds.file(query=True, sceneName=True) or "",
-                                       scratch_root) if scratch_root else None
-        self.shot_combo.blockSignals(True)
-        self.shot_combo.clear()
-        if film and scratch_root and os.path.isdir(scratch_root):
-            for seq, shot in api.list_shots(scratch_root, film):
-                self.shot_combo.addItem(shot, "%s/%s" % (seq, shot))
-        # Prefer the shot already picked, else the shot the open scene is in.
-        for wanted in (current, "%s/%s" % scene_shot[1:] if scene_shot else None):
-            index = self.shot_combo.findData(wanted) if wanted else -1
-            if index >= 0:
-                self.shot_combo.setCurrentIndex(index)
-                break
-        self.shot_combo.blockSignals(False)
+        film = self._target_shot[0] if self._target_shot else None
+        self.picker.set_films(films, film)
         self._load_shot()
 
-    def _shot_dir(self):
-        h_root, scratch_root = self._get_roots()
-        data = self.shot_combo.currentData()
-        film = self.film_combo.currentText()
-        if not (data and film and scratch_root):
+    def check_target(self):
+        """Another scene opened since the list was made: start again from
+        its shot. Otherwise the list (and its ticks) stays as it is."""
+        if self._find_target() != self._target_shot:
+            self.refresh()
+
+    def _find_target(self):
+        """(film, seq, shot) to build into: the open scene's shot, or for a
+        new scene the Maya project's (e.g. set by the Project tool)."""
+        scratch_root = self._get_roots()[1]
+        if not scratch_root:
             return None
-        seq, shot = data.split("/")
-        return api.shot_folder(scratch_root, film, seq, shot)
+        scene = cmds.file(query=True, sceneName=True) or ""
+        if not scene:
+            workspace = cmds.workspace(query=True, rootDirectory=True)
+            if not workspace:
+                return None
+            scene = os.path.join(workspace, "scenes", "untitled.ma")
+        return api.shot_of_scene(scene, scratch_root)
+
+    def film(self):
+        """The shot's film, else the picker's (for the My Scratch tab)."""
+        return self._target_shot[0] if self._target_shot else self.picker.film()
+
+    def _shot_dir(self):
+        scratch_root = self._get_roots()[1]
+        if not (self._target_shot and scratch_root):
+            return None
+        return api.shot_folder(scratch_root, *self._target_shot)
+
+    def _items_for(self, film, code, kind):
+        """The picker's last two dropdowns: shots for Camera, else the
+        assets with a publish for that department."""
+        h_root = self._get_roots()[0]
+        if not (h_root and os.path.isdir(h_root)):
+            return []
+        if kind == picker.SHOT:
+            return api.list_shots(h_root, film)
+        return [(p["asset_type"], p["asset"]) for p in self._published_in(film)
+                if p["code"] == code]
+
+    def _published_in(self, film):
+        if self._target_shot and film == self._target_shot[0]:
+            return self._published
+        if film not in self._other_films:
+            self._other_films[film] = api.list_published(self._get_roots()[0], film)
+        return self._other_films[film]
 
     def _load_shot(self, *args):
-        """Re-read the H drive, fill the asset picker, and start the list
-        with whatever is already in this shot."""
+        """Re-read the H drive and start the list with whatever is already
+        in this shot."""
         h_root, scratch_root = self._get_roots()
-        film = self.film_combo.currentText()
         self._published, self._rows, self._removed = [], [], set()
-        self.asset_combo.clear()
+        self._other_films = {}
         self._render_table()
         try:
             pub.check_roots(pub.resolve_root(h_root), pub.resolve_root(scratch_root))
         except pub.PublishError as e:
+            self.target_lbl.setText("")
             self.status.show_message(str(e), ok=False)
             return
-        if not film:
-            self.status.show_message("No film folders found on the H drive.", ok=False)
+        if not self._target_shot:
+            self.target_lbl.setText("")
+            self.picker.refill()
+            self.status.show_message(
+                "Open a scene in the shot you want to build (or set the shot as your Maya "
+                "project with the Project tool). Build adds the assets to the open scene.",
+                ok=False)
             return
+        film, seq, shot = self._target_shot
+        scene = cmds.file(query=True, sceneName=True)
+        self.target_lbl.setText("Building into shot <b>%s</b> (%s), in %s" % (
+            shot, film, os.path.basename(scene) if scene else "a new scene"))
         self._published = api.list_published(h_root, film)
-        shot = self.shot_combo.currentData()
-        if shot:
-            # The shot's own camera, if one has been published (spec "Cameras").
-            self._published += api.list_shot_cameras(h_root, film, *shot.split("/"))
-
-        seen = []
-        for p in self._published:
-            if (p["asset_type"], p["asset"]) not in seen:
-                seen.append((p["asset_type"], p["asset"]))
-                self.asset_combo.addItem("%s  (%s)" % (p["asset"], p["asset_type"]),
-                                         "%s/%s" % (p["asset_type"], p["asset"]))
-        self._fill_departments()
+        # The shot's own camera, if one has been published (spec "Cameras").
+        self._published += api.list_shot_cameras(h_root, film, seq, shot)
+        self.picker.refill()
 
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
@@ -286,13 +303,15 @@ class BuildShotTab(QtWidgets.QWidget):
         in_scene = api.scene_version(shot_dir, p) if shot_dir else None
         if in_scene in p["versions"]:
             chosen = in_scene
-        return dict(p, chosen=chosen, start=chosen, in_scene=in_scene)
+        row = dict(p, chosen=chosen, start=chosen, in_scene=in_scene)
+        row["checked"] = not self._left_as_is(row, shot_dir)
+        return row
 
     @staticmethod
     def _left_as_is(p, shot_dir):
-        """True if Build Shot should skip this row: already in the scene and
-        its version not changed in the list. A rig whose file in the shot is
-        missing or out of date is still built, since that's the fix."""
+        """True if a row starts unticked: already in the scene and its
+        version not changed in the list. A rig whose file in the shot is
+        missing or out of date starts ticked, since building is the fix."""
         if p.get("in_scene") is None or p.get("chosen") != p.get("start"):
             return False
         entry = api.read_manifest(shot_dir).get(api.manifest_key(
@@ -312,9 +331,11 @@ class BuildShotTab(QtWidgets.QWidget):
 
     def _refresh_list(self):
         """Re-read the H drive without losing the list: rows added but not
-        built yet stay, and version choices stay where they still exist."""
-        kept = [(self._key(r), r.get("chosen")) for r in self._rows]
-        picked = (self.asset_combo.currentData(), self.dept_combo.currentData())
+        built yet stay, and version choices and ticks stay where they
+        still exist."""
+        kept = [(self._key(r), r.get("chosen"), r["checked"]) for r in self._rows]
+        picked = (self.picker.film(), self.picker.department(), self.picker.group(),
+                  self.picker.name())
         removed = self._removed
         self._load_shot()
         if not self._published:
@@ -324,7 +345,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self._rows = [r for r in self._rows if self._key(r) not in removed]
         by_key = dict((self._key(p), p) for p in self._published)
         in_list = dict((self._key(r), r) for r in self._rows)
-        for key, chosen in kept:
+        for key, chosen, checked in kept:
             if key not in by_key:
                 continue
             row = in_list.get(key)
@@ -333,12 +354,8 @@ class BuildShotTab(QtWidgets.QWidget):
                 self._rows.append(row)
             if chosen in row["versions"]:
                 row["chosen"] = chosen
-        index = self.asset_combo.findData(picked[0]) if picked[0] else -1
-        if index >= 0:
-            self.asset_combo.setCurrentIndex(index)
-            dept = self.dept_combo.findData(picked[1])
-            if dept >= 0:
-                self.dept_combo.setCurrentIndex(dept)
+            row["checked"] = checked
+        self.picker.set_current(*picked)
         self._render_table()
         manifest = api.read_manifest(self._shot_dir()) if self._shot_dir() else {}
         newer = [r["asset"] for r in self._rows
@@ -347,13 +364,6 @@ class BuildShotTab(QtWidgets.QWidget):
             "Refreshed. Newer versions available for: %s" % ", ".join(newer)
             if newer else "Refreshed. Everything in this shot is on its latest version.")
 
-    def _fill_departments(self, *args):
-        self.dept_combo.clear()
-        data = self.asset_combo.currentData()
-        for p in self._published:
-            if "%s/%s" % (p["asset_type"], p["asset"]) == data:
-                self.dept_combo.addItem(api.DEPT_LABELS.get(p["code"], p["code"]), p["code"])
-
     @staticmethod
     def _key(p):
         return api.manifest_key(p["asset_type"], p["asset"], p["code"])
@@ -361,9 +371,10 @@ class BuildShotTab(QtWidgets.QWidget):
     def _render_table(self):
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
+        self.table.blockSignals(True)
         self.table.setRowCount(len(self._rows))
         for row, p in enumerate(self._rows):
-            self.table.setItem(row, 0, _cell(p["asset"]))
+            self.table.setItem(row, 0, _check_cell(p["asset"], p["checked"]))
             self.table.setItem(row, 1, _cell(p["asset_type"]))
             self.table.setItem(row, 2, _cell(api.DEPT_LABELS.get(p["code"], p["code"])))
             combo = QtWidgets.QComboBox()
@@ -371,7 +382,7 @@ class BuildShotTab(QtWidgets.QWidget):
                 combo.addItem(api.version_label(p, vid), vid)
             combo.setCurrentIndex(max(combo.findData(p.get("chosen", p["latest"])), 0))
             combo.currentIndexChanged.connect(
-                lambda i, c=combo, r=p: r.__setitem__("chosen", c.currentData()))
+                lambda i, c=combo, r=p: self._on_version_changed(r, c.currentData()))
             self.table.setCellWidget(row, 3, combo)
 
             entry = manifest.get(self._key(p))
@@ -400,7 +411,25 @@ class BuildShotTab(QtWidgets.QWidget):
                         "Up to date" + (" (full copy, not linked)" if state == api.COPY else ""),
                         "#7fbf7f"))
         self.table.resizeColumnsToContents()
+        self.table.blockSignals(False)
         self._fill_filter()
+
+    def _on_item_changed(self, item):
+        """A row's tick: only ticked rows are built."""
+        if item.column() == 0 and item.row() < len(self._rows):
+            self._rows[item.row()]["checked"] = item.checkState() == QtCore.Qt.Checked
+
+    def _on_version_changed(self, p, vid):
+        """Picking another version ticks the row; picking back the one the
+        scene has unticks it again."""
+        p["chosen"] = vid
+        p["checked"] = not self._left_as_is(p, self._shot_dir())
+        rows = [i for i, r in enumerate(self._rows) if r is p]
+        if rows:
+            item = self.table.item(rows[0], 0)
+            self.table.blockSignals(True)
+            item.setCheckState(QtCore.Qt.Checked if p["checked"] else QtCore.Qt.Unchecked)
+            self.table.blockSignals(False)
 
     def _fill_filter(self):
         """The Show menu: All, plus each department in the list. Keeps the
@@ -429,10 +458,30 @@ class BuildShotTab(QtWidgets.QWidget):
     # -- list -------------------------------------------------------------
 
     def _add_asset(self):
-        data, code = self.asset_combo.currentData(), self.dept_combo.currentData()
-        match = [p for p in self._published
-                 if "%s/%s" % (p["asset_type"], p["asset"]) == data and p["code"] == code]
+        """+ : add what the picker says to the shot's list, ticked."""
+        film, code = self.picker.film(), self.picker.department()
+        group, name = self.picker.group(), self.picker.name()
+        label = self.picker.dept_combo.currentText()
+        if not self._target_shot:
+            self.status.show_message("Open a scene in the shot you want to build first.",
+                                     ok=False)
+            return
+        if film != self._target_shot[0]:
+            self.status.show_message("This shot is in %s: pick from %s's assets."
+                                     % ((self._target_shot[0],) * 2), ok=False)
+            return
+        if self.picker.kind() == picker.SHOT:
+            if (group, name) != tuple(self._target_shot[1:]):
+                self.status.show_message("A shot's camera only builds into its own shot (%s)."
+                                         % self._target_shot[2], ok=False)
+                return
+            match = [p for p in self._published if p.get("kind") == "camera"]
+        else:
+            match = [p for p in self._published
+                     if (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
         if not match:
+            self.status.show_message("Nothing has been published for %s %s yet."
+                                     % (name or "this", label), ok=False)
             return
         p = match[0]
         if any(self._key(r) == self._key(p) for r in self._rows):
@@ -467,32 +516,15 @@ class BuildShotTab(QtWidgets.QWidget):
 
     # -- actions ----------------------------------------------------------
 
-    def _set_project(self):
-        shot_dir = self._shot_dir()
-        if not shot_dir:
-            return
-        try:
-            api.set_maya_project(shot_dir)
-        except Exception as e:
-            self.status.show_message(str(e), ok=False)
-            return
-        self.status.show_message("Maya project set to %s" % shot_dir)
-
     def _build_shot(self):
         shot_dir = self._shot_dir()
-        if not shot_dir or not self._rows:
-            self.status.show_message("Pick a shot and add assets to the list first.", ok=False)
+        if not shot_dir:
+            self.status.show_message("Open a scene in the shot you want to build first.",
+                                     ok=False)
             return
-        scene_shot = api.shot_of_scene(cmds.file(query=True, sceneName=True) or "",
-                                       self._get_roots()[1])
-        if scene_shot and "%s/%s" % scene_shot[1:] != self.shot_combo.currentData():
-            answer = QtWidgets.QMessageBox.question(
-                self, "Different shot",
-                "The open scene belongs to shot %s, but you're building %s.\n"
-                "Reference these assets into the open scene anyway?"
-                % (scene_shot[2], self.shot_combo.currentText()))
-            if answer != QtWidgets.QMessageBox.Yes:
-                return
+        if not any(p["checked"] for p in self._rows):
+            self.status.show_message("Tick the assets to build first.", ok=False)
+            return
 
         lines, warnings, replaced, changed_rigs = [], [], [], []
         try:
@@ -503,10 +535,9 @@ class BuildShotTab(QtWidgets.QWidget):
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for p in self._rows:
-                label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
-                if self._left_as_is(p, shot_dir):
-                    lines.append("%s: already in the scene, left as is" % label)
+                if not p["checked"]:
                     continue
+                label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
                 try:
                     done, warning, old = api.build_asset(shot_dir, p,
                                                          p.get("chosen", p["latest"]))
@@ -514,6 +545,7 @@ class BuildShotTab(QtWidgets.QWidget):
                     warnings.append("%s: %s" % (label, e))
                     continue
                 p["in_scene"] = p["start"] = p.get("chosen", p["latest"])
+                p["checked"] = False        # built: nothing left to do for it
                 lines.append("%s: %s" % (label, ", ".join(done)))
                 if warning:
                     warnings.append("%s: %s" % (label, warning))
@@ -768,7 +800,7 @@ class BuildToolUI(QtWidgets.QDialog):
             self.root_edits[key] = edit
 
         self.build_tab = BuildShotTab(self._roots)
-        self.scratch_tab = ScratchTab(self._roots, self.build_tab.film_combo.currentText)
+        self.scratch_tab = ScratchTab(self._roots, self.build_tab.film)
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.addTab(self.build_tab, "Build Shot")
         self.tabs.addTab(self.scratch_tab, "My Scratch")
@@ -822,6 +854,13 @@ class BuildToolUI(QtWidgets.QDialog):
             self.scratch_tab.refresh()
         else:
             self.build_tab._load_shot()
+
+    def changeEvent(self, event):
+        # Builds go into the open scene: if another one was opened while
+        # the window was in the background, follow it.
+        if event.type() == QtCore.QEvent.ActivationChange and self.isActiveWindow():
+            self.build_tab.check_target()
+        super(BuildToolUI, self).changeEvent(event)
 
 
 # ---------------------------------------------------------------------------

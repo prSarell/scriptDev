@@ -26,7 +26,13 @@ hand. One T7 session could cover most of it.
       fixed after the scene opens (review #5). If it fails, fix the path
       *before* open instead.
 - [ ] Everything with a real **RMIT login** (not `scout`).
-- [ ] **Set Project** in Build and the Project Tool: File > Open starts in
+- [ ] **Picker row redesign** (2026-10-22), Publish and Build: Film |
+      Department | Asset or Shot | Type or Sequence | Asset or Shot, then
+      - / +, and ticks on the list. Check the row fits the window, the ticks
+      read clearly, Build follows a newly opened scene when the window is
+      clicked, and a new scene builds into the Project Tool's shot.
+- [ ] **Set Project** in the Project Tool (Build's button was removed
+      2026-10-22; Build still sets it): File > Open starts in
       the new project, it shows in Recent Projects, and it's remembered next
       session (fixed 2026-10-21; the Maya-UI part can't run headless).
 - [ ] Build tab: **Remove from List** and the new **Show:** department

@@ -57,28 +57,9 @@ DEPT_LABELS["cam"] = "Camera"
 # Films and shots
 # ---------------------------------------------------------------------------
 
-def list_films(root):
-    """Film folders (<FILM>_<TYPE>) under a drive root."""
-    if not root or not os.path.isdir(root):
-        return []
-    return sorted(n for n in os.listdir(root)
-                  if pub.FILM_FOLDER_RE.match(n) and os.path.isdir(os.path.join(root, n)))
-
-
-def list_shots(root, film):
-    """[(sequence, shot), ...] from <root>/<film>/maya/sequences."""
-    seq_dir = os.path.join(root, film, "maya", "sequences")
-    shots = []
-    if not os.path.isdir(seq_dir):
-        return shots
-    for seq in sorted(os.listdir(seq_dir)):
-        seq_path = os.path.join(seq_dir, seq)
-        if not os.path.isdir(seq_path):
-            continue
-        for shot in sorted(os.listdir(seq_path)):
-            if os.path.isdir(os.path.join(seq_path, shot)):
-                shots.append((seq, shot))
-    return shots
+# Shared with the Publish tool's picker.
+list_films = pub.list_films
+list_shots = pub.list_shots
 
 
 def shot_folder(root, film, seq, shot):
