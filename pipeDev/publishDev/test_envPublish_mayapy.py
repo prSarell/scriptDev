@@ -1,7 +1,8 @@
 # Environment publish (spec §4c, DECIDED 2026-10-21): published from a
 # shot's layout scene to an environment asset by its sets. landscape_SET
-# stays put and is cleaned up like a model; building_SET keeps transforms
-# and gets a <group>_LOC per building; sky_SET keeps transforms, locked,
+# stays put and is cleaned up like a model; building_SET holds one
+# buildings group with a group per building (named freely, 2026-10-22),
+# transforms kept, a <group>_LOC per building; sky_SET keeps transforms, locked,
 # its image travels; a one-frame .abc of landscape + buildings goes beside
 # the publish; the working scene is never changed. Built like the user's
 # SEQ010_140 environment_001.ma. ShotGrid and the playblast are stubbed.
@@ -66,15 +67,20 @@ def layout_scene(pieces_moved=False):
     ground = cmds.polyPlane(name="ground")[0]
     cmds.parent(ground, land)
     cmds.setAttr(ground + ".translate", 0, -169, -41792); cmds.setAttr(ground + ".scale", 800, 800, 800)
-    shed = cmds.group(empty=True, name="shed", parent=top)
+    buildings = cmds.group(empty=True, name="buildings", parent=top)
+    shed = cmds.group(empty=True, name="shed", parent=buildings)
     box = cmds.polyCube(name="pCube1")[0]
     cmds.parent(box, shed)
     cmds.setAttr(box + ".scale", 24, 5, 58)
     where = (shed if not pieces_moved else box)
     cmds.setAttr(where + ".translate", -8759, 61, -64975); cmds.setAttr(where + ".rotateY", -9.67)
+    # A second building, named freely (no such asset on H).
+    barn = cmds.group(empty=True, name="oldBarn", parent=buildings)
+    cmds.parent(cmds.polyCube(name="barnBox")[0], barn)
+    cmds.setAttr(barn + ".translate", 500, 0, -60000)
     camera = cmds.camera(name="camera1")[0]
     sets = [cmds.sets(["environment|landscape|ground"], name="landscape_SET"),
-            cmds.sets(["environment|shed"], name="building_SET"),
+            cmds.sets(["environment|buildings"], name="building_SET"),
             cmds.sets(["environment|sky|imagePlanesky"], name="sky_SET")]
     cmds.sets(sets, name="environment_SET")
     scene = os.path.join(shot_scenes, "environment_001.ma")
@@ -95,22 +101,26 @@ scene = layout_scene()
 cmds.delete("environment_SET")
 check("no environment_SET: refused, explaining the sets", refused("no environment_SET"))
 scene = layout_scene()
-cmds.sets("environment|shed", add="landscape_SET")
+cmds.sets("environment|buildings|shed", add="landscape_SET")
 check("one thing in two roles: refused", refused("Each thing has one role"))
 scene = layout_scene()
-cmds.sets("environment|shed", remove="building_SET")
-cmds.sets("environment|shed|pCube1", add="building_SET")
-check("a building that isn't a group: refused", refused("isn't a group"))
+cmds.sets("environment|buildings", remove="building_SET")
+cmds.sets("environment|buildings|shed", add="building_SET")
+check("building_SET holding a building, not the buildings group: refused",
+      refused("just one group called buildings"))
+scene = layout_scene()
+cmds.parent(cmds.polyCube(name="looseBox")[0], "environment|buildings")
+check("a loose mesh inside buildings (not in its own group): refused", refused("isn't a group"))
 check("nothing reached the H drive", not os.listdir(os.path.join(
     H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape", "scenes")))
 
 # -- The publish ---------------------------------------------------------------
 scene = layout_scene()
-before = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|shed.translate"),
+before = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|buildings|shed.translate"),
           cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
           sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
 plan = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
-after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|shed.translate"),
+after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|buildings|shed.translate"),
          cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
          sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
 check("published from the shot's layout scene to the environment asset",
@@ -119,11 +129,12 @@ check("published from the shot's layout scene to the environment asset",
 check("read-only on H", not os.access(plan["dest"], os.W_OK))
 check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
 check("working scene unchanged (names, placements, history, sets, image path)", before == after)
-check("playblast showed the environment's things", shown[-1] == ["ground", "imagePlanesky", "shed"])
+check("playblast showed the environment's things",
+      shown[-1] == ["ground", "imagePlanesky", "oldBarn", "shed"])
 check("warned: the sky image isn't in an asset's sourceimages",
       any("sourceimages" in w for w in plan.get("warnings", [])))
-check("no warning about shed's name (shed is an asset on H)",
-      not any("No asset on the H drive" in w for w in plan.get("warnings", [])))
+check("building names are free: no warning for oldBarn (no such asset on H)",
+      not any("oldBarn" in w for w in plan.get("warnings", [])))
 
 cmds.file(new=True, force=True); cmds.file(plan["dest"], open=True, force=True)
 G = "scoutsHouseLandscape_env_GRP"
@@ -143,12 +154,19 @@ loc = G + "|locators|shed_LOC"
 same = all(abs(a - b) < 1e-3 for a, b in zip(cmds.xform(loc, query=True, worldSpace=True, matrix=True),
                                              cmds.xform(s, query=True, worldSpace=True, matrix=True)))
 check("shed_LOC sits exactly at the building's placement", cmds.objExists(loc) and same)
+check("each building has its own locator", sorted(cmds.listRelatives(G + "|locators")) ==
+      ["oldBarn_LOC", "shed_LOC"] and [round(v) for v in cmds.xform(
+          G + "|locators|oldBarn_LOC", query=True, worldSpace=True, translation=True)]
+      == [500, 0, -60000])
 k = G + "|sky|imagePlanesky"
 check("sky keeps its transforms, locked", round(cmds.getAttr(k + ".tx")) == -6700
       and cmds.getAttr(k + ".tx", lock=True) and cmds.getAttr(k + ".ry", lock=True))
 check("sets come with it, holding the copies",
       sorted(cmds.sets("environment_SET", query=True)) == ["building_SET", "landscape_SET", "sky_SET"]
-      and [n.split("|")[-1] for n in cmds.sets("building_SET", query=True)] == ["shed"])
+      and [n.split("|")[-1] for n in cmds.sets("building_SET", query=True)] == ["buildings"])
+check("... so the published layout passes the same check (can be published again)",
+      sorted(env._short(b) for b in env.check_environment()[env.BUILDINGS])
+      == ["oldBarn", "shed"])
 imn = cmds.getAttr(cmds.listRelatives(k, shapes=True, fullPath=True)[0] + ".imageName")
 check("sky image points at the publish's copy through $PIPE_SCRATCH",
       imn.startswith("$PIPE_SCRATCH/NWF_SHF/maya/publish/assets/environment/scoutsHouseLandscape/"
@@ -157,8 +175,8 @@ tex_dir = os.path.join(H, FILM, "maya", "assets", "environment", "scoutsHouseLan
                        "sourceimages", "scout", "scoutsHouseLandscape_scout_env_v001")
 check("sky image copied to H for this version", os.path.isfile(os.path.join(tex_dir, "sky_blue_wispy_001.png")))
 check("stamp lists buildings and locators",
-      json.loads(cmds.getAttr(G + ".pipe_locators")) == ["shed_LOC"]
-      and json.loads(cmds.getAttr(G + ".pipe_buildings")) == ["shed"])
+      sorted(json.loads(cmds.getAttr(G + ".pipe_locators"))) == ["oldBarn_LOC", "shed_LOC"]
+      and sorted(json.loads(cmds.getAttr(G + ".pipe_buildings"))) == ["oldBarn", "shed"])
 
 cmds.file(new=True, force=True)
 cmds.loadPlugin("AbcImport", quiet=True)
@@ -193,7 +211,7 @@ check("a published house parented under its locator lands at the placement, stil
 # -- A building group with no transforms (like environment_001.ma's shed):
 #    published, not refused; the locator comes from its pieces ---------------
 scene = layout_scene(pieces_moved=True)
-box = cmds.exactWorldBoundingBox("environment|shed")
+box = cmds.exactWorldBoundingBox("environment|buildings|shed")
 plan2 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
 check("no transforms on the building: still published", plan2["version"] == 2)
 check("... and the report says how its locator was placed",

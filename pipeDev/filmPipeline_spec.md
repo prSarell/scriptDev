@@ -2549,6 +2549,18 @@ models** (the backpack's rules). Environments need different ones.
     of landscape + buildings beside the publish, pulled by Build with it
     (`SIDE_FILES`) but **not put in the scene** (OPEN). Follow-ups:
     `pipeDev/pipelineFollowUps.md`.
+  - DECIDED + BUILT (user, 2026-10-22), **room for more than one
+    building**: `building_SET` holds **one group called `buildings`**,
+    and **each group inside it is a building** (a group holding that
+    building's geometry), **named however the student likes**. Each
+    building still gets `<group>_LOC`. Refused: anything else in
+    `building_SET`, an empty `buildings`, a loose mesh inside `buildings`
+    (not in its own group). The H-drive asset-name warning is **dropped**
+    (user: does the building need to match the H-drive asset? No: per
+    decision 3 above students match assets to locators themselves; the
+    locator name says which building it is). The published
+    `building_SET` holds the published `buildings` group, so a published
+    layout passes the same check and can be published again.
   - Suggested pipe answer to "students match real assets to locators"
     (Claude, 2026-10-21, not confirmed): published model groups are locked
     at 0,0,0, so the student parents `<asset>_model_GRP` under its

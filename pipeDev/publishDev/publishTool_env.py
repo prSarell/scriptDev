@@ -9,7 +9,8 @@ are, sets say what they are:
     environment_SET
       landscape_SET   stays where it is, cleaned up like a model (frozen,
                       history deleted, Mesh Cleanup); the geometry doesn't move
-      building_SET    one group per building, named after its asset;
+      building_SET    one group called buildings, holding a group per
+                      building, named freely (user, 2026-10-22);
                       transforms kept; a <group>_LOC locator is made at each
                       building's placement (the group's transform, or, if
                       the group has none, the bottom-centre of its pieces)
@@ -23,7 +24,8 @@ The published file (copies only; the working scene is never changed):
     <asset>_env_GRP                  pipe group, stamped, locked at the origin
       landscape / buildings / sky    the copies, by role
       locators                       <group>_LOC per building
-    + environment_SET and its role sets, holding the copies
+    + environment_SET and its role sets, holding the copies (building_SET
+      holds buildings, so the publish follows the same rules as the scene)
 
 plus <published name>.abc beside it: one frame of the landscape and
 buildings, for visual reference when a shot is rebuilt.
@@ -43,6 +45,7 @@ ENV_TYPE = "environment"
 ENVIRONMENT_SET = "environment_SET"
 LANDSCAPE, BUILDINGS, SKY = "landscape", "buildings", "sky"
 ROLE_SETS = ((LANDSCAPE, "landscape_SET"), (BUILDINGS, "building_SET"), (SKY, "sky_SET"))
+BUILDINGS_GROUP = "buildings"   # the one group building_SET holds
 LOCATOR_SUFFIX = "_LOC"
 LOCATOR_GROUP = "locators"
 TRANSFORM_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY",
@@ -61,7 +64,7 @@ def _short(node):
 def _how():
     return ("\n\nAn environment publish needs %s (Create > Sets > Set) holding these "
             "sets, each made by hand:\n  landscape_SET   the terrain: stays where it is\n"
-            "  building_SET    one group per building, named after its asset (e.g. shed)\n"
+            "  building_SET    one group called buildings, holding a group per building\n"
             "  sky_SET         image planes, skydome, clouds\nPut the objects or groups in "
             "the set for their role; a group's whole contents go with it." % ENVIRONMENT_SET)
 
@@ -135,8 +138,10 @@ def pieces_placement(group):
 
 def check_environment(h_root=None, film=None):
     """What an environment publish takes, by role:
-    {"sets", landscape: [...], buildings: [...], sky: [...], "warnings"}.
-    Raises PublishError explaining what to fix."""
+    {"sets", landscape: [...], buildings: [...], sky: [...], "warnings"},
+    buildings being each building's group. Raises PublishError explaining
+    what to fix. (h_root/film: kept for callers; building names aren't
+    matched to H-drive assets any more, user 2026-10-22.)"""
     sets = find_sets()
     found = {"sets": sets, "warnings": []}
     seen = {}
@@ -157,25 +162,38 @@ def check_environment(h_root=None, film=None):
                 raise PublishError("%s (%s) is inside %s (%s). Each thing has one role: "
                                    "take the inner one out of its set."
                                    % (_short(b), seen[b], _short(a), seen[a]))
-    for group in found[BUILDINGS]:
-        if not cmds.listRelatives(group, children=True, type="transform"):
-            raise PublishError(
-                "%s in building_SET isn't a group. Put each building (even a placeholder "
-                "box) in a group named after its asset, and add the group." % _short(group))
+    found[BUILDINGS] = buildings_in(found[BUILDINGS])
     names = [_short(g) for g in found[BUILDINGS]]
     clashes = sorted(set(n for n in names if names.count(n) > 1))
     if clashes:
         raise PublishError("Two buildings are both called %s: each locator is named "
                            "after its group, so rename one." % ", ".join(clashes))
-    if h_root and film:
-        assets = set(api._match_key(a) for _, a in api.list_h_assets(h_root, film))
-        unknown = [n for n in names if api._match_key(n) not in assets]
-        if unknown:
-            found["warnings"].append(
-                "No asset on the H drive called %s: each building group is named after "
-                "the asset it stands for, so its locator can be matched later."
-                % ", ".join(unknown))
     return found
+
+
+def buildings_in(members):
+    """The buildings: building_SET holds one group called buildings, and
+    each group inside it is a building, named however the student likes
+    (user, 2026-10-22: room for more than one building)."""
+    if not members:
+        return []
+    if len(members) != 1 or _short(members[0]) != BUILDINGS_GROUP:
+        raise PublishError(
+            "building_SET should hold just one group called %s (it holds %s). Put "
+            "each building in its own group inside %s, and add %s to building_SET."
+            % (BUILDINGS_GROUP, ", ".join(_short(m) for m in members),
+               BUILDINGS_GROUP, BUILDINGS_GROUP))
+    buildings = cmds.listRelatives(members[0], children=True, fullPath=True,
+                                   type="transform") or []
+    if not buildings:
+        raise PublishError("%s is empty. Put each building in its own group inside it."
+                           % BUILDINGS_GROUP)
+    for group in buildings:
+        if not cmds.listRelatives(group, children=True, type="transform"):
+            raise PublishError(
+                "%s in %s isn't a group. Put each building (even a placeholder box) in "
+                "its own group inside %s." % (_short(group), BUILDINGS_GROUP, BUILDINGS_GROUP))
+    return buildings
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +355,8 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                 for role, name in ROLE_SETS:
                     if found["sets"][role]:
                         nodes = cmds.ls(copies[role], long=True)
+                        if role == BUILDINGS and nodes:
+                            nodes = [holders[BUILDINGS]]    # the buildings group, as in the scene
                         role_sets.append(cmds.sets(nodes, name=name) if nodes else
                                          cmds.sets(empty=True, name=name))
                 env_set = cmds.sets(role_sets, name=ENVIRONMENT_SET)
