@@ -15,8 +15,8 @@ from PySide6 import QtWidgets, QtCore, QtGui
 
 ASSET, SHOT = "asset", "shot"
 KIND_LABELS = ((ASSET, "Asset"), (SHOT, "Shot"))
-# Labels over the last two dropdowns, by kind.
-GROUP_LABELS = {ASSET: ("Type", "Asset"), SHOT: ("Sequence", "Shot")}
+# What the last two dropdowns hold, by kind (their tooltips).
+GROUP_LABELS = {ASSET: ("Asset type", "Asset"), SHOT: ("Sequence", "Shot")}
 NONE_TEXT = "(none)"
 
 
@@ -59,7 +59,9 @@ class TargetPicker(QtWidgets.QWidget):
         self._items = []
 
         self.film_combo = QtWidgets.QComboBox()
+        self.film_combo.setToolTip("Film")
         self.dept_combo = QtWidgets.QComboBox()
+        self.dept_combo.setToolTip("Department")
         _set_items(self.dept_combo, [(label if live else "%s (coming soon)" % label, code, live)
                                      for label, code, _, live in departments])
         self.kind_combo = QtWidgets.QComboBox()
@@ -77,21 +79,13 @@ class TargetPicker(QtWidgets.QWidget):
         self.remove_btn.setToolTip("Take the highlighted rows off the list.")
         self.add_btn.setToolTip("Add what's picked here to the list.")
 
-        self.group_lbl = QtWidgets.QLabel()
-        self.name_lbl = QtWidgets.QLabel()
-        grid = QtWidgets.QGridLayout(self)
-        grid.setContentsMargins(0, 0, 0, 0)
-        for column, (label, combo) in enumerate((
-                (QtWidgets.QLabel("Film"), self.film_combo),
-                (QtWidgets.QLabel("Department"), self.dept_combo),
-                (QtWidgets.QLabel("Asset or Shot"), self.kind_combo),
-                (self.group_lbl, self.group_combo),
-                (self.name_lbl, self.name_combo))):
-            grid.addWidget(label, 0, column)
-            grid.addWidget(combo, 1, column)
-        grid.setColumnStretch(4, 1)
-        grid.addWidget(self.remove_btn, 1, 5)
-        grid.addWidget(self.add_btn, 1, 6)
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        for combo in (self.film_combo, self.dept_combo, self.kind_combo, self.group_combo):
+            row.addWidget(combo)
+        row.addWidget(self.name_combo, 1)
+        row.addWidget(self.remove_btn)
+        row.addWidget(self.add_btn)
 
         self.film_combo.currentIndexChanged.connect(lambda *_: self.refill())
         self.dept_combo.currentIndexChanged.connect(lambda *_: self.refill())
@@ -138,8 +132,8 @@ class TargetPicker(QtWidgets.QWidget):
         kind = self.kind()
         self.kind_combo.setCurrentIndex(self.kind_combo.findData(kind))
         group_label, name_label = GROUP_LABELS[kind]
-        self.group_lbl.setText(group_label)
-        self.name_lbl.setText(name_label)
+        self.group_combo.setToolTip(group_label)
+        self.name_combo.setToolTip(name_label)
         film, code = self.film(), self.department()
         self._items = list(self._items_for(film, code, kind)) if film and code else []
         groups = []

@@ -222,8 +222,6 @@ class PublishToolUI(QtWidgets.QDialog):
             "Environment: this scene's environment_SET (landscape, buildings, sky).")
         self.picker.add_clicked.connect(self._add_row)
         self.picker.remove_clicked.connect(self._remove_rows)
-        self.hint = QtWidgets.QLabel()
-        self.hint.setWordWrap(True)
 
         # The publish list. Only ticked rows are published.
         self.table = QtWidgets.QTableWidget(0, 5)
@@ -284,7 +282,6 @@ class PublishToolUI(QtWidgets.QDialog):
         layout.addLayout(roots)
         layout.addLayout(scene_row)
         layout.addWidget(self.picker)
-        layout.addWidget(self.hint)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
         layout.addLayout(frames_row)
@@ -393,13 +390,12 @@ class PublishToolUI(QtWidgets.QDialog):
         """Set Objects / Whole Scene are for asset rows only."""
         for widget in (self.objects_btn, self.whole_btn):
             widget.setVisible(not shot)
-        self.hint.setText(
-            "Select what you want to publish in Maya (cameras, characters, props...), "
-            "pick Layout or Animation and click +. The tool works out what each one is. "
-            "For the Environment, environment_SET decides what goes."
+        self.picker.add_btn.setToolTip(
+            "Add what's selected in Maya (cameras, characters, props...): the tool works "
+            "out what each one is. For the Environment, environment_SET decides what goes."
             if shot else
-            "Select what you want to publish in Maya and click +. "
-            "With nothing selected, the whole scene is published.")
+            "Add this asset with what's selected in Maya. With nothing selected, the "
+            "whole scene is published.")
 
     def _set_frame_defaults(self, ctx):
         """ShotSub frames for a newly opened scene: a shot scene uses the

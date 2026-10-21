@@ -64,7 +64,7 @@ check("Department: asset departments, then Layout/Animation, Lighting/FX coming 
                 ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
 p.set_current(code="model")
 check("an asset department switches the picker to Asset", p.kind() == "asset"
-      and p.kind_combo.currentText() == "Asset" and p.name_lbl.text() == "Asset")
+      and p.kind_combo.currentText() == "Asset" and p.name_combo.toolTip() == "Asset")
 cmds.select("ball", replace=True)
 w._add_row()
 check("... and + refuses it in a shot scene", not w._rows
