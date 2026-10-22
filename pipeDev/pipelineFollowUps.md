@@ -53,6 +53,18 @@ hand. One T7 session could cover most of it.
       picker row and the `buildings` group. Still worth a look: does the
       sky image plane show its picture in the built shot (through
       `$PIPE_SCRATCH`)?
+- [ ] **Scratch on a different drive** (spec §3i, 2026-10-22): copy a built
+      shot's scratch film folder (shot + `maya\publish\`) to another drive
+      letter, e.g. a USB stick as `E:\`. With the saved scratch setting
+      still pointing at the old drive, open the shot from `E:\` and check:
+      references, rig textures, MetaHuman DNA (rig logic runs) and the sky
+      image plane all load from `E:\`; Build, Publish and the Project Tool
+      each say "Scratch drive set to E:\". Then delete `E:\...\maya\publish\`
+      and check Build/Repair pulls the shot's versions back from H.
+- [?] **Unpublished textures on another drive**: a wip asset scene carried
+      to a different scratch drive keeps full `D:\...\sourceimages\` paths,
+      so its textures go missing. Warn about it, fix paths to this drive on
+      open, or leave it to students?
 
 ## 2. Decisions waiting on you
 

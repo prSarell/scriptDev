@@ -547,9 +547,12 @@ The tools are developed side by side:
   2. **No scene is open.** The saved setting is used.
   3. **The saved drive isn't on this machine.** The tool says so plainly and
      asks the student to Browse, or to open a scene from their scratch drive.
-  The H drive stays a single saved setting. OPEN: confirm the H drive has the
-  same letter in every classroom, and whether Maya prefs follow students
-  between machines.
+  The H drive stays a single saved setting. ANSWERED (2026-10-22): the H
+  drive has the same letter in every classroom, and Maya prefs follow
+  students between machines (they live on the H drive). So the saved
+  scratch setting is whatever drive the student last used, in whichever
+  room: it's often stale, which is why every tool (Build, Publish, Project
+  Tool) follows the open scene.
 
   **Moving between rooms (reminder of the §3h decision, unchanged).** The
   H drive carries only publishes. A student's own working files (shot

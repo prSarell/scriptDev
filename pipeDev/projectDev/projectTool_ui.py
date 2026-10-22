@@ -119,8 +119,14 @@ class ProjectToolUI(QtWidgets.QDialog):
     # -- helpers ----------------------------------------------------------
 
     def _roots(self):
-        return (pub.resolve_root(pub.get_root(pub.H_DRIVE)),
-                pub.resolve_root(pub.get_root(pub.SCRATCH)))
+        # The scratch drive follows the open scene (spec "Scratch drive
+        # follows the work"): Maya prefs live on H, so the saved setting is
+        # whatever drive the student last used, in whichever room.
+        h_root = pub.resolve_root(pub.get_root(pub.H_DRIVE))
+        moved = pub.follow_open_scene(h_root, pub.resolve_root(pub.get_root(pub.SCRATCH)))
+        if moved:
+            self._message("Scratch drive set to %s, where the open scene is." % moved)
+        return h_root, pub.resolve_root(pub.get_root(pub.SCRATCH))
 
     def _message(self, text, ok=True):
         colour = "#7fbf7f" if ok else "#e0a060"
