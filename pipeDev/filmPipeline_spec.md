@@ -2196,31 +2196,40 @@ The tools are developed side by side:
                every path is made fresh on this drive. The user: "I want the
                build shot tool to know they are on a new machine and handle
                that for them." The full file on H stays the manual fallback.
-               - **Keys are picked like an asset (DECIDED 2026-10-23).** A
-                 new **Animation** department in Build's picker, on the Shot
-                 route next to Camera: Film | Shot | Animation | shot | item,
-                 the item being each character / prop / vehicle in that
-                 shot's publish, shown with its asset type. Any shot can be
-                 picked, so keys can come from another shot. (Proposed, not
-                 yet confirmed: sequence + shot merged into one dropdown to
-                 make room for the item; Camera stays its own department.)
-               - **Layout and Animation keys in one list (DECIDED
-                 2026-10-23).** "The pipe labels them as layout and animation
-                 but they're all treated as date stamped versions and the
-                 pipe offers up the latest version." The Version column
-                 mixes both (`v002 layout`, `v005 anim`), newest by **publish
-                 time** (the two keep separate version numbers, so not by
-                 number).
-               - **Same frames (DECIDED 2026-10-23):** keys from any shot
-                 land on the frames they were published on, no offset.
-               - **Rig version mismatch (DECIDED 2026-10-23):** apply the
-                 keys anyway and list the controls that didn't match.
-               - **Made in the shot (DECIDED 2026-10-23):** left out of the
-                 item list until a "created in shot" publish is designed.
-               - **OPEN (bigger question, to come back to):** keys added
-                 when that asset isn't in the shot's list (build the rig
-                 automatically? which version?). Linked: how students **roll
-                 back** keys to an earlier publish.
+               - **A Keys column on the asset row (DECIDED 2026-10-23).**
+                 When a rig (character / prop / vehicle) is in the shot's
+                 list, its row gets a **Keys** dropdown beside Version:
+                 defaults to the latest keys, lists every earlier publish so
+                 the student can **roll back**, plus None (default pose).
+                 Scout's keys go on Scout only. Keys never come without their
+                 asset, so "keys but no rig" can't happen. Environments and
+                 models show "—"; the camera keeps its keys inside its own
+                 version, unchanged. "In this shot" shows the keys version
+                 currently on the asset, like the rig version.
+               - **One list, newest first (DECIDED 2026-10-23).** "The pipe
+                 labels them as layout and animation but they're all treated
+                 as date stamped versions and the pipe offers up the latest
+                 version." Layout and anim mixed (`v005 anim`, `v002
+                 layout`), ordered by **publish time** (the two keep separate
+                 version numbers). Whoever published them doesn't matter.
+               - **Rig leads (DECIDED 2026-10-23):** the rig version and the
+                 keys version are picked separately. Keys made on another rig
+                 version are applied anyway; Status lists the controls that
+                 didn't match.
+               - **Rebuild replaces (DECIDED 2026-10-23):** building a
+                 different keys version deletes the asset's existing keys and
+                 puts the chosen ones on, on the frames they were published
+                 on (no offset).
+               - **Made in the shot (DECIDED 2026-10-23):** left out until a
+                 "created in shot" publish is designed.
+               - **PARKED: keys onto a different rig through the "Building
+                 into shot" picker** (e.g. Scout's keys on another
+                 character). "A feature that would be great but right now can
+                 be handled using Studio Library." No Animation department in
+                 the picker for now.
+               - **OPEN:** does an asset's Keys dropdown list only this
+                 shot's publishes, or that asset's publishes from every shot
+                 (shot shown per entry)? Claude's lean: this shot only.
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;
