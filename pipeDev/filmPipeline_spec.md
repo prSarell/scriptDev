@@ -563,27 +563,15 @@ The tools are developed side by side:
   changing rooms often, this copying is a regular chore with a risk of
   copying old over new. Noted, not reopened.
 
-  **REOPENED, HIGH PRIORITY (2026-10-22): how wip moves between machines.**
-  To be talked through 2026-10-23, before any more pipeline dev. Full
-  options list: `pipelineFollowUps.md` section 0. With prefs on H, students
-  change rooms often, so the "students carry it themselves" answer above
-  is being reopened. Published work already moves fine; the open questions
-  are about unpublished work:
-  1. **Wip texture paths.** A wip scene carried to another drive keeps full
-     `D:\...\sourceimages\` paths, so textures go missing. The options are
-     to leave it to students, warn on open, repoint on open (like the DNA
-     fix), or store the paths as `$PIPE_SCRATCH` on save. Lean: repoint on
-     open, warning for any textures it can't find. First test whether Maya
-     already finds them when the project is set.
-  2. **Publish at end of day, Build clean next day?** That only fits
-     finished stages. Publishes are approval-gated and make ShotGrid
-     versions. Build offers the latest version, so half-done work would
-     reach other shots. A publish isn't the working scene. Every version
-     takes a full texture copy on H. Animation, caches and image sequences
-     have no publish step. The alternative is a **"save my wip to H"**
-     action: a personal H folder outside ShotGrid and Build, restored on
-     the next machine.
-  OPEN: do students already keep wip on their personal H drive at RMIT?
+  **Wip between machines: CLOSED (2026-10-23), the §3h answer stands.**
+  Reopened 2026-10-22 and talked through 2026-10-23. The user: "I don't
+  think we need to account for unpublished work. That's on the students.
+  We have two types of publish. Iterative and final to cover that." So the
+  pipe doesn't manage unpublished work. Wip scenes, wip texture paths,
+  caches and image sequences stay the student's job. A student who wants
+  work on another machine makes an **iterative publish**, which isn't
+  blocked by approval (§3c, 2026-10-19), and Builds it there. Dropped: wip
+  texture repointing on open, and a "save my wip to H" action.
 
   **Implementation (v0, 2026-10-13).**
   - `pipeDev/buildDev/buildTool_api.py`:
