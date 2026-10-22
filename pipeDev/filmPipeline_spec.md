@@ -2188,7 +2188,39 @@ The tools are developed side by side:
                cache the whole reference / refuse ("animate a rig") / allow
                with a warning.
           7. **Not in v0:**
-             - Build Shot pulling animation back in;
+             - Build Shot pulling animation back in. **Design talked through
+               2026-10-23 (not built):** this is how a student moves a shot
+               to a new machine or scratch drive (§3h "Wip between machines:
+               CLOSED"). A clean Build from the individual publishes plus the
+               student's published keys, not a copy of the full file, so
+               every path is made fresh on this drive. The user: "I want the
+               build shot tool to know they are on a new machine and handle
+               that for them." The full file on H stays the manual fallback.
+               - **Keys are picked like an asset (DECIDED 2026-10-23).** A
+                 new **Animation** department in Build's picker, on the Shot
+                 route next to Camera: Film | Shot | Animation | shot | item,
+                 the item being each character / prop / vehicle in that
+                 shot's publish, shown with its asset type. Any shot can be
+                 picked, so keys can come from another shot. (Proposed, not
+                 yet confirmed: sequence + shot merged into one dropdown to
+                 make room for the item; Camera stays its own department.)
+               - **Layout and Animation keys in one list (DECIDED
+                 2026-10-23).** "The pipe labels them as layout and animation
+                 but they're all treated as date stamped versions and the
+                 pipe offers up the latest version." The Version column
+                 mixes both (`v002 layout`, `v005 anim`), newest by **publish
+                 time** (the two keep separate version numbers, so not by
+                 number).
+               - **Same frames (DECIDED 2026-10-23):** keys from any shot
+                 land on the frames they were published on, no offset.
+               - **Rig version mismatch (DECIDED 2026-10-23):** apply the
+                 keys anyway and list the controls that didn't match.
+               - **Made in the shot (DECIDED 2026-10-23):** left out of the
+                 item list until a "created in shot" publish is designed.
+               - **OPEN (bigger question, to come back to):** keys added
+                 when that asset isn't in the shot's list (build the rig
+                 automatically? which version?). Linked: how students **roll
+                 back** keys to an earlier publish.
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;
