@@ -1162,6 +1162,233 @@ def build_camera(shot_dir, published, vid):
     return done, None
 
 
+# ---------------------------------------------------------------------------
+# Shot keys (spec §4 item 7 "Build Shot pulling animation back in", DECIDED
+# 2026-10-23): a Layout or Animation publish writes each item's keys (a .ma
+# of curves + a .json map) to the shot's scenes\<login>\ on the H drive.
+# Build puts an asset's keys back on that same asset (Scout's keys on Scout
+# only), from the Keys column on its row. Layout and anim keys are one list,
+# newest by publish time; the rig version is picked separately, and keys
+# made on another rig version go on anyway, with what didn't match listed.
+# ---------------------------------------------------------------------------
+
+KEY_CODES = ("layout", "anim")
+KEYS_RE = re.compile(r"_(?P<code>layout|anim)_v(?P<version>\d{3})\.json$", re.IGNORECASE)
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT")
+KEYS_RECORD = "pipe_keys"       # fileInfo: which keys Build put on each asset
+KEEP_KEYS = "keep"              # leave the scene's keys alone (e.g. keyed by hand)
+NO_KEYS = "none"                # no keys: the asset at its default pose
+
+
+def keys_id(shot, login, code, version):
+    return "%s/%s/%s/v%03d" % (shot, login, code, version)
+
+
+def parse_keys_id(kid):
+    """(shot, login, code, version) from a keys id."""
+    shot, login, code, version = kid.split("/")
+    return shot, login, code, int(version[1:])
+
+
+def list_shot_keys(h_root, film, seq, shot):
+    """{asset's manifest key: {keys id: info}} for every asset keys publish
+    in the shot on the H drive, everyone's. info: {shot, login, code,
+    version, time, keys, map, made_on}, made_on being the asset version the
+    keys were published from ({version, artistId}). Items made in the shot
+    (no pipe stamp) and the camera are left out."""
+    scenes = os.path.join(shot_folder(h_root, film, seq, shot), "scenes")
+    found = {}
+    for dirpath, _, filenames in os.walk(scenes):
+        login = os.path.basename(dirpath).lower()
+        for name in filenames:
+            m = KEYS_RE.search(name)
+            if not m or not name.lower().startswith(("%s_%s_" % (shot, login)).lower()):
+                continue
+            path = os.path.join(dirpath, name)
+            keys = path[:-len(".json")] + ".ma"
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+            except (IOError, OSError, ValueError):
+                continue
+            asset = data.get("asset") or {}
+            if not (os.path.isfile(keys) and data.get("curves")
+                    and asset.get("asset") and asset.get("assetType")
+                    and asset.get("department")):
+                continue
+            code, version = m.group("code").lower(), int(m.group("version"))
+            key = manifest_key(asset["assetType"], asset["asset"], asset["department"])
+            found.setdefault(key, {})[keys_id(shot, login, code, version)] = {
+                "shot": shot, "login": login, "code": code, "version": version,
+                "time": publish_time(path), "keys": keys, "map": path,
+                "made_on": {"version": asset.get("version"),
+                            "artistId": asset.get("artistId")}}
+    return found
+
+
+def keys_label(kid, info=None, this_shot=None, latest=None):
+    """'v005 anim (scout)', plus the shot when it isn't this one and
+    '  (latest)' for the newest."""
+    if kid == KEEP_KEYS:
+        return "Keep scene's keys"
+    if kid == NO_KEYS:
+        return "None (no keys)"
+    shot, login, code, version = parse_keys_id(kid)
+    text = "v%03d %s (%s)" % (version, code, login)
+    if this_shot and shot.lower() != this_shot.lower():
+        text += "  from %s" % shot
+    if latest and kid == latest:
+        text += "  (latest)"
+    return text
+
+
+def sorted_keys(keys):
+    """Keys ids of {kid: info}, newest publish first."""
+    return sorted(keys, key=lambda k: keys[k]["time"], reverse=True)
+
+
+def keys_record():
+    """{asset's manifest key: keys id} that Build put on each asset in the
+    open scene (saved with the scene)."""
+    raw = cmds.fileInfo(KEYS_RECORD, query=True) or []
+    record = {}
+    for pair in (raw[0] if raw else "").split("|"):
+        if "=" in pair:
+            key, kid = pair.split("=", 1)
+            record[key] = kid
+    return record
+
+
+def _set_keys_record(key, kid):
+    record = keys_record()
+    record[key] = kid
+    cmds.fileInfo(KEYS_RECORD, "|".join("%s=%s" % kv for kv in sorted(record.items())))
+
+
+def keys_in_scene(published):
+    """The keys id Build last put on this asset in the open scene (or
+    NO_KEYS), or None if Build hasn't put keys on it."""
+    return keys_record().get(manifest_key(published["asset_type"], published["asset"],
+                                          published["code"]))
+
+
+def asset_namespace(shot_dir, published):
+    """The namespace the asset is referenced under in the open scene, or
+    None if it isn't there."""
+    entry = read_manifest(shot_dir).get(manifest_key(
+        published["asset_type"], published["asset"], published["code"]))
+    nodes = referenced_nodes(entry_path(shot_dir, entry)) if entry else []
+    nodes = nodes or any_version_references(shot_dir, published)
+    if nodes:
+        return cmds.referenceQuery(nodes[0], namespace=True).lstrip(":")
+    namespace = namespace_for(published["asset"], published["code"])
+    return namespace if cmds.namespace(exists=":" + namespace) else None
+
+
+def _namespace_nodes(namespace):
+    """{short name without namespaces: node} for everything in the
+    namespace, nested namespaces included (the keys map keeps short names)."""
+    nodes = cmds.namespaceInfo(":" + namespace, listOnlyDependencyNodes=True,
+                               recurse=True, dagPath=True) or []
+    found = {}
+    for node in nodes:
+        found.setdefault(node.split("|")[-1].split(":")[-1], node)
+    return found
+
+
+def _keys_on(namespace):
+    """The animator's keys on the asset: time curves feeding its nodes
+    straight in, not from the referenced file (driven keys belong to the rig)."""
+    curves = set()
+    for node in _namespace_nodes(namespace).values():
+        for curve in cmds.listConnections(node, source=True, destination=False,
+                                          type="animCurve") or []:
+            if (cmds.nodeType(curve) in TIME_CURVES
+                    and not cmds.referenceQuery(curve, isNodeReferenced=True)):
+                curves.add(curve)
+    return sorted(curves)
+
+
+def clear_keys(namespace):
+    """Delete the asset's keys. Returns how many curves went."""
+    curves = _keys_on(namespace)
+    for curve in curves:
+        cmds.lockNode(curve, lock=False)
+    if curves:
+        cmds.delete(curves)
+    return len(curves)
+
+
+def apply_keys(namespace, info):
+    """Replace the asset's keys with a published set: import its curves,
+    delete the keys already on the asset, then connect each curve to the
+    same control and channel by name, on the frames it was published on.
+    Curves whose control or channel isn't on this rig (or is locked) are
+    left out. Returns (curves applied, [controls that didn't match])."""
+    with open(info["map"], "r") as f:
+        mapping = json.load(f)["curves"]
+    ns, curves = _import_into_root(info["keys"], "buildKeys")
+    applied, unmatched = 0, []
+    try:
+        clear_keys(namespace)
+        targets = _namespace_nodes(namespace)
+        for curve, (node_name, attr) in sorted(mapping.items()):
+            new = curves.get(curve)
+            if not new:
+                unmatched.append("%s.%s (missing from the keys file)" % (node_name, attr))
+                continue
+            node = targets.get(node_name)
+            plug = "%s.%s" % (node, attr)
+            if not node or not cmds.attributeQuery(attr.split("[")[0], node=node, exists=True):
+                unmatched.append("%s.%s" % (node_name, attr))
+                cmds.delete(new)
+                continue
+            if cmds.getAttr(plug, lock=True):
+                unmatched.append("%s.%s (locked)" % (node_name, attr))
+                cmds.delete(new)
+                continue
+            cmds.connectAttr(new + ".output", plug, force=True)
+            cmds.rename(new, ":%s_%s_%s" % (namespace.replace(":", "_"), node_name, attr))
+            applied += 1
+    finally:
+        _drop_namespace(ns)
+    return applied, unmatched
+
+
+def build_keys(shot_dir, published, kid, info=None):
+    """Put the chosen keys on an asset that's in the open scene: kid a keys
+    id (info from list_shot_keys) or NO_KEYS. Whatever keys the asset had
+    are replaced (user, 2026-10-23). Returns (done, warning or None)."""
+    namespace = asset_namespace(shot_dir, published)
+    if not namespace:
+        raise BuildError("%s isn't in this scene, so its keys have nowhere to go."
+                         % published["asset"])
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    if kid == NO_KEYS:
+        removed = clear_keys(namespace)
+        _set_keys_record(key, NO_KEYS)
+        return ["keys removed (%d curves)" % removed], None
+    label = keys_label(kid, info, this_shot=os.path.basename(os.path.normpath(shot_dir)))
+    applied, unmatched = apply_keys(namespace, info)
+    _set_keys_record(key, kid)
+    done = ["keys %s on (%d curves)" % (label, applied)]
+    warning = None
+    if unmatched:
+        made_on = info.get("made_on") or {}
+        entry = read_manifest(shot_dir).get(key)
+        note = ""
+        if entry and made_on.get("version") and (
+                made_on.get("version"), (made_on.get("artistId") or "").lower()) != (
+                entry["version"], (entry.get("login") or "").lower()):
+            note = " (keys made on v%03d (%s), this shot has v%03d (%s))" % (
+                made_on["version"], made_on.get("artistId") or "?",
+                entry["version"], entry.get("login") or "?")
+        shown = unmatched[:8] + (["..."] if len(unmatched) > 8 else [])
+        warning = ("keys put on anyway, but %d didn't match this rig%s: %s"
+                   % (len(unmatched), note, ", ".join(shown)))
+    return done, warning
+
+
 def free_namespace(namespace):
     """Make sure the clean namespace (e.g. backpack:) can be used. An empty
     leftover namespace is removed; one that still holds nodes is a real

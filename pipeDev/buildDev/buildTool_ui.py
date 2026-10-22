@@ -5,6 +5,8 @@ Two tabs:
                 Film, Asset or Shot, Department, Type or Sequence, Asset
                 or Shot, then - and +); one click pulls every ticked one
                 from the H drive and references it into the open scene.
+                Each asset's Keys dropdown puts a Layout/Animation
+                publish's keys back on it (from the picker's shot).
   My Scratch  — what's on the scratch drive, how safe it is to remove,
                 and removal to the Recycle Bin.
 
@@ -120,6 +122,8 @@ class BuildShotTab(QtWidgets.QWidget):
         self._target_shot = None     # (film, seq, shot) being built into
         self._published = []     # everything on the H drive for the shot's film
         self._other_films = {}   # film -> list_published, for the picker
+        self._shot_keys = {}     # (film, seq, shot) -> api.list_shot_keys
+        self._keys_src = None    # the shot the Keys dropdowns list (see _keys_source)
         self._rows = []          # the shot's list: published entries shown in the table
         self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
 
@@ -131,6 +135,10 @@ class BuildShotTab(QtWidgets.QWidget):
         # Type or Sequence | Asset or Shot, then - and +.
         self.picker = picker.TargetPicker(BUILD_DEPARTMENTS, self._items_for)
         self.picker.add_clicked.connect(self._add_asset)
+        # Pointing the picker at a shot lists that shot's keys (user, 2026-10-23).
+        for combo in (self.picker.film_combo, self.picker.kind_combo,
+                      self.picker.group_combo, self.picker.name_combo):
+            combo.currentIndexChanged.connect(self._on_keys_source_changed)
         self.picker.remove_clicked.connect(self._remove_rows)
 
         # The shot's asset list, filtered by department (user, 2026-10-21).
@@ -142,7 +150,7 @@ class BuildShotTab(QtWidgets.QWidget):
         show.addWidget(QtWidgets.QLabel("Show:"))
         show.addWidget(self.filter_combo)
         show.addStretch(1)
-        self.table = _table(["Asset", "Type", "Department", "Version",
+        self.table = _table(["Asset", "Type", "Department", "Version", "Keys",
                              "In this shot", "Status"])
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -245,7 +253,7 @@ class BuildShotTab(QtWidgets.QWidget):
         in this shot."""
         h_root, scratch_root = self._get_roots()
         self._published, self._rows, self._removed = [], [], set()
-        self._other_films = {}
+        self._other_films, self._shot_keys, self._keys_src = {}, {}, None
         self._render_table()
         try:
             pub.check_roots(pub.resolve_root(h_root), pub.resolve_root(scratch_root))
@@ -304,15 +312,99 @@ class BuildShotTab(QtWidgets.QWidget):
         if in_scene in p["versions"]:
             chosen = in_scene
         row = dict(p, chosen=chosen, start=chosen, in_scene=in_scene)
+        # Keys: an asset already in the scene starts at the keys Build put
+        # on it, or "keep" if Build didn't (keyed by hand: never wiped
+        # unasked). A new one starts at this shot's latest keys.
+        if p.get("kind") == "camera":
+            keys = None
+        elif in_scene is not None:
+            keys = api.keys_in_scene(p) or api.KEEP_KEYS
+        else:
+            mine = self._keys_for(row, self._target_shot)
+            keys = api.sorted_keys(mine)[0] if mine else api.NO_KEYS
+        row.update(keys_chosen=keys, keys_start=keys)
         row["checked"] = not self._left_as_is(row, shot_dir)
         return row
 
-    @staticmethod
-    def _left_as_is(p, shot_dir):
+    # -- keys -------------------------------------------------------------
+
+    def _keys_source(self):
+        """The shot the Keys dropdowns list: the one the picker points at
+        on its Shot side, else the shot being built into."""
+        if (self._target_shot and self.picker.kind() == picker.SHOT
+                and self.picker.film() == self._target_shot[0]
+                and self.picker.group() and self.picker.name()):
+            return (self.picker.film(), self.picker.group(), self.picker.name())
+        return self._target_shot
+
+    def _keys_for(self, p, shot):
+        """{keys id: info} published in shot for this row's asset."""
+        if not shot or p.get("kind") == "camera":
+            return {}
+        if shot not in self._shot_keys:
+            h_root = self._get_roots()[0]
+            self._shot_keys[shot] = (api.list_shot_keys(h_root, *shot)
+                                     if h_root and os.path.isdir(h_root) else {})
+        return self._shot_keys[shot].get(self._key(p), {})
+
+    def _keys_info(self, p, kid):
+        """info for a keys id, from whichever shot it was published in."""
+        if kid in (None, api.KEEP_KEYS, api.NO_KEYS) or not self._target_shot:
+            return None
+        shot = api.parse_keys_id(kid)[0]
+        seq = next((s for s, sh in api.list_shots(self._get_roots()[0], self._target_shot[0])
+                    if sh == shot), None) if shot != self._target_shot[2] else self._target_shot[1]
+        return self._keys_for(p, (self._target_shot[0], seq, shot)).get(kid) if seq else None
+
+    def _on_keys_source_changed(self, *args):
+        if self._rows and self._keys_source() != self._keys_src:
+            self._render_table()
+
+    def _on_keys_changed(self, p, kid):
+        """Picking other keys ticks the row; picking back what the scene has
+        unticks it again."""
+        p["keys_chosen"] = kid
+        self._on_version_changed(p, p.get("chosen", p["latest"]))
+
+    def _keys_cell(self, row, p):
+        """The Keys dropdown: the picker's shot's publishes for this asset,
+        newest first, plus the current choice and what the scene has (kept
+        when the picker moves on), Keep, and None."""
+        self.table.removeCellWidget(row, 4)
+        if p.get("keys_chosen") is None:
+            self.table.setItem(row, 4, _cell("-"))
+            return
+        listed = self._keys_for(p, self._keys_src)
+        kids = api.sorted_keys(listed)
+        for kid in (p["keys_chosen"], p["keys_start"]):
+            if kid not in kids and kid not in (api.KEEP_KEYS, api.NO_KEYS):
+                kids.append(kid)
+        if p.get("in_scene") is not None and api.KEEP_KEYS in (p["keys_chosen"],
+                                                               p["keys_start"]):
+            kids.append(api.KEEP_KEYS)
+        if not kids:
+            self.table.setItem(row, 4, _cell("-"))
+            return
+        kids.append(api.NO_KEYS)
+        latest = api.sorted_keys(listed)[0] if listed else None
+        combo = QtWidgets.QComboBox()
+        for kid in kids:
+            combo.addItem(api.keys_label(kid, this_shot=self._target_shot[2],
+                                         latest=latest), kid)
+        combo.setCurrentIndex(max(combo.findData(p["keys_chosen"]), 0))
+        combo.setToolTip("Keys from a Layout or Animation publish, newest first. Build "
+                         "replaces this asset's keys with them. Point the picker at "
+                         "another shot (Shot side) to list that shot's keys.")
+        combo.currentIndexChanged.connect(
+            lambda i, c=combo, r=p: self._on_keys_changed(r, c.currentData()))
+        self.table.setCellWidget(row, 4, combo)
+
+    def _left_as_is(self, p, shot_dir):
         """True if a row starts unticked: already in the scene and its
-        version not changed in the list. A rig whose file in the shot is
-        missing or out of date starts ticked, since building is the fix."""
-        if p.get("in_scene") is None or p.get("chosen") != p.get("start"):
+        version and keys not changed in the list. A rig whose file in the
+        shot is missing or out of date starts ticked, since building is the fix."""
+        if (p.get("in_scene") is None or p.get("chosen") != p.get("start")
+                or p.get("keys_chosen") != p.get("keys_start")):
             return False
         entry = api.read_manifest(shot_dir).get(api.manifest_key(
             p["asset_type"], p["asset"], p["code"]))
@@ -333,7 +425,8 @@ class BuildShotTab(QtWidgets.QWidget):
         """Re-read the H drive without losing the list: rows added but not
         built yet stay, and version choices and ticks stay where they
         still exist."""
-        kept = [(self._key(r), r.get("chosen"), r["checked"]) for r in self._rows]
+        kept = [(self._key(r), r.get("chosen"), r["checked"], r.get("keys_chosen"))
+                for r in self._rows]
         picked = (self.picker.film(), self.picker.department(), self.picker.group(),
                   self.picker.name())
         removed = self._removed
@@ -345,7 +438,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self._rows = [r for r in self._rows if self._key(r) not in removed]
         by_key = dict((self._key(p), p) for p in self._published)
         in_list = dict((self._key(r), r) for r in self._rows)
-        for key, chosen, checked in kept:
+        for key, chosen, checked, keys in kept:
             if key not in by_key:
                 continue
             row = in_list.get(key)
@@ -354,6 +447,8 @@ class BuildShotTab(QtWidgets.QWidget):
                 self._rows.append(row)
             if chosen in row["versions"]:
                 row["chosen"] = chosen
+            if keys is not None and row.get("keys_chosen") is not None:
+                row["keys_chosen"] = keys
             row["checked"] = checked
         self.picker.set_current(*picked)
         self._render_table()
@@ -371,6 +466,7 @@ class BuildShotTab(QtWidgets.QWidget):
     def _render_table(self):
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
+        self._keys_src = self._keys_source()
         self.table.blockSignals(True)
         self.table.setRowCount(len(self._rows))
         for row, p in enumerate(self._rows):
@@ -384,30 +480,35 @@ class BuildShotTab(QtWidgets.QWidget):
             combo.currentIndexChanged.connect(
                 lambda i, c=combo, r=p: self._on_version_changed(r, c.currentData()))
             self.table.setCellWidget(row, 3, combo)
+            self._keys_cell(row, p)
 
             entry = manifest.get(self._key(p))
             if not entry:
-                self.table.setItem(row, 4, _cell("-"))
-                self.table.setItem(row, 5, _cell("Ready to build", "#9fc5ff"))
+                self.table.setItem(row, 5, _cell("-"))
+                self.table.setItem(row, 6, _cell("Ready to build", "#9fc5ff"))
             else:
                 current = api.entry_version_id(entry)
-                self.table.setItem(row, 4, _cell(
-                    api.version_label(p, current, mark_latest=False)
-                    if current in p["versions"] else "v%03d (old)" % entry["version"]))
+                text = (api.version_label(p, current, mark_latest=False)
+                        if current in p["versions"] else "v%03d (old)" % entry["version"])
+                if p.get("in_scene") is not None and p.get("keys_start") not in (
+                        None, api.KEEP_KEYS):
+                    text += ", keys %s" % api.keys_label(p["keys_start"],
+                                                         this_shot=self._target_shot[2])
+                self.table.setItem(row, 5, _cell(text))
                 state = api.link_state(shot_dir, entry)    # rigs only (spec §4a)
                 if p.get("in_scene") is None:
-                    self.table.setItem(row, 5, _cell("Not in this scene: Build adds it",
+                    self.table.setItem(row, 6, _cell("Not in this scene: Build adds it",
                                                      "#9fc5ff"))
                 elif state in (api.MISSING, api.STALE):
-                    self.table.setItem(row, 5, _cell(
+                    self.table.setItem(row, 6, _cell(
                         "Rig file %s in this shot: Build to fix"
                         % ("missing" if state == api.MISSING else "out of date"), "#e0a060"))
                 elif api.newer_available(p, entry):
-                    self.table.setItem(row, 5, _cell(
+                    self.table.setItem(row, 6, _cell(
                         "%s available" % api.version_label(p, p["latest"], mark_latest=False),
                         "#e0a060"))
                 else:
-                    self.table.setItem(row, 5, _cell(
+                    self.table.setItem(row, 6, _cell(
                         "Up to date" + (" (full copy, not linked)" if state == api.COPY else ""),
                         "#7fbf7f"))
         self.table.resizeColumnsToContents()
@@ -544,6 +645,21 @@ class BuildShotTab(QtWidgets.QWidget):
                 except Exception as e:
                     warnings.append("%s: %s" % (label, e))
                     continue
+                # Keys go on after the asset: when they were changed, or with
+                # an asset new to the scene (then None means nothing to do).
+                keys = p.get("keys_chosen")
+                if keys not in (None, api.KEEP_KEYS) and (
+                        keys != p.get("keys_start")
+                        or (p.get("in_scene") is None and keys != api.NO_KEYS)):
+                    try:
+                        keys_done, keys_warning = api.build_keys(
+                            shot_dir, p, keys, self._keys_info(p, keys))
+                        done += keys_done
+                        if keys_warning:
+                            warnings.append("%s: %s" % (label, keys_warning))
+                        p["keys_start"] = keys
+                    except Exception as e:
+                        warnings.append("%s: keys not put on: %s" % (label, e))
                 p["in_scene"] = p["start"] = p.get("chosen", p["latest"])
                 p["checked"] = False        # built: nothing left to do for it
                 lines.append("%s: %s" % (label, ", ".join(done)))

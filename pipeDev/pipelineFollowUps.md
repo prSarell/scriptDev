@@ -26,6 +26,15 @@ hand. One T7 session could cover most of it.
       (Layout / Blocking / Final tasks), backpack v008+ with the stamp.
 - [ ] Rig hardlinks: build Scout into two shots, update one, choose
       "Every shot" / "Only this shot", reopen both (spec §4a).
+- [ ] Keys column (built 2026-10-23, spec §4 item 7): publish Animation on
+      one machine/drive, then in a fresh scene on another drive add Scout's
+      rig and Build: keys on, same frames. Roll back to a layout publish;
+      point the picker at another shot and take its keys; reopen.
+- [?] **New machine: the Build list starts empty.** The shot's manifest
+      lives on the old scratch drive, so on a new one the student has to
+      re-add every asset by hand before Build. Could the list start from the
+      shot's key publishes on H (each one names its asset and rig version)?
+      Tied to the parked "keys without the asset in the list" question.
 - [ ] Scout v004 in a shot: can animators click-select controls inside
       the dagContainer group? Try it once with
       `selectPref -containerCentricSelection` on as well (review #9).

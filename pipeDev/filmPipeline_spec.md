@@ -2240,6 +2240,28 @@ The tools are developed side by side:
                  - a keys choice from another shot stays on the row, shown
                    as `v003 anim — SEQ010_110`, when the picker moves on
                    (it never silently flips back to this shot's keys).
+               - **Built 2026-10-23** (`buildTool_api` "Shot keys",
+                 `buildTool_ui` Keys column). Details decided while
+                 building:
+                 - Keys are matched to a row by the asset's pipe stamp in the
+                   keys map (asset type + asset + department), read straight
+                   from the H drive (curves are imported, so nothing is
+                   pulled to scratch).
+                 - **Hand keys are never wiped unasked:** an asset already in
+                   the scene whose keys Build didn't put there starts at
+                   "Keep scene's keys". Only picking a keys version (or None)
+                   replaces them.
+                 - The scene records which keys Build put on each asset
+                   (fileInfo `pipe_keys`), so a reopened scene's row starts
+                   there, unticked, and "In this shot" shows it.
+                 - Only the animator's time curves on the asset are replaced;
+                   the rig's own driven keys stay.
+                 - Tests: `test_shotKeys_mayapy.py` 21/21 (keys written by
+                   Publish's own `export_keys`), `test_shotKeysUi_mayapy.py`
+                   16/16 (the real Build tab offscreen); other Build tests
+                   unchanged and passing.
+                 - Not handled: animation layers, constraints, keys on
+                   things made in the shot.
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;
