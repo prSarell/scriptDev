@@ -2227,9 +2227,19 @@ The tools are developed side by side:
                  character). "A feature that would be great but right now can
                  be handled using Studio Library." No Animation department in
                  the picker for now.
-               - **OPEN:** does an asset's Keys dropdown list only this
-                 shot's publishes, or that asset's publishes from every shot
-                 (shot shown per entry)? Claude's lean: this shot only.
+               - **Which shot's keys (DECIDED 2026-10-23):** only the shot
+                 the "Building into shot" picker points at. "By default the
+                 student would only see keys associated with the shot ...
+                 they were working in. They would have to manually change
+                 the Build into shot dropdowns to point to the keyframes in
+                 another shot." So:
+                 - picker on the Asset route (no shot in it): the Keys
+                   dropdowns list the open scene's shot's publishes;
+                 - picker on the Shot route, pointing at a shot: they list
+                   that shot's publishes (still Scout's keys onto Scout);
+                 - a keys choice from another shot stays on the row, shown
+                   as `v003 anim — SEQ010_110`, when the picker moves on
+                   (it never silently flips back to this shot's keys).
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;
