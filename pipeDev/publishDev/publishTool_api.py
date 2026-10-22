@@ -1663,10 +1663,9 @@ def scene_audio(start_frame):
 
 
 # ---------------------------------------------------------------------------
-# Approval (spec §4 item 6a, DECIDED 2026-10-19): a shot can only be
-# pipe-published after shotSub review gets it Approved in ShotGrid, and what
-# it may publish depends on the task the approval is on: Layout -> the
-# camera, Blocking -> keys + full file, Final -> also caches.
+# Approval (spec §3c, rule 2026-10-23): approval blocks no publish; it only
+# triggers caches. A final publish is an iterative publish plus the
+# department's caches, made once a Version on the Final task is Approved.
 # ---------------------------------------------------------------------------
 
 APPROVED = "apr"

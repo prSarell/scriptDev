@@ -55,9 +55,21 @@ what each one pulls and publishes differs.
   versions to ShotGrid, for the cut and for review.
 - This loop repeats until the shot is **approved**.
 
-### 3c. Publish (publish tool) — stage 2, after approval only
-Once the shot is approved, the animator publishes with the **publish tool**
-(not yet built):
+### 3c. Publish (publish tool) — stage 2
+**Iterative and final publish (RULE, user 2026-10-23; supersedes "after
+approval only" below).** "The only thing we need the approval for is to
+trigger the caches etc. That's all a final publish is. Same as an iterative
+publish but with caches as defined by the rules we have been creating for
+each department." So:
+- **Iterative publish**: never blocked by approval. It's also how students
+  move work between machines (§3h, "Wip between machines: CLOSED").
+- **Final publish**: the same publish, plus that department's caches/outputs.
+  It happens when the department's approval is in place (for shots, an
+  Approved Version on the Final task, 2026-10-19).
+- Approval gates nothing except those caches/outputs.
+
+The original 2026-10 plan, kept for history: once the shot is approved, the
+animator publishes with the **publish tool**:
 1. The animator **selects assets from their shot** to publish (e.g. the
    animated character + props).
 2. On Publish, the tool:
@@ -306,7 +318,7 @@ will at RMIT), so the tools should never hard-code `D:\`/`H:\`. Each location
 The tools are developed side by side:
 
 - **Build tool**: pulls H drive → scratch (§3a, §3e). **Active, from 2026-10-12.**
-- **Publish tool**: scratch → H drive, after approval (§3c). **Active, from 2026-10-12.**
+- **Publish tool**: scratch → H drive; approval only triggers caches (§3c). **Active, from 2026-10-12.**
   **One click publishes (DECIDED 2026-10-12):** for each row in the Publish
   list, the Publish button (1) makes a **shotSub of the asset**: 2 frames by default, with the
   option to playblast more; (2) copies the scene to the H drive; (3) sends
