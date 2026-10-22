@@ -8,6 +8,46 @@ Status: **[ ]** to do · **[?]** needs your decision · **[x]** done
 
 ---
 
+## 0. HIGH PRIORITY — talk through 2026-10-23, before any more dev
+
+**How wip moves when a student changes machine / scratch drive.**
+Raised 2026-10-22. No more pipeline dev until this is decided.
+
+What's settled: the H drive is the same letter in every room; Maya prefs live
+on H and follow students, so the saved scratch setting is often another
+room's drive. Build, Publish and the Project Tool all follow the open scene
+(commit 595b68f). Published work already moves fine: `$PIPE_SCRATCH`
+references and rig textures, DNA paths fixed after open, Build/Repair pulls
+missing versions from H.
+
+What isn't: **unpublished work** (wip asset scenes, animation scenes,
+caches, image sequences). Spec §3h says students carry it themselves
+(portable drive / cloud). Two linked questions:
+
+1. **Wip texture paths.** A wip scene carried to another drive keeps full
+   `D:\...\sourceimages\` paths, so textures go missing. Options:
+   - *Leave to students* — no code; but a chore every room change, noticed
+     late (at render).
+   - *Warn on open* — safe, nothing changed silently; still manual, warnings
+     get clicked past.
+   - *Repoint on open* (like `fix_dna_paths`) — just works; but edits the
+     scene unasked, can't fix textures the student didn't bring or kept
+     outside the film folder.
+   - *Store as `$PIPE_SCRATCH` on save* — fixed at source; breaks on
+     machines without mpPipe (home), `$` paths confuse students.
+   - Claude's lean: repoint on open + warn for what it can't find. First
+     test whether Maya already finds them when the project is set (T7).
+2. **Publish at end of day, Build clean next day?** Fits finished stages
+   only. Against it as a daily routine: publishes are meant to be approved
+   (§3c) and make ShotGrid versions; Build offers the latest, so half-done
+   work reaches other shots; a publish is the cleaned publish set, not the
+   working scene; full texture copy per version fills H; animation, caches
+   and image sequences have no publish step.
+   - Alternative: a **"save my wip to H"** action, not a publish: a personal
+     H folder outside ShotGrid and Build, restored on the next machine (like
+     the Studio Library backup). Costs H space; new spec decision.
+   - **Ask:** do students already keep wip on their personal H drive at RMIT?
+
 ## 1. Hand tests in Maya (nothing here has been tried by hand yet)
 
 Everything below passes its mayapy tests, but none of it has been tried by
