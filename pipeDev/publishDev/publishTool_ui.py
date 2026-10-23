@@ -605,6 +605,26 @@ class PublishToolUI(QtWidgets.QDialog):
             return
         if in_shot:
             return self._add_environment(name)
+        if code == api.MODEL_CODE and self._looks_like_environment():
+            # 2026-10-23: a shed environment went out as Modeling twice, so
+            # its image planes, locators and cache were left behind.
+            box = QtWidgets.QMessageBox(self)
+            box.setIcon(QtWidgets.QMessageBox.Question)
+            box.setWindowTitle("Environment?")
+            box.setText("This scene has an %s, so it looks like an environment.\n\n"
+                        "Publish %s as an Environment instead? (A Modeling publish leaves out "
+                        "the environment's image planes, building locators and cache.)"
+                        % (env.ENVIRONMENT_SET, name))
+            as_env = box.addButton("Publish as Environment", QtWidgets.QMessageBox.AcceptRole)
+            box.addButton("Keep Modeling", QtWidgets.QMessageBox.DestructiveRole)
+            cancel = box.addButton(QtWidgets.QMessageBox.Cancel)
+            box.setDefaultButton(as_env)
+            box.exec()
+            if box.clickedButton() == cancel:
+                return
+            if box.clickedButton() == as_env:
+                self.picker.set_current(code=env.ENV_CODE, group=group, name=name)
+                code, label = env.ENV_CODE, self.picker.dept_combo.currentText()
         if any((r["asset_type"], r["asset"], r["code"]) == (group, name, code)
                for r in self._rows):
             self.status.show_message("%s %s is already in the list." % (name, label), ok=False)
@@ -624,6 +644,12 @@ class PublishToolUI(QtWidgets.QDialog):
         self.status.show_message(
             "Added %s %s: %s" % (name, label,
                                  ", ".join(selection) if selection else "whole scene"))
+
+    @staticmethod
+    def _looks_like_environment():
+        """True if the open scene has an environment_SET (spec §4c)."""
+        return any(cmds.nodeType(n) == "objectSet"
+                   for n in cmds.ls(env.ENVIRONMENT_SET) or [])
 
     @staticmethod
     def _check_objects(code, objects):
