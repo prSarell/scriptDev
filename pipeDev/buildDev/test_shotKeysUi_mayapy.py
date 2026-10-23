@@ -157,6 +157,34 @@ check("hand-keyed asset starts at Keep, unticked",
 tab._build_shot()
 check("hand keys untouched", tx_at_10() == 7.0)
 
+# The shot's list is saved on the H drive (user, 2026-10-23).
+saved = api.read_shot_list(H, FILM, SEQ, SHOT)
+check("shot's list saved on the H drive", saved == [api.manifest_key("character", "scout", "rig")])
+
+# Another machine: a new scratch drive with nothing on it. The list comes
+# back from H, at the latest version and the latest keys, ready to build.
+SC2 = os.path.join(base, "scratch2")
+shot2 = api.shot_folder(SC2, FILM, SEQ, SHOT)
+cmds.file(new=True, force=True)
+save_as(os.path.join(shot2, "scenes", "%s_001.ma" % SHOT))
+tab2 = ui.BuildShotTab(lambda: (H, SC2), parent)
+tab2.refresh()
+rows = dict((r["asset"], r) for r in tab2._rows)
+check("new drive: list comes back from the H drive", "scout" in rows)
+check("new drive: latest version, latest keys, ticked",
+      rows["scout"]["chosen"] == rows["scout"]["latest"]
+      and rows["scout"]["keys_chosen"] == ANIM and rows["scout"]["checked"])
+tab2._build_shot()
+check("new drive: built with the latest keys", tx_at_10() == 5.0)
+
+# "-" takes it off the shot's list for good.
+tab2.table.selectRow(0)
+tab2._remove_rows()
+check("'-' removes it from the saved list", api.read_shot_list(H, FILM, SEQ, SHOT) == [])
+tab2.refresh()
+check("...and it doesn't come back", not [r for r in tab2._rows if r["asset"] == "scout"])
+check("still in the scene ('-' is list only)", cmds.ls("scout_rig:ctrl"))
+
 shutil.rmtree(base, ignore_errors=True)
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 maya.standalone.uninitialize()

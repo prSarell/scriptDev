@@ -281,8 +281,12 @@ class BuildShotTab(QtWidgets.QWidget):
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
         # The list always starts with everything that belongs to this shot:
-        # what's already in its assets folder (at the version it has), plus
-        # anything published for the shot itself, e.g. its camera, ready to build.
+        # the shot's list saved on the H drive (so it comes back on any
+        # machine, user 2026-10-23), or for a shot without one yet what's in
+        # its assets folder on scratch, plus anything published for the shot
+        # itself, e.g. its camera, ready to build.
+        saved = api.read_shot_list(h_root, film, seq, shot)
+        wanted = set(saved) if saved is not None else set(manifest)
         self._rows = []
         # Building into a blank scene (nothing referenced yet): always start
         # from the latest published versions, whatever the shot used before
@@ -290,7 +294,9 @@ class BuildShotTab(QtWidgets.QWidget):
         # each row starts at the version the shot has.
         blank = not api.scene_references()
         for p in self._published:
-            if self._key(p) in manifest:
+            if self._key(p) in wanted and self._key(p) not in manifest:
+                self._rows.append(self._row(p, p["latest"]))    # e.g. a new scratch drive
+            elif self._key(p) in wanted:
                 # A version from before personal publishes isn't on the H
                 # drive any more: start the choice at the latest instead.
                 current = api.entry_version_id(manifest[self._key(p)])
@@ -612,8 +618,22 @@ class BuildShotTab(QtWidgets.QWidget):
                 self._rows[r]["code"], self._rows[r]["code"])))
             del self._rows[r]
         self._render_table()
-        self.status.show_message("Taken off the list: %s\n(Anything already in your scene "
-                                 "stays there.)" % ", ".join(gone))
+        failed = self._save_shot_list()
+        self.status.show_message("Taken off this shot's list: %s\n(Anything already in your "
+                                 "scene stays there.)%s" % (", ".join(gone), failed),
+                                 ok=not failed)
+
+    def _save_shot_list(self):
+        """Save the list as the shot's list on the H drive. Returns '' or a
+        line saying why it couldn't be saved (never stops a build)."""
+        if not self._target_shot:
+            return ""
+        try:
+            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (
+                [self._key(r) for r in self._rows],)))
+        except Exception as e:
+            return "\nThis shot's list couldn't be saved to the H drive: %s" % e
+        return ""
 
     # -- actions ----------------------------------------------------------
 
@@ -624,7 +644,11 @@ class BuildShotTab(QtWidgets.QWidget):
                                      ok=False)
             return
         if not any(p["checked"] for p in self._rows):
-            self.status.show_message("Tick the assets to build first.", ok=False)
+            # Nothing to build (e.g. an asset re-added that's already in the
+            # scene), but the list is still the shot's list from now on.
+            failed = self._save_shot_list()
+            self.status.show_message("Nothing ticked to build. This shot's list is saved."
+                                     if not failed else failed.strip(), ok=not failed)
             return
 
         lines, warnings, replaced, changed_rigs = [], [], [], []
@@ -672,6 +696,9 @@ class BuildShotTab(QtWidgets.QWidget):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self._render_table()
+        failed = self._save_shot_list()
+        if failed:
+            warnings.append(failed.strip())
         text = "\n".join(lines)
         if warnings:
             text += "\n\n" + "\n".join(warnings)

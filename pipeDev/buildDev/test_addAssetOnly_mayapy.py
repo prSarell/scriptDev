@@ -147,7 +147,7 @@ built = [i for i, r in enumerate(tab._rows) if r["asset"] == "backpack"][0]
 tab.table.selectRow(built)
 tab._remove_rows()
 check("a built asset comes off the list", "backpack" not in names()
-      and "Taken off the list: backpack" in tab.status._text)
+      and "Taken off this shot's list: backpack" in tab.status._text)
 check("... the scene keeps its reference", sorted(n for n, _, _, _ in api.scene_references())
       == refs_before)
 check("... and the shot's record keeps it", any(k.endswith("/backpack/model")
@@ -165,7 +165,13 @@ tab._add_asset()
 check("adding it again puts it back, and the filter shows it",
       "backpack" in names() and "backpack" in shown())
 tab._load_shot()
-check("switching/reloading the shot starts the list from the shot again", "backpack" in names())
+check("re-added but not built: '-' still holds after a reload (user, 2026-10-23)",
+      "backpack" not in names())
+p.set_current(code="model", group="prop", name="backpack")
+tab._add_asset()
+tab._build_shot()
+tab._load_shot()
+check("re-added and built: back on the shot's list after a reload", "backpack" in names())
 
 print("%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, files in os.walk(base):

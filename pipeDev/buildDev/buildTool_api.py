@@ -420,6 +420,43 @@ def manifest_key(asset_type, asset, code):
     return "%s/%s/%s" % (asset_type, asset, code)
 
 
+# The shot's build list on the H drive (user, 2026-10-23): one list per
+# shot, shared by everyone building it, so the list comes back on any
+# machine or scratch drive. Just which assets (manifest keys): versions start
+# at the latest and keys at the shot's latest keys. Saved on Build Shot and
+# when "-" takes an asset off.
+SHOT_LIST_NAME = "build_list.json"
+
+
+def shot_list_path(h_root, film, seq, shot):
+    return os.path.join(shot_folder(h_root, film, seq, shot), SHOT_LIST_NAME)
+
+
+def read_shot_list(h_root, film, seq, shot):
+    """The shot's saved list of manifest keys, or None if it has none yet."""
+    try:
+        with open(shot_list_path(h_root, film, seq, shot), "r") as f:
+            return list(json.load(f).get("assets", []))
+    except (IOError, OSError, ValueError, AttributeError):
+        return None
+
+
+def write_shot_list(h_root, film, seq, shot, keys):
+    """Save the shot's list (manifest keys, in list order) to the H drive."""
+    path = shot_list_path(h_root, film, seq, shot)
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    if os.path.exists(path):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    try:
+        login = pub.who()
+    except BuildError:
+        login = ""
+    with open(path, "w") as f:
+        json.dump({"assets": list(keys), "saved_by": login,
+                   "saved": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
+
+
 def texture_folder_of(path):
     """The texture folder that goes with a published file (H drive or
     scratch publish folder): <asset>\\sourceimages\\<login>\\<file name

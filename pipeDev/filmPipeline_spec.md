@@ -2262,6 +2262,26 @@ The tools are developed side by side:
                    unchanged and passing.
                  - Not handled: animation layers, constraints, keys on
                    things made in the shot.
+               - **The shot's build list on H (DECIDED + built
+                 2026-10-23).** The user: "the pipe needs to remember that
+                 list on a per shot basis so that when a student points the
+                 tool to a shot that list will populate". Before this, the
+                 list came only from the shot's manifest on scratch, so a new
+                 machine started empty.
+                 - **One list per shot**, shared by everyone building it:
+                   `H\<film>\maya\sequences\<seq>\<shot>\build_list.json`.
+                 - It stores **just which assets** (asset type, asset,
+                   department). On a new drive each comes back at its latest
+                   version, and each rig's Keys at the shot's latest keys.
+                 - Saved on every Build Shot (even with nothing ticked) and
+                   when **"-" takes an asset off**, which removes it from the
+                   shot's list for good. The scene keeps it ("-" is list
+                   only). A "+" counts once Build Shot is pressed.
+                 - A shot with no saved list yet falls back to its scratch
+                   manifest, as before, and gets one on its next build. The
+                   shot's camera is always added when published, as before.
+                 - Tests: `test_shotKeysUi_mayapy.py` 23/23 (new scratch
+                   drive), `test_addAssetOnly_mayapy.py` 29/29.
              - the camera fingerprint;
              - USD;
              - final publish checkboxes;

@@ -30,11 +30,13 @@ hand. One T7 session could cover most of it.
       one machine/drive, then in a fresh scene on another drive add Scout's
       rig and Build: keys on, same frames. Roll back to a layout publish;
       point the picker at another shot and take its keys; reopen.
-- [?] **New machine: the Build list starts empty.** The shot's manifest
-      lives on the old scratch drive, so on a new one the student has to
-      re-add every asset by hand before Build. Could the list start from the
-      shot's key publishes on H (each one names its asset and rig version)?
-      Tied to the parked "keys without the asset in the list" question.
+- [x] **New machine: the Build list starts empty.** Fixed 2026-10-23: each
+      shot's list is saved on H (`build_list.json` in the shot folder) on
+      Build Shot and on "-", one list per shot, and fills Build on any drive
+      (spec §4 item 7, "The shot's build list on H").
+- [ ] Hand test the shot list: build a shot on one drive, open a scene in
+      that shot on another drive (T7 / D:), check the list comes back with
+      the latest keys; "-" an asset, reopen, check it stays off.
 - [ ] Scout v004 in a shot: can animators click-select controls inside
       the dagContainer group? Try it once with
       `selectPref -containerCentricSelection` on as well (review #9).
