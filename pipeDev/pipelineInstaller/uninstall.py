@@ -2,7 +2,7 @@
 mpPipe Uninstaller (staff testing)
 ==================================
 Drag and drop this file onto the Maya viewport to remove the files and
-the mpPipe shelf that install.py put in place.
+the mpPipe and mpLayout shelves that install.py put in place.
 
 Also takes the mpPipe startup block (PIPE_SCRATCH) out of userSetup.py.
 Left alone: the drive settings (pipeline_config.json in Maya prefs),
@@ -83,7 +83,7 @@ def _uninstall():
                 os.remove(shelf_file)
     os.remove(manifest)
 
-    summary = ("mpPipe removed: %d files and the shelf.\n\n"
+    summary = ("mpPipe removed: %d files and the shelves.\n\n"
                "Your H drive / Scratch drive settings were kept." % removed)
     print(summary)
     cmds.confirmDialog(title=_TITLE, message=summary, button=["OK"])

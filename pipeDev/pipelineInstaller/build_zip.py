@@ -45,8 +45,12 @@ SCRIPTS = [
     ("pipeDev/buildDev", "buildTool_ui.py"),
     ("pipeDev/projectDev", "projectTool_api.py"),
     ("pipeDev/projectDev", "projectTool_ui.py"),
+    ("pipeDev/layoutDev", "layoutTool_env.py"),
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
+# Every shelf the package installs (2026-10-23: mpLayout added). The first
+# goes in the zip as shelf_config.py, the others as shelf_config_<shelf>.py.
+SHELF_DIRS = [SHELF_DIR, os.path.join(REPO, "shelfDev", "mpLayout")]
 TOP = "mpPipe"
 
 # Each build is also copied here, so the latest is ready to download on
@@ -62,23 +66,32 @@ def _git_hash():
                                       stderr=subprocess.DEVNULL)
         dirty = subprocess.check_output(["git", "-C", REPO, "status", "--porcelain",
                                          "pipeDev/publishDev", "pipeDev/buildDev",
-                                         "pipeDev/pipelineInstaller", "shelfDev/mpPipe"],
+                                         "pipeDev/pipelineInstaller", "shelfDev/mpPipe",
+                                         "pipeDev/layoutDev", "shelfDev/mpLayout"],
                                         stderr=subprocess.DEVNULL)
         return out.decode().strip() + ("+local changes" if dirty.strip() else "")
     except (OSError, subprocess.CalledProcessError):
         return "no git"
 
 
+def config_name(index, shelf_dir):
+    """A shelf's config file name in the zip."""
+    return ("shelf_config.py" if index == 0 else
+            "shelf_config_%s.py" % os.path.basename(shelf_dir))
+
+
 def build():
     entries = [(os.path.join(HERE, n), "%s/%s" % (TOP, n))
                for n in ("install.py", "uninstall.py")]
-    entries.append((os.path.join(SHELF_DIR, "shelf_config.py"), TOP + "/shelf_config.py"))
+    for i, shelf_dir in enumerate(SHELF_DIRS):
+        entries.append((os.path.join(shelf_dir, "shelf_config.py"),
+                        "%s/%s" % (TOP, config_name(i, shelf_dir))))
     for folder, name in SCRIPTS:
         entries.append((os.path.join(REPO, *folder.split("/"), name), "%s/scripts/%s" % (TOP, name)))
-    icons = os.path.join(SHELF_DIR, "icons")
-    for name in sorted(os.listdir(icons)):
-        if name.lower().endswith(".png"):
-            entries.append((os.path.join(icons, name), "%s/icons/%s" % (TOP, name)))
+    for icons in [os.path.join(d, "icons") for d in SHELF_DIRS]:
+        for name in sorted(os.listdir(icons)):
+            if name.lower().endswith(".png"):
+                entries.append((os.path.join(icons, name), "%s/icons/%s" % (TOP, name)))
 
     missing = [src for src, _ in entries if not os.path.isfile(src)]
     if missing:

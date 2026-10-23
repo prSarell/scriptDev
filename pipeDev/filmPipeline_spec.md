@@ -2563,6 +2563,21 @@ rebuild from H. Two halves:
 
 ### 4c. Environment publishes and layout placement (started 2026-10-21)
 
+**mpLayout shelf, "Env Sets" (DECIDED + built 2026-10-23).** The user:
+"a tool to help publish layouts that auto builds the groups and sets for a
+clean publish ... for environment publish only that just builds the sets and
+groups with the correct names. It's up to the artist to add what they want
+published to the groups and sets." One click makes `environment` >
+`landscape` / `buildings` / `sky` and `environment_SET` > `landscape_SET` /
+`building_SET` / `sky_SET`, each group in its role set, names taken from
+`publishTool_env`. Whatever exists is reused; a role set the artist already
+filled is left alone; one undo. Code: `pipeDev/layoutDev/layoutTool_env.py`
+(test `test_layoutEnv_mayapy.py` 12/12, including the filled-in scene passing
+`check_environment`). Shelf: `shelfDev/mpLayout/`, installed with the mpPipe
+shelf by `pipeDev/pipelineInstaller` (staff testing, not in either student
+toolset). Image planes in the landscape already publish (checked 2026-10-23:
+kept in place, pictures copied, `$PIPE_SCRATCH` paths).
+
 Raised by the user after the scoutsHouse publish test. The model rules
 (freeze, delete history, leave out hidden/empty, Mesh Cleanup, pipe group
 at the origin, §4 item 6a) stay for **props, vehicles and character

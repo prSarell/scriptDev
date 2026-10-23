@@ -2,7 +2,7 @@
 mpPipe Installer (staff testing)
 ================================
 Drag and drop this file onto the Maya viewport to install the film
-pipeline tools (Publish, Build) and the mpPipe shelf.
+pipeline tools (Publish, Build, layout tools) and the mpPipe and mpLayout shelves.
 
 Works from the unzipped mpPipe package (scripts/ and icons/ beside this
 file), or straight from the scriptDev repo (pipeDev/pipelineInstaller/),
@@ -151,15 +151,17 @@ def _read_version(root):
 
 
 def _sources(root):
-    """(script files, icons folder, shelf_config.py, build label): from the
+    """(script files, icons folders, shelf configs, build label): from the
     unzipped package this file sits in, or from the repo's source folders
-    when it's run from pipeDev/pipelineInstaller (same list as build_zip)."""
+    when it's run from pipeDev/pipelineInstaller (same list as build_zip).
+    One shelf per config: mpPipe, then mpLayout (2026-10-23)."""
     scripts_dir = os.path.join(root, "scripts")
     if os.path.isdir(scripts_dir):
         scripts = [os.path.join(scripts_dir, n) for n in sorted(os.listdir(scripts_dir))
                    if n.lower().endswith(".py")]
-        return (scripts, os.path.join(root, "icons"), os.path.join(root, "shelf_config.py"),
-                _read_version(root))
+        configs = [os.path.join(root, n) for n in sorted(os.listdir(root))
+                   if n.startswith("shelf_config") and n.endswith(".py")]
+        return (scripts, [os.path.join(root, "icons")], configs, _read_version(root))
     if not os.path.isfile(os.path.join(root, "build_zip.py")):
         raise RuntimeError("No scripts folder next to this installer (%s). Use the "
                            "unzipped mpPipe package, or the repo's pipelineInstaller." % root)
@@ -178,19 +180,24 @@ def _sources(root):
         raise RuntimeError("Missing source files:\n  " + "\n  ".join(missing))
     version = "from repo %s (%s)" % (datetime.now().strftime("%Y-%m-%d %H:%M"),
                                      build_zip._git_hash())
-    return (scripts, os.path.join(build_zip.SHELF_DIR, "icons"),
-            os.path.join(build_zip.SHELF_DIR, "shelf_config.py"), version)
+    return (scripts, [os.path.join(d, "icons") for d in build_zip.SHELF_DIRS],
+            [os.path.join(d, "shelf_config.py") for d in build_zip.SHELF_DIRS], version)
 
 
 def _install(root):
-    script_files, icons_dir, shelf_config, version = _sources(root)
+    script_files, icons_dirs, shelf_configs, version = _sources(root)
     scripts = _copy_files(script_files, _scripts_dir())
-    icons = _copy_all(icons_dir, _icons_dir(), ".png")
-    shelf, buttons = _build_shelf(shelf_config)
+    icons = []
+    for icons_dir in icons_dirs:
+        icons += _copy_all(icons_dir, _icons_dir(), ".png")
+    shelves = [_build_shelf(config) for config in shelf_configs]
+    shelf = ", ".join("%s (%d buttons)" % s for s in shelves)
+    buttons = sum(n for _, n in shelves)
     usersetup, scratch_var = _patch_usersetup()
 
     with open(os.path.join(_prefs_dir(), _MANIFEST_NAME), "w", encoding="utf-8") as f:
-        f.write("shelf:%s\n" % shelf)
+        for name, _ in shelves:
+            f.write("shelf:%s\n" % name)
         f.write("usersetup:%s\n" % usersetup)
         for path in scripts + icons:
             f.write("file:%s\n" % path)
@@ -200,7 +207,7 @@ def _install(root):
         "mpPipe installed%s\n\n"
         "  Scripts: %d -> %s\n"
         "  Icons:   %d -> %s\n"
-        "  Shelf:   %s (%d buttons)\n"
+        "  Shelves: %s, %d buttons in all\n"
         "  Startup: userSetup.py sets PIPE_SCRATCH (now: %s)\n"
         % (" (build %s)" % version if version else "", len(scripts), _scripts_dir(),
            len(icons), _icons_dir(), shelf, buttons,
