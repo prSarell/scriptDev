@@ -1,6 +1,6 @@
 # mpInstaller.py
 #
-# Drag this file into a Maya viewport to install the mpAnim and mpRig shelves.
+# Drag this file into a Maya viewport to install the mpAnim, mpRig and mpFX shelves.
 # Reads scripts and icons directly from the repo — no build step needed.
 # Run again at any time to refresh all scripts and buttons.
 
@@ -17,6 +17,8 @@ STAFF_SHORTCUTS_DIR = os.path.join(ANIM_TOOLS, "staff_shortcuts")
 RIG_DIR           = os.path.join(HERE, "mpRig")
 RIG_TOOLS         = os.path.join(RIG_DIR, "tools")
 RIG_ICONS         = os.path.join(RIG_DIR, "icons")
+FX_DIR            = os.path.join(HERE, "mpFX")
+FX_ICONS          = os.path.join(FX_DIR, "icons")
 ANIMDEV_DIR       = os.path.normpath(os.path.join(HERE, "..", "animDev"))
 MULTITOOL_DIR     = os.path.normpath(os.path.join(HERE, "..", "animDev", "multiTool"))
 JIFFYPOMO_DIR     = os.path.normpath(os.path.join(HERE, "..", "timeManagementDev", "jiffyPomoDev"))
@@ -63,6 +65,7 @@ def _install():
 
     anim_cfg = _load_config(ANIM_DIR)
     rig_cfg  = _load_config(RIG_DIR)
+    fx_cfg   = _load_config(FX_DIR)
 
     # --- Scripts ---
 
@@ -129,9 +132,16 @@ def _install():
     for name in getattr(rig_cfg, "RENDERDEV_SCRIPTS", []):
         _copy(os.path.join(RENDERDEV_DIR, name), scripts_dir, os.path.basename(name))
 
+    # mpFX — all dev-direct from simDev/ and renderDev/
+    for name in fx_cfg.EXTRA_SCRIPTS + getattr(fx_cfg, "SIMTOOL_SCRIPTS", []):
+        _copy(os.path.join(SIMDEV_DIR, name), scripts_dir, os.path.basename(name))
+
+    for name in getattr(fx_cfg, "RENDERDEV_SCRIPTS", []):
+        _copy(os.path.join(RENDERDEV_DIR, name), scripts_dir, os.path.basename(name))
+
     # --- Icons ---
     # Generate any icons that have a gen_icon*.py script alongside them.
-    for src_icons_dir in (ANIM_ICONS, RIG_ICONS):
+    for src_icons_dir in (ANIM_ICONS, RIG_ICONS, FX_ICONS):
         if not os.path.isdir(src_icons_dir):
             continue
         for fname in sorted(os.listdir(src_icons_dir)):
@@ -153,6 +163,11 @@ def _install():
         name = btn.get("icon", "")
         if name:
             _copy(os.path.join(RIG_ICONS, name), icons_dir)
+
+    for btn in fx_cfg.BUTTONS:
+        name = btn.get("icon", "")
+        if name:
+            _copy(os.path.join(FX_ICONS, name), icons_dir)
 
     # --- Studio Library ---
     # Merge-copy (dirs_exist_ok) instead of rmtree-then-copy: deleting a live
@@ -209,7 +224,7 @@ def _install():
     shelf_top    = mel.eval("$tmpVar=$gShelfTopLevel")
     existing_tabs = cmds.shelfTabLayout(shelf_top, query=True, childArray=True) or []
 
-    for cfg in (anim_cfg, rig_cfg):
+    for cfg in (anim_cfg, rig_cfg, fx_cfg):
         shelf_name = cfg.SHELF_NAME
         if shelf_name not in existing_tabs:
             mel.eval('addNewShelfTab "{}"'.format(shelf_name))
@@ -242,13 +257,13 @@ def _install():
     cmds.evalDeferred("import importlib, shortCuts; importlib.reload(shortCuts); shortCuts.init_hotkeys()")
 
     cmds.inViewMessage(
-        amg="<b>mpAnim v{} + mpRig v{}</b> installed.".format(
-            anim_cfg.SHELF_VERSION, rig_cfg.SHELF_VERSION
+        amg="<b>mpAnim v{} + mpRig v{} + mpFX v{}</b> installed.".format(
+            anim_cfg.SHELF_VERSION, rig_cfg.SHELF_VERSION, fx_cfg.SHELF_VERSION
         ),
         pos="midCenter", fade=True,
     )
-    print("[mpInstaller] done — mpAnim v{} + mpRig v{}".format(
-        anim_cfg.SHELF_VERSION, rig_cfg.SHELF_VERSION
+    print("[mpInstaller] done — mpAnim v{} + mpRig v{} + mpFX v{}".format(
+        anim_cfg.SHELF_VERSION, rig_cfg.SHELF_VERSION, fx_cfg.SHELF_VERSION
     ))
 
 
