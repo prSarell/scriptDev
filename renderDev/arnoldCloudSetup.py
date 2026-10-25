@@ -8,7 +8,8 @@ texture" setup:
     mesh shape            aiStepSize 0.1      (Arnold > Volume Attributes)
     aiStandardVolume  --> shading group .volumeShader
     cloud (3D texture) --> aiStandardVolume.transparent
-    place3dTexture        scaled to the mesh bounds (bigger = bigger clouds)
+    place3dTexture        uniform, ~0.15 of the container's widest half-size
+                          (bigger = bigger clouds)
     Render Settings       Ray Depth > Volume raised to 6 (bright, scattered clouds)
 
 Usage (Script Editor, Python tab):
@@ -16,14 +17,30 @@ Usage (Script Editor, Python tab):
     arnoldCloudSetup.build()              # uses the selected mesh(es)
     arnoldCloudSetup.build("pSphere1")    # or name one
 
+Defaults are the look tuned in waveTest (2026-10-26): density 0.1, low
+contrast/amplitude Cloud texture, soft edge thresholds.
+
 Tip: scale/flatten a sphere first - it's the container the clouds live in.
+Scene scale matters a lot: a bigger container gives much better clouds.
 Volumes are slow to render; test with a small render region.
 """
 from maya import cmds
 
 STEP_SIZE = 0.1
 VOLUME_RAY_DEPTH = 6
-DENSITY = 0.5
+DENSITY = 0.1
+DIFFUSION_BIAS = 0.0
+DIFFUSION_ROUGHNESS = 0.378
+
+# Cloud 3D texture
+CLOUD_CONTRAST = 0.1
+CLOUD_AMPLITUDE = 0.385
+CLOUD_TRANSP_RANGE = 0.05
+CLOUD_CENTER_THRESH = 0.091
+CLOUD_EDGE_THRESH = 0.755
+
+# placement size as a fraction of the container's widest half-size
+PLACE_SCALE_RATIO = 0.15
 
 
 def _get_meshes(geo=None):
@@ -64,6 +81,8 @@ def _build_one(geo, shape):
     volume = cmds.shadingNode("aiStandardVolume", asShader=True, name="%s_cloudVolume" % short)
     cmds.setAttr(volume + ".density", DENSITY)
     cmds.setAttr(volume + ".scatterColor", 1, 1, 1, type="double3")
+    cmds.setAttr(volume + ".scatter_diffusion_bias", DIFFUSION_BIAS)
+    cmds.setAttr(volume + ".scatter_diffusion_roughness", DIFFUSION_ROUGHNESS)
 
     engine = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="%s_cloudSG" % short)
     cmds.connectAttr(volume + ".outColor", engine + ".volumeShader")
@@ -71,16 +90,22 @@ def _build_one(geo, shape):
 
     # Maya's Cloud 3D texture erodes the container into cloud shapes
     cloud = cmds.shadingNode("cloud", asTexture=True, name="%s_cloudTex" % short)
+    cmds.setAttr(cloud + ".contrast", CLOUD_CONTRAST)
+    cmds.setAttr(cloud + ".amplitude", CLOUD_AMPLITUDE)
+    cmds.setAttr(cloud + ".transpRange", CLOUD_TRANSP_RANGE)
+    cmds.setAttr(cloud + ".centerThresh", CLOUD_CENTER_THRESH)
+    cmds.setAttr(cloud + ".edgeThresh", CLOUD_EDGE_THRESH)
     place = cmds.shadingNode("place3dTexture", asUtility=True, name="%s_cloudPlace" % short)
     cmds.connectAttr(place + ".worldInverseMatrix[0]", cloud + ".placementMatrix")
     cmds.connectAttr(cloud + ".outColor", volume + ".transparent")
 
-    # fit the placement to the container - scale it up for bigger clouds
+    # centre the placement on the container, uniform scale relative to its
+    # widest side - scale it up for bigger clouds
     bb = cmds.exactWorldBoundingBox(geo)
     cmds.xform(place, worldSpace=True, translation=(
         (bb[0] + bb[3]) / 2.0, (bb[1] + bb[4]) / 2.0, (bb[2] + bb[5]) / 2.0))
-    cmds.xform(place, scale=(
-        (bb[3] - bb[0]) / 2.0, (bb[4] - bb[1]) / 2.0, (bb[5] - bb[2]) / 2.0))
+    size = max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]) / 2.0 * PLACE_SCALE_RATIO
+    cmds.xform(place, scale=(size, size, size))
 
     cmds.setAttr(geo + ".visibility", 1)
     return volume, cloud, place
