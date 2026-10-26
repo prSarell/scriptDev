@@ -95,10 +95,28 @@ class SimParticleRig():
 			('closeFollow', 'Close Follow'),
 			('baseOnly', 'Base Only'),
 			('muscularBase', 'Muscular Base'),
+			('muscularBase2', 'Muscular Base 2'),
 		]
 		# Share of the chain (from the base) muscularBase holds at Close
 		# Follow strength before dropping into the Base to Tip falloff.
+		# muscularBase2 is the same shape with the tough section running
+		# the whole first half.
 		self.muscularBaseFraction = 0.25
+		self.muscularBase2Fraction = 0.5
+		# Stiffness (stiffnessScale ramp) has its own profiles rather than
+		# reusing the influence falloffs above: those drop to ~0.01-0.1 past
+		# the base, which as a Bend Resistance multiplier just goes limp.
+		# These keep the strand holding a shape and vary where it softens.
+		self.stiffnessProfiles = [
+			('full', 'Full (1.0)'),
+			('half', 'Half (0.5)'),
+			('taper', 'Stiff Base, Soft Tip'),
+			('whip', 'Whip'),
+			('softTip', 'Soft Tip Only'),
+			('stiffMuscularBase', 'Muscular Base'),
+			('stiffMuscularBase2', 'Muscular Base 2'),
+			('stiffTip', 'Soft Base, Stiff Tip'),
+		]
 	# ------------------------------------------------------------------
 	# Copied verbatim from tlmClothChain.py -- sim-backend-agnostic.
 	# ------------------------------------------------------------------
@@ -187,14 +205,15 @@ class SimParticleRig():
 			return base - (base - floor) * (index - 1) / float(total - 1)
 		if profile == 'baseOnly':
 			return 1.0 if index == 1 else 0.0
-		if profile == 'muscularBase':
-			# Bottom quarter follows the goal closely (the same 0.9 -> 0.3
+		if profile in ('muscularBase', 'muscularBase2'):
+			fraction = self.muscularBase2Fraction if profile == 'muscularBase2' else self.muscularBaseFraction
+			# Bottom quarter (half for muscularBase2) follows the goal closely (the same 0.9 -> 0.3
 			# line closeFollow uses, so it reads as that profile's start);
 			# everything past it falls off like baseToTip's interior/tip,
 			# restarting from its index-2 value. The strong base drives the
 			# swing and the loose remainder whips around behind it -- a
 			# muscular root flinging a tail.
-			muscle = max(1, int(round(total * self.muscularBaseFraction)))
+			muscle = max(1, int(round(total * fraction)))
 			if index <= muscle:
 				return self._constraintProfileStrength('closeFollow', index, total)
 			if index == total:
@@ -202,6 +221,39 @@ class SimParticleRig():
 			# Floored at the tip's 0.01 so long chains don't dip below it.
 			return max((1.0 / float(index - muscle + 1)) * 0.1, 0.01)
 		raise ValueError('Unknown constraint profile: %r' % profile)
+
+	def _stiffnessProfileValue(self, profile, index, total):
+		"""Bend Resistance multiplier for one segment (1-indexed) under a
+		named stiffness profile. t runs 0 at the base to 1 at the tip."""
+		t = (index - 1) / float(total - 1) if total > 1 else 0.0
+		if profile == 'full':
+			return 1.0
+		if profile == 'half':
+			return 0.5
+		if profile == 'taper':
+			# Straight line from full at the base to 0.2 at the tip.
+			return 1.0 - 0.8 * t
+		if profile == 'whip':
+			# Eases off fast then trails to 0.05 -- a loose, cracking tip.
+			return max((1.0 - t) ** 2, 0.05)
+		if profile == 'softTip':
+			# Full for the first 70%, then down to 0.3 over the last 30%.
+			if t <= 0.7:
+				return 1.0
+			return 1.0 - 0.7 * (t - 0.7) / 0.3
+		if profile in ('stiffMuscularBase', 'stiffMuscularBase2'):
+			# Full across the same base share as the matching Muscular Base
+			# influence (quarter / half), then a straight line down to 0.3
+			# at the tip.
+			fraction = self.muscularBase2Fraction if profile == 'stiffMuscularBase2' else self.muscularBaseFraction
+			muscle = max(1, int(round(total * fraction)))
+			if index <= muscle or total <= muscle:
+				return 1.0
+			return 1.0 - 0.7 * (index - muscle) / float(total - muscle)
+		if profile == 'stiffTip':
+			# 0.3 at the base rising to full at the tip -- a stinger/club end.
+			return 0.3 + 0.7 * t
+		raise ValueError('Unknown stiffness profile: %r' % profile)
 
 	def feedOptionMenu(self, mode, *args):
 		items = cmds.optionMenu(mode + '_list', q=True, ils=True)
@@ -939,8 +991,8 @@ class SimParticleRig():
 		total = self._get_segment_count(rigName)
 		result = {}
 		for i in range(total):
-			if profile == 'full':
-				strength = 1.0
+			if ramp == 'stiffnessScale':
+				strength = self._stiffnessProfileValue(profile, i + 1, total)
 			else:
 				strength = self._constraintProfileStrength(profile, i + 1, total)
 			self._setRampEntry(hairSystem, ramp, i, total, strength)
@@ -988,7 +1040,7 @@ class SimParticleRig():
 		cmds.frameLayout('particleSegmentOffset_frameLayout', bv=False, lv=False, mw=7, mh=7)
 		cmds.text('particleRig_text', l='Particle Rig: ' + rigName, h=16, bgc=(.22, .22, .22), al='center', fn="boldLabelFont", p='particleSegmentOffset_frameLayout')
 
-		cmds.rowLayout('particleProfile_rowLayout', nc=3, p='particleSegmentOffset_frameLayout')
+		cmds.rowLayout('particleProfile_rowLayout', nc=4, p='particleSegmentOffset_frameLayout')
 		cmds.button('constraintProfile_button', l='Influence*', w=70,
 		            ann='Apply a named attraction-strength distribution across all segments -- how hard each segment is pulled back to the animated goal.')
 		cmds.popupMenu('constraintProfile_popupMenu', b=1)
@@ -997,13 +1049,18 @@ class SimParticleRig():
 		cmds.button('stiffnessProfile_button', l='Stiffness*', w=70,
 		            ann='Apply a named stiffness distribution across all segments. Each value multiplies Bend Resistance on that segment -- 1.0 is the full Bend Resistance.')
 		cmds.popupMenu('stiffnessProfile_popupMenu', b=1)
-		cmds.menuItem(label='Full (1.0)', c=partial(self.applyRampProfilePreset, 'stiffnessScale', 'full'))
-		for profileId, profileLabel in self.constraintProfiles:
+		for profileId, profileLabel in self.stiffnessProfiles:
 			cmds.menuItem(label=profileLabel, c=partial(self.applyRampProfilePreset, 'stiffnessScale', profileId))
 		cmds.button('keyAllInfluence_button', l='Key All', w=60, c=self.keyAllStrengths,
 		            ann="Key every segment's influence and stiffness at the current frame. Right-click for Delete All Keys.")
 		cmds.popupMenu('keyAllInfluence_popupMenu')
 		cmds.menuItem('Delete All Keys', c=self.deleteAllStrengthKeys)
+		cmds.button('selectInfluenceKeys_button', l='Select Keys*', w=80,
+		            ann='Select the influence/stiffness keyframes and open them in the Graph Editor to edit or delete.')
+		cmds.popupMenu('selectInfluenceKeys_popupMenu', b=1)
+		cmds.menuItem(label='All Keys', c=partial(self.selectStrengthKeys, None, None))
+		cmds.menuItem(label='Influence Keys', c=partial(self.selectStrengthKeys, 'attractionScale', None))
+		cmds.menuItem(label='Stiffness Keys', c=partial(self.selectStrengthKeys, 'stiffnessScale', None))
 
 		cmds.rowColumnLayout('particleSegmentOffset_rowColumnLayout', numberOfColumns=5, p='particleSegmentOffset_frameLayout')
 		cmds.showWindow("particleSegmentOffset_window")
@@ -1029,9 +1086,10 @@ class SimParticleRig():
 				                p=layout)
 				cmds.iconTextButton(buttonFmt % index, w=20, h=20, style='iconOnly',
 				                    image1='autoKeyframeOff.png', c=partial(self.keyStrength, ramp, index),
-				                    ann='Key this value at the current frame. Right-click to delete its keys.',
+				                    ann='Key this value at the current frame. Right-click to select or delete its keys.',
 				                    p=layout)
 				cmds.popupMenu(p=buttonFmt % index)
+				cmds.menuItem('Select Keys', c=partial(self.selectStrengthKeys, ramp, index))
 				cmds.menuItem('Delete Keys', c=partial(self.deleteStrengthKeys, ramp, index))
 		self._refreshInfluenceUI()
 
@@ -1093,6 +1151,31 @@ class SimParticleRig():
 		hairSystem = self._get_hairSystem(rigName)
 		cmds.cutKey(self._rampPlug(hairSystem, ramp, index - 1), clear=True)
 		self._refreshInfluenceUI()
+
+	def selectStrengthKeys(self, ramp, index, *args):
+		"""Select the anim curves behind the influence/stiffness ramp entries
+		(one ramp or both; one segment or all) and open them in the Graph
+		Editor. Ramp entries aren't channel-box attributes, so selecting the
+		hairSystem doesn't show them -- selecting the curve nodes directly
+		does, and their keys can then be moved, edited or deleted there."""
+		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
+		hairSystem = self._get_hairSystem(rigName)
+		ramps = [ramp] if ramp else sorted(self._rampUI)
+		segments = [index - 1] if index else range(self._get_segment_count(rigName))
+		curves = []
+		for r in ramps:
+			for i in segments:
+				curves += cmds.listConnections(self._rampPlug(hairSystem, r, i), s=True, d=False, type='animCurve') or []
+		if not curves:
+			cmds.warning('No influence/stiffness keys to select.')
+			return
+		cmds.select(curves, r=True)
+		cmds.selectKey(curves, replace=True)
+		mel.eval('GraphEditor;')
+		# Frame once the editor exists (it's built on first open).
+		cmds.evalDeferred("import maya.cmds as cmds\n"
+		                  "if cmds.animCurveEditor('graphEditor1GraphEd', exists=True):\n"
+		                  "    cmds.animCurveEditor('graphEditor1GraphEd', e=True, lookAt='all')")
 
 	def deleteAllStrengthKeys(self, *args):
 		rigName = cmds.text('particleRig_text', q=True, l=True).partition(': ')[2]
