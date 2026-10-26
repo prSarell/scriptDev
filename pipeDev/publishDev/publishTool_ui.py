@@ -347,6 +347,9 @@ class PublishToolUI(QtWidgets.QDialog):
             # New scene or H drive: refill the picker, starting on what the
             # open scene is. The student can still pick anything.
             self._picker_key = key
+            # A scene outside the pipe has no asset of its own to start on:
+            # nothing is picked until the student picks it.
+            self.picker.pick_first = bool(ctx)
             films = api.list_films(h_root) if h_root else []
             if ctx and ctx["film"] not in films:
                 films.append(ctx["film"])
@@ -611,20 +614,26 @@ class PublishToolUI(QtWidgets.QDialog):
         while os.path.exists(os.path.join(folder, "%s_%03d%s" % (name, number, ext))):
             number += 1
         dest = os.path.normpath(os.path.join(folder, "%s_%03d%s" % (name, number, ext)))
+        target = "%s / %s" % (group, name)
+        mismatch = group != env.ENV_TYPE and self._looks_like_environment()
         text = ("This scene isn't saved in a pipeline project, so it can't be published yet."
-                "\n\nSave it as %s's working scene?\n  %s" % (name, dest))
+                "\n\nSave it as the working scene of %s?\n  %s" % (target, dest))
+        if mismatch:
+            # 2026-10-26: an environment scene was saved into character/ATKS.
+            text = ("This scene has an %s, but %s isn't an environment. Did you mean to "
+                    "pick an environment asset?\n\n" % (env.ENVIRONMENT_SET, target)) + text
         if not os.path.isfile(os.path.join(project, proj.WORKSPACE)):
             text += ("\n\n%s isn't on your scratch drive yet: it'll be made first, as the "
                      "Project Tool's Set Project would." % name)
         if current:
             text += "\n\nThe file you have open now is left as it is."
         box = QtWidgets.QMessageBox(self)
-        box.setIcon(QtWidgets.QMessageBox.Question)
-        box.setWindowTitle("Save into %s" % name)
+        box.setIcon(QtWidgets.QMessageBox.Warning if mismatch else QtWidgets.QMessageBox.Question)
+        box.setWindowTitle("Save into %s" % target)
         box.setText(text)
         save = box.addButton("Save Here", QtWidgets.QMessageBox.AcceptRole)
-        box.addButton(QtWidgets.QMessageBox.Cancel)
-        box.setDefaultButton(save)
+        cancel = box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(cancel if mismatch else save)
         box.exec()
         if box.clickedButton() != save:
             self.status.show_message("Not added: save your scene in an asset's or a shot's "
@@ -788,7 +797,19 @@ class PublishToolUI(QtWidgets.QDialog):
         self._render_table()
 
     def _remove_rows(self):
-        for r in reversed(self._selected_rows()):
+        """- : take the highlighted rows off; with none highlighted, the row
+        for what the picker shows (user, 2026-10-26: "-" left ATKS in the
+        list, since nothing was highlighted)."""
+        rows = self._selected_rows()
+        if not rows:
+            picked = (self.picker.group(), self.picker.name(), self.picker.department())
+            rows = [i for i, r in enumerate(self._rows)
+                    if (r["asset_type"], r["asset"], r["code"]) == picked]
+        if not rows:
+            self.status.show_message("Highlight the rows to take off the list, then press -.",
+                                     ok=False)
+            return
+        for r in reversed(sorted(rows)):
             del self._rows[r]
         self._render_table()
 

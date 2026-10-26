@@ -122,14 +122,30 @@ cmds.file(rename=outside); cmds.file(save=True, type="mayaAscii")
 saved_before = os.path.getmtime(outside)
 w = ui.PublishToolUI(PARENT)
 w.refresh()
-w.picker.set_current(film="NWF_SHF", code="model", group="environment", name="fieldB")
-answers = []
+answers, defaults = [], []
 def answer_exec(box):
     asked.append(box.text())
+    defaults.append(box.defaultButton().text().replace("&", ""))
     answer = answers.pop(0)
     [b for b in box.buttons() if b.text().replace("&", "") == answer][0].click()
     return 0
 QtWidgets.QMessageBox.exec = answer_exec
+# Nothing picked by default (2026-10-26: saved into character/ATKS because
+# it was listed first).
+w.picker.set_current(film="NWF_SHF", code="model", group="prop")
+del asked[:]
+w._add_row()
+check("outside the pipe: the asset starts on (pick one), + asks nothing",
+      w.picker.name() is None and w.picker.name_combo.currentText() == "(pick one)"
+      and not asked and not w._rows and "pick the asset" in w.status._text)
+# An environment scene into a non-environment asset: warned, Cancel default.
+w.picker.set_current(film="NWF_SHF", code="model", group="prop", name="crate")
+del asked[:]; del defaults[:]; answers[:] = ["Cancel"]
+w._add_row()
+check("environment_SET + prop/crate: warned it isn't an environment, Cancel is the default",
+      len(asked) == 1 and "isn't an environment" in asked[0] and "prop / crate" in asked[0]
+      and defaults == ["Cancel"] and not w._rows)
+w.picker.set_current(film="NWF_SHF", code="model", group="environment", name="fieldB")
 del asked[:]; answers[:] = ["Cancel"]
 w._add_row()
 check("outside the pipe + Cancel: nothing made, nothing added",
@@ -149,6 +165,18 @@ check("scene saved there as fieldB_001.ma, the old file left as it was",
       and os.path.isfile(dest) and os.path.getmtime(outside) == saved_before)
 check("... and added as an Environment row for fieldB (it has an environment_SET)",
       [(r["code"], r["asset"]) for r in w._rows] == [("env", "fieldB")])
+# "-" with nothing highlighted (2026-10-26: ATKS stayed in the list).
+w.table.clearSelection()
+w.picker.set_current(code="model", group="environment", name="fieldA")
+w._remove_rows()
+check("- with nothing highlighted and another asset picked: row kept, status says why",
+      len(w._rows) == 1 and "Highlight the rows" in w.status._text)
+w.picker.set_current(code="env", group="environment", name="fieldB")
+w._remove_rows()
+check("- with nothing highlighted: takes off the row the picker shows", not w._rows)
+w.picker.set_current(code="model", group="environment", name="fieldB")
+w._add_row()
+check("... and it can be added again", [(r["code"], r["asset"]) for r in w._rows] == [("env", "fieldB")])
 
 # Publish after a cancel (user, 2026-10-26): the cancelled publish left Maya
 # thinking the scene changed, and the next Publish stopped at the save

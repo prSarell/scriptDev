@@ -19,6 +19,7 @@ KIND_LABELS = ((ASSET, "Asset"), (SHOT, "Shot"))
 # What the last two dropdowns hold, by kind (their tooltips).
 GROUP_LABELS = {ASSET: ("Asset type", "Asset"), SHOT: ("Sequence", "Shot")}
 NONE_TEXT = "(none)"
+PICK_TEXT = "(pick one)"
 
 
 def _model(parent, items):
@@ -63,6 +64,10 @@ class TargetPicker(QtWidgets.QWidget):
         self._lists = dict((d[1], d[4] if len(d) > 4 else d[2]) for d in departments)
         self._items_for = items_for
         self._items = []
+        # False: the last dropdown starts on "(pick one)" instead of the
+        # first name, so nothing is chosen by default (user, 2026-10-26: a
+        # scene was saved into ATKS just because it was listed first).
+        self.pick_first = True
 
         self.film_combo = QtWidgets.QComboBox()
         self.film_combo.setToolTip("Film")
@@ -163,5 +168,7 @@ class TargetPicker(QtWidgets.QWidget):
     def _fill_names(self, name=None):
         group = self.group()
         names = [n for g, n in self._items if g == group]
-        _set_items(self.name_combo, [(n, n, True) for n in names] or [(NONE_TEXT, None, False)],
-                   name or self.name())
+        items = [(n, n, True) for n in names]
+        if items and not self.pick_first:
+            items.insert(0, (PICK_TEXT, None, True))
+        _set_items(self.name_combo, items or [(NONE_TEXT, None, False)], name or self.name())
