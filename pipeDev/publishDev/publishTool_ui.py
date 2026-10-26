@@ -729,13 +729,34 @@ class PublishToolUI(QtWidgets.QDialog):
 
     def _publish(self):
         if cmds.file(query=True, modified=True):
-            answer = QtWidgets.QMessageBox.question(
-                self, "Unsaved changes",
-                "Your scene has unsaved changes.\n"
-                "Save it now and publish the saved version?")
-            if answer != QtWidgets.QMessageBox.Yes:
+            box = QtWidgets.QMessageBox(self)
+            box.setIcon(QtWidgets.QMessageBox.Question)
+            box.setWindowTitle("Unsaved changes")
+            box.setText("Your scene has unsaved changes.\n"
+                        "Save it now and publish the saved version?")
+            save = box.addButton("Save and Publish", QtWidgets.QMessageBox.AcceptRole)
+            box.addButton(QtWidgets.QMessageBox.Cancel)
+            box.setDefaultButton(save)
+            box.exec()
+            if box.clickedButton() != save:
+                # Never a silent no-op (user, 2026-10-26).
+                self.status.show_message("Not published: the scene has unsaved changes. "
+                                         "Save it, or press Publish and pick Save and Publish.",
+                                         ok=False)
                 return
             cmds.file(save=True)
+        try:
+            self._publish_saved()
+        finally:
+            # The publish puts the working scene back as it was, but the
+            # playblast (isolate select, panel camera) can leave Maya
+            # thinking it changed, so after a cancelled publish the next
+            # Publish asked to save again (user, 2026-10-26). It was saved
+            # just above, so it's still the saved scene.
+            cmds.file(modified=False)
+
+    def _publish_saved(self):
+        """Publish the ticked rows from the saved scene."""
 
         scene = cmds.file(query=True, sceneName=True)
         self._sync_objects()    # anything renamed since the last refresh

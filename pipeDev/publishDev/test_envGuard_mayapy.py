@@ -96,6 +96,35 @@ w._add_row()
 check("... and + adds the environment row to that asset",
       [(r["code"], r["asset"]) for r in w._rows] == [("env", "shed")])
 
+# Publish after a cancel (user, 2026-10-26): the cancelled publish left Maya
+# thinking the scene changed, and the next Publish stopped at the save
+# question, doing nothing if it was declined.
+answers = []
+def answer_exec(box):
+    asked.append(box.text())
+    answer = answers.pop(0)
+    [b for b in box.buttons() if b.text().replace("&", "") == answer][0].click()
+    return 0
+QtWidgets.QMessageBox.exec = answer_exec
+calls = []
+def cancelled_publish(*a, **k):
+    calls.append(1)
+    cmds.file(modified=True)        # what the real playblast can leave behind
+    raise api.PublishCancelled("Cancelled after watching the movie: nothing was published.")
+api.publish = cancelled_publish
+cmds.file(modified=True)
+del asked[:]; answers[:] = ["Cancel"]
+w._publish()
+check("unsaved + Cancel: not published, and the status says why",
+      not calls and "Not published" in w.status._text)
+answers[:] = ["Save and Publish"]
+w._publish()
+check("Save and Publish: saved, then published (cancelled in review)", calls == [1])
+check("... and the scene isn't left looking changed", not cmds.file(query=True, modified=True))
+del asked[:]
+w._publish()
+check("Publish again: no save question, publish runs", not asked and calls == [1, 1])
+
 print("%d/%d passed" % (sum(ok), len(ok)))
 maya.standalone.uninitialize()
 os._exit(0 if all(ok) else 1)
