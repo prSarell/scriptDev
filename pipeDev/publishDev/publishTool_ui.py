@@ -580,15 +580,77 @@ class PublishToolUI(QtWidgets.QDialog):
         self._render_table()
         self.status.show_message("Added the environment, to %s." % asset)
 
+    def _save_into_asset(self):
+        """The scene isn't in an asset's or a shot's scenes folder (never
+        saved, or saved outside the pipe). If an asset is picked, offer to
+        make it on scratch the way the Project Tool's Set Project does and
+        save the scene there as its working file, so it can be published
+        (user, 2026-10-26: fieldA was on H but not on scratch, so there was
+        nowhere to save it and publish from). True once it's saved there."""
+        film, code = self.picker.film(), self.picker.department()
+        group, name = self.picker.group(), self.picker.name()
+        if (self.picker.kind() == picker.SHOT and code != env.ENV_CODE) or not (film and name):
+            self.status.show_message("Save your scene in an asset's or a shot's scenes "
+                                     "folder first, or pick the asset to publish to.", ok=False)
+            return False
+        import projectTool_api as proj
+        try:
+            h_root, scratch_root = (api.resolve_root(r) for r in self._roots())
+            api.check_roots(h_root, scratch_root)
+            login = api.who()
+        except api.PublishError as e:
+            self.status.show_message(str(e), ok=False)
+            return False
+        rel = (film, "maya", "assets", group, name)
+        project = proj.scratch_project(scratch_root, rel)
+        folder = os.path.join(project, "scenes", login)
+        current = cmds.file(query=True, sceneName=True)
+        ext = os.path.splitext(current)[1].lower() if current else ".ma"
+        ext = ext if ext in api.SCENE_EXTS else ".ma"
+        number = 1
+        while os.path.exists(os.path.join(folder, "%s_%03d%s" % (name, number, ext))):
+            number += 1
+        dest = os.path.normpath(os.path.join(folder, "%s_%03d%s" % (name, number, ext)))
+        text = ("This scene isn't saved in a pipeline project, so it can't be published yet."
+                "\n\nSave it as %s's working scene?\n  %s" % (name, dest))
+        if not os.path.isfile(os.path.join(project, proj.WORKSPACE)):
+            text += ("\n\n%s isn't on your scratch drive yet: it'll be made first, as the "
+                     "Project Tool's Set Project would." % name)
+        if current:
+            text += "\n\nThe file you have open now is left as it is."
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setWindowTitle("Save into %s" % name)
+        box.setText(text)
+        save = box.addButton("Save Here", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(save)
+        box.exec()
+        if box.clickedButton() != save:
+            self.status.show_message("Not added: save your scene in an asset's or a shot's "
+                                     "scenes folder first.", ok=False)
+            return False
+        try:
+            proj.set_project(h_root, scratch_root, rel, login)
+            cmds.file(rename=dest)
+            cmds.file(save=True, type="mayaAscii" if ext == ".ma" else "mayaBinary")
+        except Exception as e:
+            self.status.show_message("Couldn't save into %s: %s" % (name, e), ok=False)
+            return False
+        # The window follows the newly saved scene; keep what was picked.
+        self.refresh()
+        self.picker.set_current(film=film, code=code, group=group, name=name)
+        return True
+
     def _add_row(self):
         """+ : add what the picker says. A shot department adds what's
         selected in the shot; an asset department adds that asset with
         the selection as its objects (nothing selected = whole scene)."""
         scene, ctx = self._scene_context()
         if not ctx:
-            self.status.show_message("Save your scene in an asset's or a shot's scenes "
-                                     "folder first.", ok=False)
-            return
+            if not self._save_into_asset():
+                return
+            scene, ctx = self._scene_context()
         code, label = self.picker.department(), self.picker.dept_combo.currentText()
         group, name = self.picker.group(), self.picker.name()
         in_shot = ctx["kind"] == "shot"

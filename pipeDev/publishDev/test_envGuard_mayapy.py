@@ -9,7 +9,8 @@
 import sys, os, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "layoutDev")]
+sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "layoutDev"),
+                os.path.join(os.path.dirname(HERE), "projectDev")]
 from PySide6 import QtWidgets
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 import maya.standalone; maya.standalone.initialize()
@@ -102,6 +103,52 @@ w.refresh()
 names = [w.picker.name_combo.itemData(i) for i in range(w.picker.name_combo.count())]
 check("new environment asset on H appears without reopening the window",
       "fieldA" in names and w.picker.name() == "shed" and w.picker.department() == "env")
+
+# A scene saved outside the pipe, publishing to an asset that's on H but not
+# yet on scratch (fieldA, 2026-10-26): + offers to make the asset on scratch
+# and save the scene there, then adds it.
+import projectTool_api as proj
+proj.set_studio_library = lambda *a: []      # never touch real Studio Library settings
+fieldB_h = os.path.join(H, "NWF_SHF", "maya", "assets", "environment", "fieldB")
+os.makedirs(os.path.join(fieldB_h, "scenes"))
+os.makedirs(os.path.join(fieldB_h, "sourceimages"))
+open(os.path.join(fieldB_h, "workspace.mel"), "w").close()
+outside = os.path.join(base, "projects", "previs", "scenes", "field_layout.ma")
+os.makedirs(os.path.dirname(outside))
+cmds.file(new=True, force=True)
+lay.make_environment_structure()
+cmds.parent(cmds.polyPlane(name="ground")[0], "|environment|landscape")
+cmds.file(rename=outside); cmds.file(save=True, type="mayaAscii")
+saved_before = os.path.getmtime(outside)
+w = ui.PublishToolUI(PARENT)
+w.refresh()
+w.picker.set_current(film="NWF_SHF", code="model", group="environment", name="fieldB")
+answers = []
+def answer_exec(box):
+    asked.append(box.text())
+    answer = answers.pop(0)
+    [b for b in box.buttons() if b.text().replace("&", "") == answer][0].click()
+    return 0
+QtWidgets.QMessageBox.exec = answer_exec
+del asked[:]; answers[:] = ["Cancel"]
+w._add_row()
+check("outside the pipe + Cancel: nothing made, nothing added",
+      not w._rows and not os.path.isdir(os.path.join(SC, "NWF_SHF", "maya", "assets",
+                                                     "environment", "fieldB")))
+del asked[:]; answers[:] = ["Save Here"]
+w._add_row()
+fieldB_sc = os.path.join(SC, "NWF_SHF", "maya", "assets", "environment", "fieldB")
+dest = os.path.join(fieldB_sc, "scenes", "scout", "fieldB_001.ma")
+check("asked once, saying fieldB will be made on scratch",
+      len(asked) == 1 and "isn't on your scratch drive yet" in asked[0])
+check("fieldB made on scratch like Set Project (workspace.mel, sourceimages, scenes/scout)",
+      all(os.path.exists(os.path.join(fieldB_sc, p)) for p in
+          ("workspace.mel", "sourceimages", os.path.join("scenes", "scout"))))
+check("scene saved there as fieldB_001.ma, the old file left as it was",
+      os.path.normcase(cmds.file(query=True, sceneName=True)) == os.path.normcase(dest.replace("\\", "/"))
+      and os.path.isfile(dest) and os.path.getmtime(outside) == saved_before)
+check("... and added as an Environment row for fieldB (it has an environment_SET)",
+      [(r["code"], r["asset"]) for r in w._rows] == [("env", "fieldB")])
 
 # Publish after a cancel (user, 2026-10-26): the cancelled publish left Maya
 # thinking the scene changed, and the next Publish stopped at the save

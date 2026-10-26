@@ -2705,6 +2705,26 @@ models** (the backpack's rules). Environments need different ones.
     `scoutsHouseLandscape`); what Build brings into a shot (the
     environment file, the one-frame reference cache, or both).
 - OPEN: questions below, being worked through with the user.
+- **2026-10-26 changes (DECIDED + built):**
+  - **Buildings and sky are optional.** "not all environments will always
+    need buildings or a sky. not having every item in the groups shouldn't
+    prevent a publish." An empty role set or empty role group is left out
+    with a warning; only all three empty is refused.
+  - **Environment isn't a department.** "it doesn't make a ton of sense"
+    beside Modeling/Rigging. From an asset scene, Modeling on an
+    environment asset with an `environment_SET` becomes an Environment
+    publish by itself (replaces the "Publish as Environment?" question);
+    from a shot scene, Environment sits on the Shot side beside Layout and
+    lists environment assets. File names keep the `env` code.
+  - **New asset, not on scratch yet (option B, chosen over an override).**
+    fieldA was made in ShotGrid and on H, but with no scratch project there
+    was nowhere to save the scene so Publish would take it. Now, from a
+    scene outside any pipe project, "+" with an asset picked offers "Save
+    Here": the asset is made on scratch as Set Project would, the scene is
+    saved as `<asset>_###` in `scenes\<login>\` (the open file left as it
+    was), and the row is added. The Publish window also re-reads H's
+    assets/shots on every refresh, so an asset made while it's open shows
+    up. An override for publishing elsewhere stays parked (§4d).
 
 ### 4b. Studio Library data (started 2026-10-21)
 
