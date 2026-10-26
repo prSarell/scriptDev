@@ -38,12 +38,15 @@ import pipePicker as picker
 pub = api.pub
 
 # The picker's Department dropdown: the asset departments that publish,
-# then the shot's camera (spec "Cameras").
-ASSET_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
+# then the shot's camera (spec "Cameras") and its environment, which lists
+# the environment assets (user, 2026-10-26: Environment isn't a department,
+# as in the Publish Tool).
+ASSET_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
 BUILD_DEPARTMENTS = (
     [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
      if code in ASSET_DEPARTMENTS] +
-    [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True)])
+    [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True),
+     (api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.SHOT, True, picker.ASSET)])
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -338,6 +341,7 @@ class BuildShotTab(QtWidgets.QWidget):
         """The shot the Keys dropdowns list: the one the picker points at
         on its Shot side, else the shot being built into."""
         if (self._target_shot and self.picker.kind() == picker.SHOT
+                and self.picker.department() != pub.ENV_CODE
                 and self.picker.film() == self._target_shot[0]
                 and self.picker.group() and self.picker.name()):
             return (self.picker.film(), self.picker.group(), self.picker.name())
@@ -577,7 +581,7 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("This shot is in %s: pick from %s's assets."
                                      % ((self._target_shot[0],) * 2), ok=False)
             return
-        if self.picker.kind() == picker.SHOT:
+        if self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
             if (group, name) != tuple(self._target_shot[1:]):
                 self.status.show_message("A shot's camera only builds into its own shot (%s)."
                                          % self._target_shot[2], ok=False)

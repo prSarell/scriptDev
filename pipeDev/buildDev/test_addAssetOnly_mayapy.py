@@ -8,7 +8,7 @@ import sys, os, stat, shutil, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "publishDev")]
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 import maya.standalone; maya.standalone.initialize()
 import maya.cmds as cmds
@@ -90,6 +90,16 @@ check("camera row starts at what the scene has (v001), not the manifest's v002",
       rows["EAP_010_010"]["chosen"] == C1 and rows["EAP_010_010"]["in_scene"] == C1)
 check("rows already in the scene start unticked",
       not rows["EAP_010_010"]["checked"] and not rows["backpack"]["checked"])
+def dept_codes():
+    model = p.dept_combo.model()
+    return [model.item(i).data(QtCore.Qt.UserRole) for i in range(model.rowCount())]
+p.set_current(film=FILM, code="model")
+asset_side = dept_codes()
+p.set_current(code="env")
+check("picker: Environment is on the Shot side beside Camera, not an asset department "
+      "(user, 2026-10-26), and lists assets", "env" not in asset_side
+      and dept_codes() == ["cam", "env"] and p.kind() == "shot"
+      and p.group_combo.toolTip() == "Asset type")
 p.set_current(film=FILM, code="rig")
 check("picker: Rigging lists no assets (nothing published for it)", p.name() is None)
 p.set_current(code="model", group="environment", name="scoutsHouse")
