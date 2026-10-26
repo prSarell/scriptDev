@@ -1176,6 +1176,7 @@ def build_camera(shot_dir, published, vid):
     current, current_vid = shot_camera()
     if current and current_vid == vid:
         done.append("already up to date")
+        done += apply_camera_range(shot_dir)
         return done, None
 
     # Cameras used to be referenced: turn an old reference into live nodes
@@ -1196,7 +1197,30 @@ def build_camera(shot_dir, published, vid):
     info = published["info"][vid]
     import_camera(shot_dir, info["version"], info["login"])
     done.append("camera1 %s imported and locked" % label)
+    done += apply_camera_range(shot_dir)
     return done, None
+
+
+def apply_camera_range(shot_dir):
+    """The shot's frame range is the one its camera was published with
+    (the map's start/end): set the playback and animation range to it
+    (user, 2026-10-26: SEQ010_160 built without its range). Returns what
+    was done, as lines."""
+    try:
+        with open(os.path.join(shot_dir, *CAMERA_FILES["map"].split("/")), "r") as f:
+            mapping = json.load(f)
+        start, end = int(mapping["start"]), int(mapping["end"])
+    except (IOError, OSError, ValueError, KeyError, TypeError):
+        return []
+    current = (cmds.playbackOptions(query=True, minTime=True),
+               cmds.playbackOptions(query=True, maxTime=True),
+               cmds.playbackOptions(query=True, animationStartTime=True),
+               cmds.playbackOptions(query=True, animationEndTime=True))
+    if current == (start, end, start, end):
+        return []
+    cmds.playbackOptions(minTime=start, maxTime=end,
+                         animationStartTime=start, animationEndTime=end)
+    return ["frame range set to %d-%d, from the camera publish" % (start, end)]
 
 
 # ---------------------------------------------------------------------------

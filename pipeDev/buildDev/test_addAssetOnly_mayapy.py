@@ -51,7 +51,8 @@ for v in (1, 2):
     cam = cmds.camera(name="layoutCam")[0]
     cmds.setKeyframe(cam + ".tx", time=1, value=0); cmds.setKeyframe(cam + ".tx", time=10, value=v)
     cmds.file(rename=layout); cmds.file(save=True, type="mayaAscii")
-    pcam.export_camera(cam, pcam.plan_camera(layout, H, SC, camera=cam), 1, 10, layout)
+    start, end = (1, 10) if v == 1 else (1001, 1020)     # v002 has its own range
+    pcam.export_camera(cam, pcam.plan_camera(layout, H, SC, camera=cam), start, end, layout)
 
 
 def published(asset):
@@ -131,6 +132,17 @@ tab._on_version_changed(rows["EAP_010_010"], C2)
 check("picking v002 for the camera ticks it", rows["EAP_010_010"]["checked"])
 tab._build_shot()
 check("picking v002 for the camera does rebuild it", api.shot_camera()[1] == C2)
+check("... and sets the frame range it was published with (user, 2026-10-26)",
+      (cmds.playbackOptions(query=True, minTime=True), cmds.playbackOptions(query=True, maxTime=True),
+       cmds.playbackOptions(query=True, animationStartTime=True),
+       cmds.playbackOptions(query=True, animationEndTime=True)) == (1001, 1020, 1001, 1020)
+      and "frame range set to 1001-1020" in tab.status._text)
+cmds.playbackOptions(minTime=1, maxTime=24)
+rows["EAP_010_010"]["checked"] = True     # ticked again, camera already up to date
+tab._build_shot()
+check("an up-to-date camera still puts the range back on Build",
+      (cmds.playbackOptions(query=True, minTime=True),
+       cmds.playbackOptions(query=True, maxTime=True)) == (1001, 1020))
 
 # Loading a shot clears the last message (review 2026-10-21: the status
 # line had been cut off _load_shot, so old messages stayed up).
