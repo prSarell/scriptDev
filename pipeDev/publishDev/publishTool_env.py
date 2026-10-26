@@ -104,6 +104,11 @@ def role_members(object_set):
     return [n for n in nodes if n not in api.nested_in(nodes)]
 
 
+def _has_contents(node):
+    """False for an empty group: nothing under it to publish."""
+    return bool(cmds.listRelatives(node, allDescendents=True))
+
+
 def _is_identity(node):
     values = cmds.xform(node, query=True, matrix=True, worldSpace=True)
     identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
@@ -139,17 +144,17 @@ def pieces_placement(group):
 def check_environment(h_root=None, film=None):
     """What an environment publish takes, by role:
     {"sets", landscape: [...], buildings: [...], sky: [...], "warnings"},
-    buildings being each building's group. Raises PublishError explaining
-    what to fix. (h_root/film: kept for callers; building names aren't
-    matched to H-drive assets any more, user 2026-10-22.)"""
+    buildings being each building's group. A role with nothing in it (no
+    set, an empty set, or only empty groups) is left out with a warning:
+    not every environment has buildings or a sky (user, 2026-10-26).
+    Raises PublishError explaining what to fix. (h_root/film: kept for
+    callers; building names aren't matched to H-drive assets any more,
+    user 2026-10-22.)"""
     sets = find_sets()
     found = {"sets": sets, "warnings": []}
     seen = {}
     for role, name in ROLE_SETS:
-        members = role_members(sets[role])
-        if sets[role] and not members:
-            raise PublishError("%s is empty. Add the %s to it, or delete the set."
-                               % (sets[role], role))
+        members = [m for m in role_members(sets[role]) if _has_contents(m)]
         for node in members:
             if node in seen:
                 raise PublishError("%s is in both %s and %s. Each thing has one role."
@@ -163,6 +168,13 @@ def check_environment(h_root=None, film=None):
                                    "take the inner one out of its set."
                                    % (_short(b), seen[b], _short(a), seen[a]))
     found[BUILDINGS] = buildings_in(found[BUILDINGS])
+    empty = [role for role, _ in ROLE_SETS if not found[role]]
+    if len(empty) == len(ROLE_SETS):
+        raise PublishError("There's nothing to publish: landscape, buildings and sky are "
+                           "all empty." + _how())
+    if empty:
+        found["warnings"].append("No %s in this environment, so it was published without."
+                                 % " or ".join(empty))
     names = [_short(g) for g in found[BUILDINGS]]
     clashes = sorted(set(n for n in names if names.count(n) > 1))
     if clashes:
@@ -174,7 +186,8 @@ def check_environment(h_root=None, film=None):
 def buildings_in(members):
     """The buildings: building_SET holds one group called buildings, and
     each group inside it is a building, named however the student likes
-    (user, 2026-10-22: room for more than one building)."""
+    (user, 2026-10-22: room for more than one building). Empty building
+    groups are skipped; no buildings at all is fine."""
     if not members:
         return []
     if len(members) != 1 or _short(members[0]) != BUILDINGS_GROUP:
@@ -183,11 +196,8 @@ def buildings_in(members):
             "each building in its own group inside %s, and add %s to building_SET."
             % (BUILDINGS_GROUP, ", ".join(_short(m) for m in members),
                BUILDINGS_GROUP, BUILDINGS_GROUP))
-    buildings = cmds.listRelatives(members[0], children=True, fullPath=True,
-                                   type="transform") or []
-    if not buildings:
-        raise PublishError("%s is empty. Put each building in its own group inside it."
-                           % BUILDINGS_GROUP)
+    buildings = [g for g in cmds.listRelatives(members[0], children=True, fullPath=True,
+                                               type="transform") or [] if _has_contents(g)]
     for group in buildings:
         if not cmds.listRelatives(group, children=True, type="transform"):
             raise PublishError(

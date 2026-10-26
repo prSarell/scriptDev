@@ -227,6 +227,26 @@ check("... turned like the pieces", abs(cmds.xform(loc, query=True, worldSpace=T
 check("... and the building itself is left as it was (group at 0, pieces placed)",
       cmds.getAttr(G + "|buildings|shed.translate")[0] == (0, 0, 0)
       and round(cmds.getAttr(G + "|buildings|shed|pCube1.translateX")) == -8759)
+
+# -- No buildings and no sky (user, 2026-10-26): their groups left empty, as
+#    the layout tool makes them, or a set emptied -- published without -------
+scene = layout_scene()
+cmds.sets("environment|sky|imagePlanesky", remove="sky_SET")
+cmds.sets("environment|sky", add="sky_SET")      # the group, as the layout tool sets it up
+cmds.delete("environment|buildings|shed", "environment|buildings|oldBarn",
+            "environment|sky|imagePlanesky")
+plan3 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+check("landscape only: still published", plan3["version"] == 3)
+check("... with a note that there are no buildings or sky",
+      any("No buildings or sky" in w for w in plan3.get("warnings", [])))
+check("... and only the landscape in it", plan3["environment"][env.BUILDINGS] == []
+      and plan3["environment"][env.SKY] == [] and plan3["environment"]["locators"] == [])
+cmds.file(new=True, force=True); cmds.file(plan3["dest"], open=True, force=True)
+check("... the published landscape-only layout passes the check again",
+      [n.split("|")[-1] for n in env.check_environment()[env.LANDSCAPE]] == ["ground"])
+scene = layout_scene()
+cmds.sets(clear="landscape_SET"); cmds.sets(clear="building_SET"); cmds.sets(clear="sky_SET")
+check("all three empty: refused", refused("nothing to publish"))
 print("%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, files in os.walk(base):
     for f in files:

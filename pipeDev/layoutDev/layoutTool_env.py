@@ -116,7 +116,7 @@ def run():
     if made and kept:
         text += "\n\nAlready there (left as is):\n  " + "\n  ".join(kept)
     text += ("\n\nPut the terrain in landscape, each building in its own group inside "
-             "buildings, and image planes / skydome in sky. Delete any group or set "
-             "you don't need before publishing.")
+             "buildings, and image planes / skydome in sky. A group you don't need "
+             "(no buildings, no sky) can stay empty: the publish leaves it out.")
     print(text)
     cmds.confirmDialog(title="Environment Sets", message=text, button=["OK"])
