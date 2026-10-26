@@ -45,10 +45,13 @@ def _set_items(combo, items, keep=None):
 
 
 class TargetPicker(QtWidgets.QWidget):
-    """departments: [(label, code, kind, live)], kind ASSET or SHOT (the
-    side it's listed under); not
-    live shows as "(coming soon)". items_for(film, code, kind) returns the
-    [(group, name)] that fit, group being the asset type or sequence."""
+    """departments: [(label, code, kind, live[, lists])], kind ASSET or SHOT
+    (the side it's listed under); not live shows as "(coming soon)";
+    lists, ASSET or SHOT, what the last two dropdowns hold when it's not
+    the same as the side (Environment is listed under Shot but publishes
+    to an environment asset, user 2026-10-26). items_for(film, code, lists)
+    returns the [(group, name)] that fit, group being the asset type or
+    sequence."""
 
     add_clicked = QtCore.Signal()
     remove_clicked = QtCore.Signal()
@@ -56,7 +59,8 @@ class TargetPicker(QtWidgets.QWidget):
     def __init__(self, departments, items_for, parent=None):
         super(TargetPicker, self).__init__(parent)
         self._departments = departments
-        self._kinds = dict((code, kind) for _, code, kind, _ in departments)
+        self._kinds = dict((d[1], d[2]) for d in departments)
+        self._lists = dict((d[1], d[4] if len(d) > 4 else d[2]) for d in departments)
         self._items_for = items_for
         self._items = []
 
@@ -134,19 +138,20 @@ class TargetPicker(QtWidgets.QWidget):
         current one if it's there."""
         kind = self.kind()
         _set_items(self.dept_combo, [(label if live else "%s (coming soon)" % label, c, live)
-                                     for label, c, k, live in self._departments if k == kind],
+                                     for label, c, k, live in (d[:4] for d in self._departments)
+                                     if k == kind],
                    code or self.department())
         if refill:
             self.refill()
 
     def refill(self, group=None, name=None):
         """Re-read what fits the film, side and department."""
-        kind = self.kind()
-        group_label, name_label = GROUP_LABELS[kind]
+        film, code = self.film(), self.department()
+        lists = self._lists.get(code, self.kind())
+        group_label, name_label = GROUP_LABELS[lists]
         self.group_combo.setToolTip(group_label)
         self.name_combo.setToolTip(name_label)
-        film, code = self.film(), self.department()
-        self._items = list(self._items_for(film, code, kind)) if film and code else []
+        self._items = list(self._items_for(film, code, lists)) if film and code else []
         groups = []
         for g, _ in self._items:
             if g not in groups:

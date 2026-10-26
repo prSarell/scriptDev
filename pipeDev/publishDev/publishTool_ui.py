@@ -41,8 +41,11 @@ import pipeStudioLibrary as slib
 import pipePicker as picker
 
 
-# Departments that publish from an asset scene.
-LIVE_DEPARTMENTS = ("model", "env", "rig", "creature", "lookDev")
+# Departments that publish from an asset scene. Environment isn't one of
+# them (user, 2026-10-26: it's a kind of asset, not a department): from an
+# asset scene, an environment asset with an environment_SET publishes as an
+# environment by itself; from a shot scene it's picked beside Layout.
+LIVE_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
 # What a shot scene can publish: its camera (spec §3i "Cameras") and its
 # animation (spec §4 "Shot (animation) publish v0").
 SHOT_DEPARTMENTS = [(cam.CAM_LABEL, cam.CAM_CODE), (anim.ANIM_LABEL, anim.ANIM_CODE)]
@@ -50,10 +53,14 @@ DEPT_LABELS = dict((c, l) for l, c in api.DEPARTMENTS + SHOT_DEPARTMENTS)
 # The picker's Department dropdown (user, 2026-10-22): the asset
 # departments, then the stages a shot publishes for (Layout / Animation;
 # Lighting and FX later), which set the approval needed and where things go.
+# Environment sits after Layout: a shot's layout scene publishes its
+# environment_SET to the environment asset picked in the last two dropdowns.
 PICKER_DEPARTMENTS = (
     [(label, code, picker.ASSET, True) for label, code in api.DEPARTMENTS
      if code in LIVE_DEPARTMENTS] +
     [(label, code, picker.SHOT, live) for label, code, live in anim.PUBLISH_FOR])
+PICKER_DEPARTMENTS.insert(len(LIVE_DEPARTMENTS) + 1,
+                          (env.ENV_LABEL, env.ENV_CODE, picker.SHOT, True, picker.ASSET))
 # ShotSub frames for an environment published from a shot scene.
 ENV_SHOT_FRAMES = 2
 
@@ -351,7 +358,6 @@ class PublishToolUI(QtWidgets.QDialog):
                 # Start on the department the file name says (scout_rig_v002
                 # -> Rigging), so a rig isn't published as a model by default.
                 words = re.split(r"[_.]", os.path.basename(scene).lower())
-                words = [env.ENV_CODE if w == "environment" else w for w in words]
                 code = next((c for c in LIVE_DEPARTMENTS if c.lower() in words),
                             LIVE_DEPARTMENTS[0])
                 self.picker.set_current(code=code, group=ctx["asset_type"], name=ctx["asset"])
@@ -581,7 +587,7 @@ class PublishToolUI(QtWidgets.QDialog):
         code, label = self.picker.department(), self.picker.dept_combo.currentText()
         group, name = self.picker.group(), self.picker.name()
         in_shot = ctx["kind"] == "shot"
-        shot_dept = self.picker.kind() == picker.SHOT
+        shot_dept = self.picker.kind() == picker.SHOT and code != env.ENV_CODE
         if in_shot and not shot_dept and code != env.ENV_CODE:
             self.status.show_message(
                 "%s is published from an asset's scene. A shot scene publishes Layout, "
@@ -605,26 +611,13 @@ class PublishToolUI(QtWidgets.QDialog):
             return
         if in_shot:
             return self._add_environment(name)
-        if code == api.MODEL_CODE and self._looks_like_environment():
-            # 2026-10-23: a shed environment went out as Modeling twice, so
-            # its image planes, locators and cache were left behind.
-            box = QtWidgets.QMessageBox(self)
-            box.setIcon(QtWidgets.QMessageBox.Question)
-            box.setWindowTitle("Environment?")
-            box.setText("This scene has an %s, so it looks like an environment.\n\n"
-                        "Publish %s as an Environment instead? (A Modeling publish leaves out "
-                        "the environment's image planes, building locators and cache.)"
-                        % (env.ENVIRONMENT_SET, name))
-            as_env = box.addButton("Publish as Environment", QtWidgets.QMessageBox.AcceptRole)
-            box.addButton("Keep Modeling", QtWidgets.QMessageBox.DestructiveRole)
-            cancel = box.addButton(QtWidgets.QMessageBox.Cancel)
-            box.setDefaultButton(as_env)
-            box.exec()
-            if box.clickedButton() == cancel:
-                return
-            if box.clickedButton() == as_env:
-                self.picker.set_current(code=env.ENV_CODE, group=group, name=name)
-                code, label = env.ENV_CODE, self.picker.dept_combo.currentText()
+        if (code == api.MODEL_CODE and group == env.ENV_TYPE
+                and self._looks_like_environment()):
+            # An environment asset with an environment_SET is an environment
+            # publish (user, 2026-10-26; 2026-10-23 a shed environment went
+            # out as Modeling twice and left its image planes behind). No
+            # environment_SET: a plain Modeling publish.
+            code, label = env.ENV_CODE, env.ENV_LABEL
         if any((r["asset_type"], r["asset"], r["code"]) == (group, name, code)
                for r in self._rows):
             self.status.show_message("%s %s is already in the list." % (name, label), ok=False)

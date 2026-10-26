@@ -1,8 +1,10 @@
-# Publish guard (user, 2026-10-23): in a scene with an environment_SET, "+"
-# with Modeling asks first, since a shed environment went out as Modeling
-# and left its image planes behind. "Publish as Environment" adds an
-# Environment row instead, "Keep Modeling" a Modeling row, Cancel nothing.
-# A scene without environment_SET isn't asked. Runs the real window offscreen.
+# Environment from an asset scene (user, 2026-10-26: Environment is a kind
+# of asset, not a department, so it isn't in the asset Department list).
+# "+" with Modeling on an environment asset whose scene has an
+# environment_SET adds an Environment row by itself (2026-10-23 a shed
+# environment went out as Modeling and left its image planes behind);
+# without environment_SET, or on another asset type, it stays Modeling.
+# Nothing is asked. Runs the real window offscreen.
 # Run: mayapy test_envGuard_mayapy.py
 import sys, os, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -23,25 +25,25 @@ def check(label, cond):
 base = tempfile.mkdtemp(prefix="envguard_")
 H, SC = os.path.join(base, "H"), os.path.join(base, "scratch")
 asset_rel = ["NWF_SHF", "maya", "assets", "environment", "shed"]
-os.makedirs(os.path.join(H, *asset_rel, "scenes"))
-os.makedirs(os.path.join(SC, *asset_rel, "scenes"))
+prop_rel = ["NWF_SHF", "maya", "assets", "prop", "crate"]
+for rel in (asset_rel, prop_rel):
+    os.makedirs(os.path.join(H, *rel, "scenes"))
+    os.makedirs(os.path.join(SC, *rel, "scenes"))
 api.who = lambda: "scout"
 api.artist_name = lambda l: ""
 api.get_root = lambda key: H if key == api.H_DRIVE else SC
 api.follow_open_scene = lambda *a: None
 api.check_script_nodes = lambda: None
 
-# The answer to the question, by button text; asked records each question.
-asked, CHOICE = [], ["Publish as Environment"]
+asked = []
 PARENT = QtWidgets.QWidget()
 def fake_exec(box):
     asked.append(box.text())
-    [b for b in box.buttons() if b.text().replace("&", "") == CHOICE[0]][0].click()
     return 0
 QtWidgets.QMessageBox.exec = fake_exec
 
 
-def scene_with(environment):
+def scene_with(environment, rel=asset_rel, name="shed_001.ma"):
     cmds.file(new=True, force=True)
     if environment:
         lay.make_environment_structure()
@@ -50,33 +52,49 @@ def scene_with(environment):
         cmds.parent(cmds.polyCube(name="shedBox")[0], shed)
     else:
         cmds.polyCube(name="shedBox")
-    path = os.path.join(SC, *(asset_rel + ["scenes", "shed_001.ma"]))
+    path = os.path.join(SC, *(rel + ["scenes", name]))
     cmds.file(rename=path); cmds.file(save=True, type="mayaAscii", force=True)
 
 
-def add_as_model(choice):
+def add_as_model(group="environment", name="shed"):
     del asked[:]
-    CHOICE[0] = choice
     w = ui.PublishToolUI(PARENT)
     w.refresh()
-    w.picker.set_current(film="NWF_SHF", code="model", group="environment", name="shed")
+    w.picker.set_current(film="NWF_SHF", code="model", group=group, name=name)
     cmds.select(clear=True)
     w._add_row()
     return w, [r["code"] for r in w._rows]
 
 
 scene_with(True)
-w, codes = add_as_model("Publish as Environment")
-check("environment scene + Modeling: asked", len(asked) == 1 and "environment_SET" in asked[0])
-check("Publish as Environment: an Environment row, picker switched",
-      codes == ["env"] and w.picker.department() == "env")
-w, codes = add_as_model("Keep Modeling")
-check("Keep Modeling: a Modeling row", codes == ["model"])
-w, codes = add_as_model("Cancel")
-check("Cancel: nothing added", codes == [])
+w, codes = add_as_model()
+p = w.picker
+model = p.dept_combo.model()
+check("Environment isn't an asset department",
+      "env" not in [model.item(i).data(ui.QtCore.Qt.UserRole) for i in range(model.rowCount())])
+check("environment asset + environment_SET: an Environment row, nothing asked",
+      codes == ["env"] and not asked)
+check("... the list says Environment", w.table.item(0, 2).text() == "Environment")
 scene_with(False)
-w, codes = add_as_model("Publish as Environment")
-check("no environment_SET: not asked, Modeling row", not asked and codes == ["model"])
+w, codes = add_as_model()
+check("environment asset, no environment_SET: a Modeling row", not asked and codes == ["model"])
+scene_with(True, prop_rel, "crate_001.ma")
+w, codes = add_as_model("prop", "crate")
+check("a prop with an environment_SET: still Modeling", not asked and codes == ["model"])
+
+# A shot's layout scene: Environment is picked on the Shot side, beside Layout.
+shot_rel = ["NWF_SHF", "maya", "sequences", "SEQ010", "SEQ010_140"]
+os.makedirs(os.path.join(H, *shot_rel, "scenes"))
+os.makedirs(os.path.join(SC, *shot_rel, "scenes"))
+scene_with(True, shot_rel, "layout_001.ma")
+w = ui.PublishToolUI(PARENT)
+w.refresh()
+w.picker.set_current(code="env")
+check("shot scene: Environment lists the environment assets",
+      w.picker.kind() == "shot" and (w.picker.group(), w.picker.name()) == ("environment", "shed"))
+w._add_row()
+check("... and + adds the environment row to that asset",
+      [(r["code"], r["asset"]) for r in w._rows] == [("env", "shed")])
 
 print("%d/%d passed" % (sum(ok), len(ok)))
 maya.standalone.uninitialize()

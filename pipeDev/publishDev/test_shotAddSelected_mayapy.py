@@ -59,12 +59,16 @@ check("shot scene: picker starts on Animation for this shot",
 def dept_list():
     model = p.dept_combo.model()
     return [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
-check("Shot: Department lists Layout/Animation, Lighting/FX coming soon",
-      dept_list() == [("Layout", True), ("Animation", True),
+check("Shot: Department lists Layout/Environment/Animation, Lighting/FX coming soon",
+      dept_list() == [("Layout", True), ("Environment", True), ("Animation", True),
                       ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
+p.set_current(code="env")
+check("Environment (Shot side) lists environment assets",
+      p.kind() == "shot" and p.group_combo.toolTip() == "Asset type"
+      and p.name_combo.toolTip() == "Asset")
 p.kind_combo.setCurrentIndex(p.kind_combo.findData("asset"))
-check("picking Asset lists the asset departments",
-      dept_list() == [("Modeling", True), ("Environment", True), ("Rigging", True),
+check("picking Asset lists the asset departments (no Environment)",
+      dept_list() == [("Modeling", True), ("Rigging", True),
                       ("Creature", True), ("LookDev", True)] and p.department() == "model")
 p.kind_combo.setCurrentIndex(p.kind_combo.findData("shot"))
 check("back to Shot: first live shot department", p.department() == "layout")
