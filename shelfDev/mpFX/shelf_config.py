@@ -44,7 +44,7 @@ BUTTONS = [
     {
         "label": "Cloud",
         "tooltip": "Cloud — turn the selected mesh into an Arnold volume cloud "
-                   "(Step Size 0.1, aiStandardVolume + Cloud texture, Volume ray depth 6)",
+                   "(aiStandardVolume + Cloud texture, tuned defaults; bigger container = better clouds)",
         "icon": "iconCloudVolume.png",
         "command": (
             "import importlib\n"

@@ -3,7 +3,7 @@
 ## Installation
 
 1. Drag `install.py` onto the Maya viewport
-2. Both shelves (mpRig, mpAnim) are built automatically
+2. All three shelves (mpRig, mpAnim, mpFX) are built automatically
 3. To uninstall, drag `uninstall.py` onto the viewport
 4. If you need ngSkinTools (see below), separately drag `ngSkinTools2/install.py` onto the viewport — it's not installed by step 1
 
@@ -218,3 +218,41 @@ Transfers FBX facial animation exported from Unreal back onto the Metahuman face
 - Click Import FBX and browse to the exported animation file
 - The tool maps the FBX morph target curves onto the matching face board controls
 - Export Facial FBX to save the result for re-import into Unreal's level sequence
+
+---
+
+## mpFX Shelf
+
+### BOSS Ocean (WIP Testing)
+
+Builds a Bifrost spectral-wave ocean on a mesh (needs the Bifrost plug-in, which loads automatically).
+
+- Create a poly plane at the size you want the ocean
+- Select it and click BOSS Ocean — the waves are sized to the plane
+- Play the timeline to see the waves move
+
+### Freeze Ocean (WIP Testing)
+
+Copies a BOSS Ocean at the current frame into a plain, static mesh — handy for wavy ground or terrain.
+
+- Go to the frame whose wave shape you like
+- Select the BOSS Ocean and click Freeze Ocean
+- A new mesh named after the frame is created; the ocean is left untouched
+
+### Cloud (WIP Testing)
+
+Turns a mesh into an Arnold volume cloud.
+
+- Create a sphere and scale/flatten it — it's the container the clouds live in
+- Scene scale matters a lot: a big container (100+ units across) gives much better clouds
+- Select it and click Cloud — the cloud placement node is selected afterwards
+- Scale the placement node to change puff size; lower Density on the cloudVolume shader for wispier clouds
+- Volumes are slow to render — test with a small render region
+
+### Snow Land (WIP Testing)
+
+Slope-based landscape shader: snow on flat areas, rock on steep slopes.
+
+- Select a landscape mesh (or a BOSS Ocean / frozen ocean mesh)
+- Click Snow Land — an aiStandardSurface with a Maya Snow texture is assigned
+- Render with Arnold to see the result

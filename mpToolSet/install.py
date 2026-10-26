@@ -1,8 +1,8 @@
 """
 mpToolSet Installer
 ===================
-Drag and drop this file onto the Maya viewport to install both the
-mpRig and mpAnim shelves with all their tools.
+Drag and drop this file onto the Maya viewport to install the
+mpRig, mpAnim and mpFX shelves with all their tools.
 
 Before overwriting anything the installer snapshots every file it is
 about to replace into a versioned backup folder:
@@ -264,7 +264,7 @@ def _install(root):
     shelves_built = []
     shelf_names = []
 
-    for shelf_dir_name in ("mpRig", "mpAnim"):
+    for shelf_dir_name in ("mpRig", "mpAnim", "mpFX"):
         shelf_path = os.path.join(root, shelf_dir_name)
         if not os.path.isdir(shelf_path):
             cmds.warning(
