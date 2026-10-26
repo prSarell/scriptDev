@@ -2836,6 +2836,74 @@ installed separately from both toolsets.
       on every Set Project (fine for NWF's ~3,600 folders; time it at
       RMIT).
 
+### 4d. Things made in the shot, and reusing them in another shot — PARKED (2026-10-26)
+
+Raised 2026-10-26; nothing built, nothing decided. The user: "lets record
+this for now, put a pin in it and come back to it later." This would be the
+"created in shot" publish that §4 item 7 leaves made-in-shot items out of
+Build until it's designed.
+
+1. **Where it started: reusing a shot's animation in another shot.** The
+   user: "There will be times (although not often) when a student will want
+   to publish something to a shot from a different project", clarified as
+   "publish animation from one shot to another to reuse it? Shifting shot
+   assets to an existing shot name." Today shot publishes take their shot
+   from where the open scene is saved (`publishTool_camera.plan_camera`),
+   and the Publish window refuses another film's assets.
+   - SUGGESTION (Claude): a "Publish to another shot" checkbox in a shot
+     scene, off by default, that unlocks the sequence/shot dropdowns; a
+     confirm step naming from → to; the source shot recorded in the stamp.
+   - OPEN: shift keys to the target shot's start frame (Claude: yes, offset
+     shown in the confirm), or publish them unchanged? Animation only, or
+     the camera too (Claude: animation only)? Same film only (avoids
+     published shot files referencing another film's assets)? Is "shifting
+     shot assets to an existing shot name" the same thing, or renumbering a
+     shot in the edit (a separate tool)?
+   - Note: Build can already take another shot's keys through the
+     "Building into shot" picker (§4 item 7), which covers part of this for
+     pipeline rigs.
+2. **Proposed by the user: a shot group with role groups and sets, like the
+   environment publish (§4c).** "A group that the artist can add the things
+   to perhaps the groups would be rig model lights reference cache fx in a
+   master group with an appropriate name. The groups would have
+   corresponding sets."
+   - SUGGESTION (Claude), not agreed:
+     - Only for things **made in the shot**. Rigs/models/cameras that came
+       in through Build already know what they are (the 2026-10-19 rule:
+       the animator just selects, Publish works out what each thing is).
+     - Master group + set, e.g. `shot_GRP` / `shot_SET` (name OPEN),
+       holding `model`, `rig`, `lights`, `reference`, `cache`, `fx`, each
+       with its own set; a button makes the structure (like the
+       environment layout button). Empty groups are fine (the 2026-10-26
+       environment fix).
+     - The group decides the treatment: model → Alembic (whole timeline,
+       or one frame if static); rig → its own `.ma` + keys by control name;
+       lights → the existing light item; reference → image planes / guide
+       geo, copied but never cached or rendered; cache → imported caches,
+       their files travel as they are; fx → placeholder until FX.
+     - Published with the shot's Layout/Animation stage, same version
+       number; not a separate department.
+     - Build puts them back into the same structure (the missing half
+       today).
+     - Made-in-shot things outside the groups: published as now, with a
+       warning naming them; never refused.
+     - Would also make reuse (1) cleaner: Build pulls another shot's shot
+       items.
+   - OPEN: what `reference` and `cache` mean (Claude's reading above);
+     the master group name.
+3. **A custom rig built for one shot.** The user asked "What if a student
+   builds a custom rig for one shot?"
+   - SUGGESTION (Claude): one shot only → the `rig` group: published as
+     its own `.ma` with the shot's version, keys exported by control name,
+     cached through a `cache_SET` inside it (the same rule as pipeline
+     rigs); no ShotGrid asset or approval. Used in more than one shot →
+     promote it to a real asset (Rigging publish from an asset scene);
+     a "promote to asset" step later, carrying its shot keys over by
+     control name. Rule of thumb: one shot = shot rig, two = asset.
+   - OPEN: is the rig built inside the shot scene, or in its own scene and
+     brought in? (Claude: if it's in its own scene, treat it as an asset
+     from the start, since there's no place for a shot rig's working file.)
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:

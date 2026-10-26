@@ -170,6 +170,12 @@ hand. One T7 session could cover most of it.
 
 ## 6. Open threads (not started)
 
+- [?] **PARKED 2026-10-26: things made in the shot + reusing them in
+      another shot** (spec §4d). Your idea of a shot group with
+      rig / model / lights / reference / cache / fx groups and sets, a
+      custom one-shot rig, and publishing animation to another shot.
+      Open questions are listed in §4d; come back to it later.
+
 - [ ] **Build warning** when a rig's `pipe_plugins` aren't loaded.
 - [ ] Scan a newer **Advanced Skeleton** rig and a **Rapid Rig** rig for
       their set names (`rig_rules.py`).
