@@ -363,6 +363,11 @@ class PublishToolUI(QtWidgets.QDialog):
                 self.picker.set_current(code=code, group=ctx["asset_type"], name=ctx["asset"])
             self._set_frame_defaults(ctx)
             self._set_shot_mode(bool(ctx) and ctx["kind"] == "shot")
+        else:
+            # Same scene: re-read the H drive, keeping what's picked, so an
+            # asset or shot made while the window was open shows up (user,
+            # 2026-10-26: fieldA was made on H and couldn't be picked).
+            self.picker.refill()
         self._render_table()
 
     def _items_for(self, film, code, kind):

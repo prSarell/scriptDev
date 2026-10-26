@@ -95,6 +95,13 @@ check("shot scene: Environment lists the environment assets",
 w._add_row()
 check("... and + adds the environment row to that asset",
       [(r["code"], r["asset"]) for r in w._rows] == [("env", "shed")])
+# An asset made on H while the window is open (fieldA, 2026-10-26) shows up
+# when the window is next refreshed, and what's picked stays picked.
+os.makedirs(os.path.join(H, "NWF_SHF", "maya", "assets", "environment", "fieldA"))
+w.refresh()
+names = [w.picker.name_combo.itemData(i) for i in range(w.picker.name_combo.count())]
+check("new environment asset on H appears without reopening the window",
+      "fieldA" in names and w.picker.name() == "shed" and w.picker.department() == "env")
 
 # Publish after a cancel (user, 2026-10-26): the cancelled publish left Maya
 # thinking the scene changed, and the next Publish stopped at the save
