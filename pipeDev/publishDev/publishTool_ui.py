@@ -152,6 +152,47 @@ class ReviewDialog(QtWidgets.QDialog):
         self.activateWindow()
 
 
+class FailedDialog(QtWidgets.QDialog):
+    """Big red popup when a publish fails, so it can't be missed in the
+    status line (user, 2026-10-28). Styled after multiTool's Learn Me
+    Something tip: bold centred heading, one button. The details are
+    selectable so they can be copied into a support message."""
+
+    def __init__(self, failures, parent=None):
+        super(FailedDialog, self).__init__(parent)
+        self.setWindowTitle("Publish failed")
+        self.setWindowFlags(QtCore.Qt.Dialog | QtCore.Qt.WindowStaysOnTopHint)
+        self.setMinimumWidth(420)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
+
+        heading = QtWidgets.QLabel("PUBLISH FAILED")
+        font = QtGui.QFont()
+        font.setPointSize(18)
+        font.setBold(True)
+        heading.setFont(font)
+        heading.setAlignment(QtCore.Qt.AlignCenter)
+        heading.setStyleSheet("color: #e05050;")
+        layout.addWidget(heading)
+
+        details = QtWidgets.QLabel("\n\n".join(failures))
+        details.setWordWrap(True)
+        details.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard)
+        font = QtGui.QFont()
+        font.setPointSize(11)
+        font.setBold(True)
+        details.setFont(font)
+        details.setStyleSheet("color: #ff8a80;")
+        layout.addWidget(details)
+
+        btn = QtWidgets.QPushButton("Got it!")
+        btn.setMinimumHeight(28)
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn)
+
+
 def _cell(text, colour=None):
     item = QtWidgets.QTableWidgetItem(text)
     if colour:
@@ -851,6 +892,7 @@ class PublishToolUI(QtWidgets.QDialog):
         frame_count = None if self.timeline_chk.isChecked() else self.frames_spin.value()
         notes = self.notes_edit.toPlainText().strip()
         lines, ok, published, cancelled = [], True, False, False
+        failures = []   # for the FailedDialog
         _, ctx = self._scene_context()
         in_shot = bool(ctx) and ctx["kind"] == "shot"
         # Only the ticked rows. All the Animation items for one stage go out
@@ -910,6 +952,7 @@ class PublishToolUI(QtWidgets.QDialog):
                     continue
                 except Exception as e:
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
+                    failures.append("%s — nothing published:\n%s" % (label, e))
                     ok = False
                     continue
                 published = True
@@ -917,6 +960,8 @@ class PublishToolUI(QtWidgets.QDialog):
                 if plan["sg_error"]:
                     lines.append("%s: %s saved to the H drive, but the ShotGrid "
                                  "upload failed:\n  %s" % (label, version, plan["sg_error"]))
+                    failures.append("%s — %s saved to the H drive, but the ShotGrid "
+                                    "upload failed:\n%s" % (label, version, plan["sg_error"]))
                     ok = False
                 else:
                     entity = plan.get("sg_asset") or plan.get("sg_shot")
@@ -939,6 +984,8 @@ class PublishToolUI(QtWidgets.QDialog):
             self.notes_edit.clear()
         self._render_table()
         self.status.show_message("\n".join(lines), ok=ok)
+        if failures:
+            FailedDialog(failures, parent=self).exec()
 
     def _review(self, label):
         """The publish's review step: watch the movie in RV, then Publish or
