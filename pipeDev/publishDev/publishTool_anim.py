@@ -108,6 +108,56 @@ def time_curves(nodes):
     return found
 
 
+# Animation layers (user, 2026-10-28, option 1): a channel on a layer is
+# driven through Maya's layer blend nodes, not a curve, so time_curves
+# misses it (SEQ010_140 lost Scout's clavicles and FK arms). Publish bakes
+# the layered result to one curve per channel, a key every frame; the
+# animator's scene keeps its layers.
+
+def layered_plugs(nodes):
+    """[(node, attr)] for the channels on nodes driven by an animation
+    layer, attr a single channel (rotateX, not rotate)."""
+    found = []
+    for node in nodes:
+        pairs = cmds.listConnections(node, source=True, destination=False, connections=True,
+                                     plugs=True, skipConversionNodes=True) or []
+        for i in range(0, len(pairs), 2):
+            if not cmds.nodeType(pairs[i + 1].split(".")[0]).startswith("animBlendNode"):
+                continue
+            attr = pairs[i].split(".", 1)[1]
+            children = cmds.attributeQuery(attr, node=node, listChildren=True) \
+                if cmds.attributeQuery(attr, node=node, exists=True) else None
+            found += [(node, c) for c in children] if children else [(node, attr)]
+    return found
+
+
+_CURVE_TYPES = {"doubleAngle": "animCurveTA", "doubleLinear": "animCurveTL", "time": "animCurveTT"}
+
+
+def bake_layered(plugs, start, end, prefix, curves):
+    """Bake each layered channel to a plain curve, a key on every frame
+    from start to end, filling curves {new curve: (node, attr)} as it goes
+    (so the caller can clean up after a failure). Steps the timeline (a
+    layered channel read at another time can come back wrong); the caller
+    puts the current time back."""
+    values = dict((p, []) for p in plugs)
+    for frame in range(int(start), int(end) + 1):
+        cmds.currentTime(frame, update=True)
+        for node, attr in plugs:
+            values[(node, attr)].append(cmds.getAttr("%s.%s" % (node, attr)))
+    for (node, attr), vals in sorted(values.items()):
+        kind = cmds.getAttr("%s.%s" % (node, attr), type=True)
+        node_name = node.split("|")[-1].split(":")[-1]
+        curve = cmds.createNode(_CURVE_TYPES.get(kind, "animCurveTU"),
+                                name="%s__%s_%s_baked" % (prefix, node_name, attr), skipSelect=True)
+        curves[curve] = (node, attr)    # first, so a failure below still cleans it up
+        for frame, value in zip(range(int(start), int(end) + 1), vals):
+            cmds.setKeyframe(curve, time=frame, value=float(value))
+        if kind in ("bool", "enum", "long", "short", "byte"):
+            cmds.keyTangent(curve, outTangentType="step")
+    return curves
+
+
 # Unkeyed settings (user, 2026-10-28: "settings for all controls that are
 # not keyed need to be stored so that the pipe can reapply them to a clean
 # build"): a master control placed but never keyed, a space switch left on
@@ -218,7 +268,7 @@ def classify(objects):
         nodes = [root] + (cmds.listRelatives(root, allDescendents=True, fullPath=True) or [])
         if kind == "shot" and is_light_item(nodes):
             kind = LIGHT_KIND
-        animated = bool(time_curves(nodes))
+        animated = bool(time_curves(nodes)) or bool(layered_plugs(nodes))
         items.append({"name": _clean(name), "kind": kind, "root": root, "nodes": nodes,
                       "stamp": stamp, "animated": animated})
     seen = {}
@@ -311,15 +361,25 @@ def export_keys(item, files, plan, start, end, scene_path):
     keys only the map is written. Returns the number of settings."""
     curves = time_curves(item["nodes"])
     settings = unkeyed_settings(item["nodes"], curves)
+    layered = layered_plugs(item["nodes"])
     namespace = _namespace(item["root"])
     copies, mapping = [], {}
-    if curves:
+    item["baked"] = sorted(set(n.split("|")[-1].split(":")[-1] for n, _ in layered))
+    if curves or layered:
         try:
             for curve, (node, attr) in sorted(curves.items()):
                 node_name = node.split("|")[-1].split(":")[-1]
                 copy = cmds.duplicate(curve, name="%s__%s_%s" % (item["name"], node_name, attr))[0]
                 copies.append(copy)
                 mapping[copy] = [node_name, attr]
+            if layered:
+                baked = {}
+                try:
+                    bake_layered(layered, start, end, item["name"], baked)
+                finally:
+                    copies += list(baked)       # deleted below, even after a failure
+                for curve, (node, attr) in baked.items():
+                    mapping[curve] = [node.split("|")[-1].split(":")[-1], attr]
             cmds.select(copies, replace=True)
             cmds.file(files["keys"], exportSelected=True, type="mayaAscii", force=True,
                       constructionHistory=False, channels=False, constraints=False,
@@ -525,6 +585,10 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
             cam_plan["version"], cam_plan["objects"][0], start, end))
     lines += ["%s: %d unkeyed control settings carried" % (i["name"], i["settings"])
               for i in items if i.get("settings")]
+    baked = ["%s: on an animation layer, baked every frame: %s" % (i["name"], ", ".join(i["baked"]))
+             for i in items if i.get("baked")]
+    lines += baked
+    plan["warnings"] = list(plan.get("warnings") or []) + baked    # shown in the Publish window
     lines += plan["written"]
     note = "\n".join(lines)
     if notes.strip():

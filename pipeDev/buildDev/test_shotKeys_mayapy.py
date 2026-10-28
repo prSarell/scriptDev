@@ -211,6 +211,55 @@ check("no keys: master placed, space set, nothing to match",
       and cmds.getAttr("scout_rig:ctrl.space") == 2 and warning is None
       and "0 curves" in done[0])
 
+# Animation layers (2026-10-28): SEQ010_140 lost Scout's FK arms, which
+# were on AnimLayer1. Publish bakes layered channels, a key every frame.
+LAYERED = "SEQ010_150"
+cmds.file(new=True, force=True)
+cmds.file(rigs[1], reference=True, namespace="scout_rig")
+cmds.setKeyframe("scout_rig:ctrl", attribute="rotateY", time=1, value=0)
+cmds.setKeyframe("scout_rig:ctrl", attribute="rotateY", time=10, value=90)
+cmds.select("scout_rig:ctrl", "scout_rig:tail_ctrl")
+layer = cmds.animLayer("AnimLayer1", addSelectedObjects=True)
+cmds.setKeyframe("scout_rig:ctrl", attribute="rotateY", time=1, value=10, animLayer=layer)
+cmds.setKeyframe("scout_rig:ctrl", attribute="rotateY", time=10, value=100, animLayer=layer)
+cmds.setKeyframe("scout_rig:tail_ctrl", attribute="translateX", time=1, value=0, animLayer=layer)
+cmds.setKeyframe("scout_rig:tail_ctrl", attribute="translateX", time=10, value=4, animLayer=layer)
+expected = {}
+for t in (1, 4, 10):
+    cmds.currentTime(t)
+    expected[t] = (cmds.getAttr("scout_rig:ctrl.ry"), cmds.getAttr("scout_rig:tail_ctrl.tx"))
+cmds.currentTime(1)
+scene = os.path.join(base, "work", "%s_anim.ma" % LAYERED)
+save_as(scene)
+item = anim.classify(["scout_rig:ctrl"])[0]
+check("layered: the item counts as keyed", item["animated"])
+folder = os.path.join(H, FILM, "maya", "sequences", SEQ, LAYERED, "scenes", LOGIN)
+os.makedirs(folder)
+stem = os.path.join(folder, "%s_%s_%s_anim_v001" % (LAYERED, LOGIN, item["name"]))
+anim.export_keys(item, {"keys": stem + ".ma", "map": stem + ".json"},
+                 {"shot": LAYERED, "login": LOGIN, "version": 1, "stage": "anim"}, 1, 10, scene)
+check("layered: the controls on the layer are named", item["baked"] == ["ctrl", "tail_ctrl"])
+check("layered: the working scene keeps its layer, no baked curves left in it",
+      cmds.objExists("AnimLayer1") and not cmds.ls("*_baked", type="animCurve"))
+m = json.load(open(stem + ".json"))
+check("layered: map has the baked channels, not as settings",
+      ["ctrl", "rotateY"] in m["curves"].values() and ["tail_ctrl", "translateX"] in m["curves"].values()
+      and "rotateY" not in m["settings"].get("ctrl", {}))
+cmds.file(new=True, force=True)
+cmds.file(rigs[1], reference=True, namespace="scout_rig")
+layered_dir = api.shot_folder(S, FILM, SEQ, LAYERED)
+save_as(os.path.join(layered_dir, "scenes", "%s_001.ma" % LAYERED))
+lk = api.list_shot_keys(H, FILM, SEQ, LAYERED)[key]
+api.build_keys(layered_dir, row, list(lk)[0], list(lk.values())[0])
+got = {}
+for t in (1, 4, 10):
+    cmds.currentTime(t)
+    got[t] = (cmds.getAttr("scout_rig:ctrl.ry"), cmds.getAttr("scout_rig:tail_ctrl.tx"))
+check("layered: clean build matches the layered scene on every frame checked",
+      all(abs(got[t][i] - expected[t][i]) < 1e-4 for t in got for i in (0, 1)))
+check("layered: a key every frame, plain curves", cmds.keyframe("scout_rig:ctrl.ry", q=True, keyframeCount=True) == 10
+      and not cmds.ls(type="animLayer"))
+
 shutil.rmtree(base, ignore_errors=True)
 failed = [n for n, ok in results if not ok]
 print("\n%d/%d passed" % (len(results) - len(failed), len(results)))

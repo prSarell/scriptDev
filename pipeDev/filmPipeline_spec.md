@@ -2274,8 +2274,20 @@ The tools are developed side by side:
                  column. Build sets the settings after the curves; what isn't
                  on this rig, or is locked/driven on it, joins the "didn't
                  match" list. Publish's summary says how many were carried.
-                 Not covered: constraints, animation layers, hidden
-                 (non channel box) attributes. "None" still only removes keys.
+                 Not covered: constraints, hidden (non channel box)
+                 attributes. "None" still only removes keys.
+               - **Animation layers are baked (DECIDED + BUILT 2026-10-28,
+                 option 1 of 3).** SEQ010_140 then lost Scout's clavicles and
+                 FK arms: they were on AnimLayer1, driven through Maya's
+                 layer blend nodes, which the keys export didn't see.
+                 Publish now bakes every layered channel to one plain curve,
+                 a key every frame over the timeline (stepping the timeline:
+                 reading a layered channel at another time came back wrong),
+                 and names the baked controls in the Publish window and the
+                 ShotGrid notes. The animator's scene keeps its layers.
+                 Rejected: refuse until layers are merged (option 2); bake
+                 only on layer key times (option 3, in-betweens can drift).
+                 The rebuilt scene has dense keys on those controls.
                - **Made in the shot (DECIDED 2026-10-23):** left out until a
                  "created in shot" publish is designed.
                - **PARKED: keys onto a different rig through the "Building

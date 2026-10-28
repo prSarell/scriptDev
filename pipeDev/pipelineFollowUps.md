@@ -88,7 +88,9 @@ hand. One T7 session could cover most of it.
       `$PIPE_SCRATCH`)?
 - [ ] **Unkeyed settings through a clean build** (spec §4 item 7,
       2026-10-28): reinstall the tools, republish SEQ010_140's animation
-      (the old publish has no settings), then clean-build it. The character
+      (the old publish has no settings, and its AnimLayer1 arms were missed),
+      then clean-build it. Scout's clavicles and FK arms should match the
+      layered scene (baked, a key every frame). The character
       should be in camera with its master control unkeyed, and any space
       switches as they were. Also try a prop placed in the shot with no
       keys at all. Worth a look on a MetaHuman rig: how big the map gets
