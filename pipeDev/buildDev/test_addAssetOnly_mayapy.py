@@ -94,25 +94,21 @@ check("rows already in the scene start unticked",
 def dept_codes():
     model = p.dept_combo.model()
     return [model.item(i).data(QtCore.Qt.UserRole) for i in range(model.rowCount())]
-p.set_current(film=FILM, code="model")
-asset_side = dept_codes()
-p.set_current(code="env")
-check("picker: Environment is on the Shot side beside Camera, not an asset department "
-      "(user, 2026-10-26), and lists assets", "env" not in asset_side
-      and dept_codes() == ["cam", "env", "cache"] and p.kind() == "shot"
+def labels():
+    return [p.name_combo.itemText(i) for i in range(p.name_combo.count())]
+check("picker: a shot scene starts on the Shot side, its departments",
+      p.kind() == "shot" and dept_codes() == ["layout", "anim", "fx", "lighting"]
       and p.group_combo.toolTip() == "Asset type")
-p.set_current(film=FILM, code="rig")
-check("picker: Rigging lists no assets (nothing published for it)", p.name() is None)
-p.set_current(code="model", group="environment", name="scoutsHouse")
-check("picker: Modeling lists the published models", (p.kind(), p.group(), p.name())
-      == ("asset", "environment", "scoutsHouse"))
+p.set_current(film=FILM, code="anim", group="environment")
+check("picker: only published things are listed, by what they are",
+      labels() == ["scoutsHouse (Modeling)"])
+p.set_current(code="anim", group="environment", name="scoutsHouse (Modeling)")
+check("picker: Animation lists the published models", (p.kind(), p.group(), p.name())
+      == ("shot", "environment", "scoutsHouse (Modeling)"))
 tab._add_asset()
 check("scoutsHouse added to the list, ticked, not in the scene",
       [(r["in_scene"], r["checked"]) for r in tab._rows if r["asset"] == "scoutsHouse"]
       == [(None, True)])
-p.set_current(code="cam", group="EAP_010", name="EAP_010_010")
-tab._add_asset()
-check("picker: the shot's camera is already in the list", "already in the list" in tab.status._text)
 tab._build_shot()
 print("   ", tab.status._text.replace("\n", " | "))
 
@@ -181,7 +177,7 @@ for r in tab._rows:
 tab._build_shot()
 check("Build Shot leaves the removed asset alone in the scene",
       sorted(n for n, _, _, _ in api.scene_references()) == refs_before)
-p.set_current(code="model", group="prop", name="backpack")
+p.set_current(code="anim", group="prop", name="backpack (Modeling)")
 tab.filter_combo.setCurrentIndex(tab.filter_combo.findData("cam"))
 tab._add_asset()
 check("adding it again puts it back, and the filter shows it",
@@ -189,7 +185,7 @@ check("adding it again puts it back, and the filter shows it",
 tab._load_shot()
 check("re-added but not built: '-' still holds after a reload (user, 2026-10-23)",
       "backpack" not in names())
-p.set_current(code="model", group="prop", name="backpack")
+p.set_current(code="anim", group="prop", name="backpack (Modeling)")
 tab._add_asset()
 tab._build_shot()
 tab._load_shot()

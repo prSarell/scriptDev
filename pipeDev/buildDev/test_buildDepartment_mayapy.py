@@ -1,13 +1,15 @@
 # Build by department (spec §4 "Build by department", user 2026-10-28): the
-# artist's department decides what the Build tab's picker offers; it starts
-# on the open scene's department (working folder, else file name), and FX /
-# Lighting are "coming soon" until caches build.
+# picker reads Film | Asset or Shot | the artist's department | Asset type |
+# Asset ("you can be working in a shot for layout or a shot for lighting").
+# The department decides which publishes are offered ("scout (Rigging)");
+# it starts on the open scene's department (working folder, else file name),
+# and FX / Lighting are "coming soon" until caches build.
 # Run: mayapy test_buildDepartment_mayapy.py
 import sys, os, shutil, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "publishDev")]
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 import maya.standalone; maya.standalone.initialize()
 import maya.cmds as cmds
@@ -63,7 +65,8 @@ check("Modeling: models only", api.builds_for("model") == ["model"])
 check("Animation: no lookDev", "lookDev" not in api.builds_for("anim")
       and "rig" in api.builds_for("anim") and "cam" in api.builds_for("anim"))
 
-# --- the Build tab: starts on the scene's department, picker follows
+
+# --- the Build tab
 def open_new(path):
     cmds.file(new=True, force=True)
     if not os.path.isdir(os.path.dirname(path)):
@@ -71,43 +74,72 @@ def open_new(path):
     cmds.file(rename=path); cmds.file(save=True, type="mayaAscii", force=True)
 
 
-def codes(tab, kind=None):
+def codes(tab):
     m = tab.picker.dept_combo.model()
     return [m.item(i).data(QtCore.Qt.UserRole) for i in range(m.rowCount())]
 
 
-from PySide6 import QtCore
+def names(tab):
+    """Everything the picker's last two dropdowns offer, as (type, label)."""
+    return sorted(tab._items_for(FILM, tab.department(), picker.ASSET))
+
+
+# Published on H: Scout's model, rig and lookDev, a backpack model and the
+# shed environment (near-empty files: only the listing matters).
+def published(asset_type, asset, code):
+    path = os.path.join(H, FILM, "maya", "assets", asset_type, asset, "scenes", LOGIN,
+                        "%s_%s_%s_v001.ma" % (asset, LOGIN, code))
+    if not os.path.isdir(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+    open(path, "w").write("//Maya ASCII\n")
+
+
+for args in (("character", "scout", "model"), ("character", "scout", "rig"),
+             ("prop", "backpack", "model"), ("environment", "shed", "env"),
+             ("character", "scout", "lookDev")):
+    published(*args)
+
 parent = QtWidgets.QWidget()
 open_new(scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-check("tab starts on Animation in an anim scene", tab.department() == "anim")
-tab.picker.set_current(code="rig")
-check("Animation's picker: Rigging on the Asset side", tab.picker.department() == "rig"
-      and "lookDev" not in codes(tab))
-tab.picker.set_current(code="cam")
-check("Animation's picker: Camera on the Shot side", tab.picker.kind() == picker.SHOT
-      and set(codes(tab)) == {"cam", "env", "cache"})
+check("anim scene: Shot side, Animation", tab.department() == "anim"
+      and tab.picker.kind() == picker.SHOT)
+i = codes(tab).index("lighting") if "lighting" in codes(tab) else 0
+check("Shot side lists the shot departments, Lighting coming soon",
+      codes(tab) == ["layout", "anim", "fx", "lighting"]
+      and not tab.picker.dept_combo.model().item(i).isEnabled()
+      and "coming soon" in tab.picker.dept_combo.itemText(i))
+check("Animation's picker: models, rigs and environments, labelled, no lookDev", names(tab) == [
+    ("character", "scout (Modeling)"), ("character", "scout (Rigging)"),
+    ("environment", "shed (Environment)"), ("prop", "backpack (Modeling)")])
+tab.picker.set_current(code="anim", group="character", name="scout (Rigging)")
+tab._add_asset()
+check("+ adds the picked publish (scout's rig, not its model)",
+      [(r["asset"], r["code"]) for r in tab._rows] == [("scout", "rig")])
+check("shot work: Keys from, on this shot", not tab.keys_combo.isHidden()
+      and tab._keys_source() == (FILM, SEQ, SHOT))
 
-tab.dept_combo.setCurrentIndex(tab.dept_combo.findData("model"))
-kinds = tab.picker.kind_combo.model()
-check("Modeling: only models, on the Asset side", tab.picker.kind() == picker.ASSET
-      and codes(tab) == ["model"])
-check("Modeling: Shot side greyed out",
-      not kinds.item(tab.picker.kind_combo.findData(picker.SHOT)).isEnabled())
-i = tab.dept_combo.findData("lighting")
-check("Lighting shown as coming soon, not pickable",
-      "coming soon" in tab.dept_combo.itemText(i)
-      and not tab.dept_combo.model().item(i).isEnabled())
+tab.picker.kind_combo.setCurrentIndex(tab.picker.kind_combo.findData(picker.ASSET))
+check("Asset side: the asset departments", codes(tab) == ["model", "rig", "creature", "lookDev"])
+tab.picker.set_current(code="model")
+check("Modeling's picker: models only", names(tab) == [
+    ("character", "scout (Modeling)"), ("prop", "backpack (Modeling)")])
+tab.picker.set_current(code="lookDev")
+check("LookDev's picker: models and lookDev", ("character", "scout (LookDev)") in names(tab)
+      and ("character", "scout (Rigging)") not in names(tab))
 
-tab.dept_combo.setCurrentIndex(tab.dept_combo.findData("layout"))
+tab.picker.set_current(code="layout")
 tab.refresh()
 check("same scene: refresh keeps the department picked", tab.department() == "layout")
 
 open_new(scene_in(asset_s, "rig", LOGIN, "rig_work.ma"))
 tab.check_target()
-check("another scene opened (an asset's rig scene): Rigging", tab.department() == "rig")
-check("Rigging's picker: models", codes(tab) == ["model"])
+check("another scene opened (an asset's rig scene): Asset side, Rigging",
+      tab.department() == "rig" and tab.picker.kind() == picker.ASSET)
+check("Rigging's picker: models", names(tab) == [
+    ("character", "scout (Modeling)"), ("prop", "backpack (Modeling)")])
+check("asset work: no Keys from", tab.keys_combo.isHidden())
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 shutil.rmtree(base, ignore_errors=True)

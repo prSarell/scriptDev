@@ -40,26 +40,30 @@ import buildTool_api as api
 import pipePicker as picker
 pub = api.pub
 
-# The picker's middle dropdown: the asset departments that publish, then
-# the shot's camera (spec "Cameras") and its environment, which lists the
-# environment assets (user, 2026-10-26: Environment isn't a department, as
-# in the Publish Tool). Only what the artist's department builds is listed
-# (api.BUILD_FOR, user 2026-10-28).
-ASSET_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
-BUILD_DEPARTMENTS = (
-    [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
-     if code in ASSET_DEPARTMENTS] +
-    [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True),
-     (api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.SHOT, True, picker.ASSET),
-     (api.DEPT_LABELS[api.CACHE_CODE], api.CACHE_CODE, picker.SHOT, True)])
+# The picker (user, 2026-10-28): Film | Asset or Shot | the artist's
+# department | Asset type | Asset. "You can be working in a shot for layout
+# or a shot for lighting": Asset or Shot lists that side's departments, and
+# the department decides which publishes the last two dropdowns offer
+# (api.BUILD_FOR), e.g. "scout (Rigging)". The shot's own camera and caches
+# come with the shot, not through the picker.
+ASSET_SIDE = ("model", "rig", "creature", "lookDev")
+BUILD_DEPARTMENTS = [(label, code, picker.ASSET if code in ASSET_SIDE else picker.SHOT,
+                      bool(builds), picker.ASSET)
+                     for label, code, builds in api.BUILD_FOR]
 # Published for a shot itself, not an asset: they only build into it.
 SHOT_ITEMS = ("camera", "cache")
 
 
-def picker_departments(department):
-    """BUILD_DEPARTMENTS, only what this department builds."""
-    wanted = api.builds_for(department)
-    return [d for d in BUILD_DEPARTMENTS if d[1] in wanted]
+def picked_codes(department):
+    """What the picker lists for a department: its asset publishes (the
+    shot's camera and caches come with the shot)."""
+    return [c for c in api.builds_for(department)
+            if c not in (api.CAMERA_CODE, api.CACHE_CODE)]
+
+
+def pick_label(asset, code):
+    """'scout (Rigging)': an asset can be listed once per department."""
+    return "%s (%s)" % (asset, api.DEPT_LABELS.get(code, code))
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -152,35 +156,26 @@ class BuildShotTab(QtWidgets.QWidget):
         # Scene and Maya project in different shots/assets (2026-10-28).
         self.project_banner = picker.ProjectBanner(self._match_project)
 
-        # The artist's department (user, 2026-10-28): decides what the
-        # picker offers. Starts on the open scene's, can be changed.
+        # What to add (see BUILD_DEPARTMENTS), then - and +. The department
+        # starts on the open scene's and can be changed.
         self._dept_scene = None      # the scene the department was last set from
-        self.dept_combo = QtWidgets.QComboBox()
-        for label, code, builds in api.BUILD_FOR:
-            self.dept_combo.addItem(label if builds else "%s (coming soon)" % label, code)
-            if not builds:
-                self.dept_combo.model().item(self.dept_combo.count() - 1).setEnabled(False)
-        self.dept_combo.setToolTip(
+        self.picker = picker.TargetPicker(BUILD_DEPARTMENTS, self._items_for)
+        self.picker.kind_combo.setToolTip("Working in an asset or a shot: sets which "
+                                          "departments are listed.")
+        self.picker.dept_combo.setToolTip(
             "Your department: Build only offers what it works with (no rigs for "
-            "Modeling, ...). Caches, lights and the FX and Lighting builds come later.")
-        self.dept_combo.currentIndexChanged.connect(self._on_department_changed)
-        dept_row = QtWidgets.QHBoxLayout()
-        dept_row.addWidget(QtWidgets.QLabel("Department:"))
-        dept_row.addWidget(self.dept_combo)
-        dept_row.addStretch(1)
-
-        # What to add (user, 2026-10-22): Film | Asset or Shot | Department |
-        # Type or Sequence | Asset or Shot, then - and +.
-        self.picker = picker.TargetPicker(picker_departments(self.department()),
-                                          self._items_for)
-        self.picker.dept_combo.setToolTip("What to build: the publishes your department "
-                                          "works with.")
+            "Modeling, ...). FX and Lighting come with caches and lights.")
         self.picker.add_clicked.connect(self._add_asset)
-        # Pointing the picker at a shot lists that shot's keys (user, 2026-10-23).
-        for combo in (self.picker.film_combo, self.picker.kind_combo,
-                      self.picker.group_combo, self.picker.name_combo):
-            combo.currentIndexChanged.connect(self._on_keys_source_changed)
+        self.picker.kind_combo.currentIndexChanged.connect(self._on_department_changed)
+        self.picker.dept_combo.currentIndexChanged.connect(self._on_department_changed)
         self.picker.remove_clicked.connect(self._remove_rows)
+
+        # Which shot the Keys dropdowns list (user, 2026-10-23: keys can come
+        # from another shot). This shot unless picked.
+        self.keys_combo = QtWidgets.QComboBox()
+        self.keys_combo.setToolTip("Which shot's Layout / Animation publishes the Keys "
+                                   "column offers. Pick another shot to take its keys.")
+        self.keys_combo.currentIndexChanged.connect(self._on_keys_source_changed)
 
         # The shot's asset list, filtered by department (user, 2026-10-21).
         self.filter_combo = QtWidgets.QComboBox()
@@ -190,6 +185,10 @@ class BuildShotTab(QtWidgets.QWidget):
         show = QtWidgets.QHBoxLayout()
         show.addWidget(QtWidgets.QLabel("Show:"))
         show.addWidget(self.filter_combo)
+        show.addSpacing(16)
+        self.keys_lbl = QtWidgets.QLabel("Keys from:")
+        show.addWidget(self.keys_lbl)
+        show.addWidget(self.keys_combo)
         show.addStretch(1)
         self.table = _table(["Asset", "Type", "Department", "Version", "Keys",
                              "In this shot", "Status"])
@@ -219,7 +218,6 @@ class BuildShotTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.target_lbl)
         layout.addWidget(self.project_banner)
-        layout.addLayout(dept_row)
         layout.addWidget(self.picker)
         layout.addLayout(show)
         layout.addWidget(self.table, 1)
@@ -251,11 +249,12 @@ class BuildShotTab(QtWidgets.QWidget):
             self._show_mismatch()      # the project may have changed
 
     def department(self):
-        return self.dept_combo.currentData()
+        return self.picker.department()
 
     def _default_department(self):
         """A newly opened scene starts on its own department (its working
-        folder or file name); the same scene keeps what was picked."""
+        folder or file name), and so on its side, Asset or Shot; the same
+        scene keeps what was picked."""
         scene = cmds.file(query=True, sceneName=True) or ""
         if not scene:
             workspace = cmds.workspace(query=True, rootDirectory=True) or ""
@@ -264,12 +263,16 @@ class BuildShotTab(QtWidgets.QWidget):
             return
         self._dept_scene = scene
         code = api.department_of_scene(scene) if scene else None
-        index = self.dept_combo.findData(code) if code else -1
-        if index >= 0 and index != self.dept_combo.currentIndex():
-            self.dept_combo.setCurrentIndex(index)      # refills the picker
+        if code and code != self.department():
+            self.picker.set_current(code=code)
+            self._on_department_changed()
 
     def _on_department_changed(self, *args):
-        self.picker.set_departments(picker_departments(self.department()))
+        """Another department: the picker lists what it builds, and the
+        shot's caches join the list if it builds them."""
+        if self._target_shot and self._published:
+            self._add_shot_caches()
+            self._render_table()
 
     def _show_mismatch(self):
         mismatch = api.pub.project_mismatch()
@@ -322,16 +325,29 @@ class BuildShotTab(QtWidgets.QWidget):
             return None
         return api.shot_folder(scratch_root, *self._target_shot)
 
-    def _items_for(self, film, code, kind):
-        """The picker's last two dropdowns: shots for Camera, else the
-        assets with a publish for that department."""
+    def _items_for(self, film, department, kind):
+        """The picker's last two dropdowns: asset types, and the assets with
+        a publish this department builds, one per publish ('scout
+        (Rigging)', 'scout (Modeling)')."""
         h_root = self._get_roots()[0]
         if not (h_root and os.path.isdir(h_root)):
             return []
-        if kind == picker.SHOT:
-            return api.list_shots(h_root, film)
-        return [(p["asset_type"], p["asset"]) for p in self._published_in(film)
-                if p["code"] == code]
+        codes = picked_codes(department)
+        order = lambda p: (p["asset_type"], p["asset"].lower(),
+                           codes.index(p["code"]))
+        return [(p["asset_type"], pick_label(p["asset"], p["code"]))
+                for p in sorted((p for p in self._published_in(film)
+                                 if p["code"] in codes and p.get("kind") not in SHOT_ITEMS),
+                                key=order)]
+
+    def _picked(self):
+        """The published entry the picker points at, or None."""
+        film, group, label = self.picker.film(), self.picker.group(), self.picker.name()
+        for p in self._published_in(film) if film else []:
+            if (p.get("kind") not in SHOT_ITEMS and p["asset_type"] == group
+                    and pick_label(p["asset"], p["code"]) == label):
+                return p
+        return None
 
     def _published_in(self, film):
         target = self._target_shot or self._target_asset
@@ -355,6 +371,8 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message(str(e), ok=False)
             return
         self.build_btn.setText("Import into Asset" if self._target_asset else "Build Shot")
+        for widget in (self.keys_lbl, self.keys_combo):     # no keys in asset work
+            widget.setVisible(not self._target_asset)
         self.build_btn.setToolTip(
             "Imports every ticked asset into the open asset scene (pulled from the H "
             "drive into your scratch publish folder). Nothing is referenced: in asset "
@@ -381,9 +399,11 @@ class BuildShotTab(QtWidgets.QWidget):
         self._published = api.list_published(h_root, film)
         # The shot's own camera, if one has been published (spec "Cameras").
         self._published += api.list_shot_cameras(h_root, film, seq, shot)
-        # And its Final animation caches (one per item), added with +.
+        # And its Final animation caches (one per item), for the departments
+        # that build them.
         self._published += api.list_shot_caches(h_root, film, seq, shot)
         self.picker.refill()
+        self._fill_keys_shots()
 
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
@@ -401,6 +421,8 @@ class BuildShotTab(QtWidgets.QWidget):
         # each row starts at the version the shot has.
         blank = not api.scene_references()
         for p in self._published:
+            if p.get("kind") == "cache":
+                continue        # never from the shot's list: see _add_shot_caches
             if self._key(p) in wanted and self._key(p) not in manifest:
                 self._rows.append(self._row(p, p["latest"]))    # e.g. a new scratch drive
             elif self._key(p) in wanted:
@@ -411,10 +433,41 @@ class BuildShotTab(QtWidgets.QWidget):
                                             and not blank else p["latest"]))
             elif p.get("kind") == "camera":
                 self._rows.append(self._row(p, p["latest"]))
+        self._add_shot_caches()
         self._render_table()
         self.status.show_message(
             "" if self._published else "Nothing has been published for %s yet." % film,
             ok=bool(self._published))
+
+    def _add_shot_caches(self):
+        """The shot's caches join the list when the department builds them
+        (Animation compares with them "occasionally", user 2026-10-28), or
+        when the open scene already has one; unticked unless the scene's is
+        out of date. They're per scene, never on the shot's saved list, so a
+        cache built once doesn't come back ticked in every new scene of the
+        shot. Never taken off when the department changes."""
+        builds = api.CACHE_CODE in api.builds_for(self.department())
+        have = set(self._key(r) for r in self._rows) | self._removed
+        for p in self._published:
+            if p.get("kind") != "cache" or self._key(p) in have:
+                continue
+            row = self._row(p, p["latest"])
+            if row.get("in_scene") is None:
+                if not builds:
+                    continue
+                row["checked"] = False
+            self._rows.append(row)
+
+    def _fill_keys_shots(self):
+        """Keys from: this shot first, then the film's other shots."""
+        film, seq, shot = self._target_shot
+        shots = [s for s in api.list_shots(self._get_roots()[0], film) if s != (seq, shot)]
+        self.keys_combo.blockSignals(True)
+        self.keys_combo.clear()
+        self.keys_combo.addItem("%s (this shot)" % shot, (film, seq, shot))
+        for s, sh in shots:
+            self.keys_combo.addItem(sh, (film, s, sh))
+        self.keys_combo.blockSignals(False)
 
     def _load_asset(self):
         """An asset scene: the list starts empty (nothing to remember, as an
@@ -465,13 +518,11 @@ class BuildShotTab(QtWidgets.QWidget):
     # -- keys -------------------------------------------------------------
 
     def _keys_source(self):
-        """The shot the Keys dropdowns list: the one the picker points at
-        on its Shot side, else the shot being built into."""
-        if (self._target_shot and self.picker.kind() == picker.SHOT
-                and self.picker.department() != pub.ENV_CODE
-                and self.picker.film() == self._target_shot[0]
-                and self.picker.group() and self.picker.name()):
-            return (self.picker.film(), self.picker.group(), self.picker.name())
+        """The shot the Keys dropdowns list: the one picked in Keys from,
+        else the shot being built into."""
+        picked = self.keys_combo.currentData()
+        if self._target_shot and picked and picked[0] == self._target_shot[0]:
+            return tuple(picked)
         return self._target_shot
 
     def _keys_for(self, p, shot):
@@ -530,8 +581,8 @@ class BuildShotTab(QtWidgets.QWidget):
                                          latest=latest), kid)
         combo.setCurrentIndex(max(combo.findData(p["keys_chosen"]), 0))
         combo.setToolTip("Keys from a Layout or Animation publish, newest first. Build "
-                         "replaces this asset's keys with them. Point the picker at "
-                         "another shot (Shot side) to list that shot's keys.")
+                         "replaces this asset's keys with them. Pick another shot in "
+                         "Keys from (above the list) to list that shot's keys.")
         combo.currentIndexChanged.connect(
             lambda i, c=combo, r=p: self._on_keys_changed(r, c.currentData()))
         self.table.setCellWidget(row, 4, combo)
@@ -708,10 +759,8 @@ class BuildShotTab(QtWidgets.QWidget):
     # -- list -------------------------------------------------------------
 
     def _add_asset(self):
-        """+ : add what the picker says to the shot's list, ticked."""
-        film, code = self.picker.film(), self.picker.department()
-        group, name = self.picker.group(), self.picker.name()
-        label = self.picker.dept_combo.currentText()
+        """+ : add the asset the picker points at to the list, ticked."""
+        film, department = self.picker.film(), self.department()
         target = self._target_shot or self._target_asset
         if not target:
             self.status.show_message("Open a scene in the shot you want to build, or in "
@@ -722,29 +771,14 @@ class BuildShotTab(QtWidgets.QWidget):
                                      % ("shot" if self._target_shot else "asset",
                                         target[0], target[0]), ok=False)
             return
-        what = "caches" if code == api.CACHE_CODE else "camera"
-        if self._target_asset and self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
-            self.status.show_message("A shot's %s only build%s into its own shot."
-                                     % (what, "" if what == "caches" else "s"), ok=False)
+        p = self._picked()
+        if not p:
+            self.status.show_message("Pick an asset first. %s builds: %s." % (
+                self.picker.dept_combo.currentText(),
+                ", ".join(api.DEPT_LABELS.get(c, c) for c in picked_codes(department))
+                or "nothing yet"), ok=False)
             return
-        if self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
-            if (group, name) != tuple(self._target_shot[1:]):
-                self.status.show_message("A shot's %s only build%s into its own shot (%s)."
-                                         % (what, "" if what == "caches" else "s",
-                                            self._target_shot[2]), ok=False)
-                return
-            if code == api.CACHE_CODE:
-                self._add_caches()
-                return
-            match = [p for p in self._published if p.get("kind") == "camera"]
-        else:
-            match = [p for p in self._published
-                     if (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
-        if not match:
-            self.status.show_message("Nothing has been published for %s %s yet."
-                                     % (name or "this", label), ok=False)
-            return
-        p = match[0]
+        code = p["code"]
         if any(self._key(r) == self._key(p) for r in self._rows):
             self.status.show_message("%s %s is already in the list."
                                      % (p["asset"], api.DEPT_LABELS.get(code, code)), ok=False)
@@ -754,28 +788,6 @@ class BuildShotTab(QtWidgets.QWidget):
         if self.filter_combo.currentData() not in (None, code):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
-
-    def _add_caches(self):
-        """+ with Anim Cache: every cached item of the shot not already in
-        the list, ticked (one row each; - takes off the ones not wanted)."""
-        caches = [p for p in self._published if p.get("kind") == "cache"]
-        if not caches:
-            self.status.show_message("This shot has no animation caches yet: they come from "
-                                     "an Animation publish once the shot's Final is "
-                                     "approved.", ok=False)
-            return
-        have = set(self._key(r) for r in self._rows)
-        new = [p for p in caches if self._key(p) not in have]
-        if not new:
-            self.status.show_message("The shot's caches are already in the list.", ok=False)
-            return
-        for p in new:
-            self._removed.discard(self._key(p))
-            self._rows.append(self._row(p, p["latest"]))
-        if self.filter_combo.currentData() not in (None, api.CACHE_CODE):
-            self.filter_combo.setCurrentIndex(0)    # don't add them out of sight
-        self._render_table()
-        self.status.show_message("Added caches: %s" % ", ".join(p["asset"] for p in new))
 
     def _remove_rows(self):
         """Take the selected rows off the list (user, 2026-10-21: list only).
@@ -804,9 +816,10 @@ class BuildShotTab(QtWidgets.QWidget):
         line saying why it couldn't be saved (never stops a build)."""
         if not self._target_shot:
             return ""
+        # Caches are per scene, never the shot's (see _add_shot_caches).
+        keys = [self._key(r) for r in self._rows if r.get("kind") != "cache"]
         try:
-            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (
-                [self._key(r) for r in self._rows],)))
+            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (keys,)))
         except Exception as e:
             return "\nThis shot's list couldn't be saved to the H drive: %s" % e
         return ""

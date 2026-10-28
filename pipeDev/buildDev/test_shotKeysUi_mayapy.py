@@ -96,7 +96,7 @@ save_as(os.path.join(shot, "scenes", "%s_001.ma" % SHOT))
 parent = QtWidgets.QWidget()
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-tab.picker.set_current(film=FILM, code="rig", group="character", name="scout")
+tab.picker.set_current(film=FILM, code="anim", group="character", name="scout (Rigging)")
 tab._add_asset()
 row = tab._rows[0]
 check("new rig row starts at the shot's latest keys", row["keys_chosen"] == ANIM)
@@ -119,19 +119,17 @@ combo.setCurrentIndex(combo.findData(LAYOUT))
 tab._build_shot()
 check("rolled back to layout keys", tx_at_10() == 2.0)
 
-# Point the picker at another shot: its keys are listed; pick them.
-tab.picker.set_current(code="cam", group=SEQ, name=OTHER)
-tab._on_keys_source_changed()
+# Keys from another shot: its keys are listed; pick them.
+tab.keys_combo.setCurrentIndex(tab.keys_combo.findText(OTHER))
 combo = keys_combo(tab)
 items = [combo.itemData(i) for i in range(combo.count())]
-check("picker on another shot lists that shot's keys (plus the current choice)",
+check("Keys from another shot lists that shot's keys (plus the current choice)",
       items[0] == OTHER_ANIM and LAYOUT in items and ANIM not in items)
 check("other shot shown in the label", OTHER in combo.itemText(0))
 combo.setCurrentIndex(combo.findData(OTHER_ANIM))
-tab.picker.set_current(film=FILM, code="rig", group="character", name="scout")
-tab._on_keys_source_changed()
+tab.keys_combo.setCurrentIndex(0)      # back to this shot
 combo = keys_combo(tab)
-check("choice from another shot stays when the picker moves on",
+check("choice from another shot stays when Keys from goes back",
       combo.currentData() == OTHER_ANIM and row["keys_chosen"] == OTHER_ANIM)
 tab._build_shot()
 check("keys from another shot on", tx_at_10() == 9.0)

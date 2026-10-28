@@ -204,25 +204,43 @@ os.chmod(lookdev + "_look.ma", stat.S_IWRITE); os.remove(lookdev + "_look.ma")
 check("Lighting, LookDev has no look: the rig's", pick("lighting") == "scout_scout_rig_v001_look.ma")
 check("made in the shot: no look", api.look_for_cache(H, FILM, {"kind": "shot", "asset": {}}) is None)
 
-# --- the Build tab: Animation offers Anim Cache, + adds the shot's caches
+# --- the Build tab: Animation's list gets the shot's caches by itself
 parent = QtWidgets.QWidget()
 cmds.file(save=True, type="mayaAscii")
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-m = tab.picker.dept_combo.model()
-check("Animation: Anim Cache on the Shot side", tab.department() == "anim" and
-      any(m.item(i).data(QtCore.Qt.UserRole) == "cache" for i in range(m.rowCount()))
-      or "cache" in [d[1] for d in ui.picker_departments("anim")])
-before = len(tab._rows)
-tab.picker.set_current(film=FILM, code="cache", group=SEQ, name=SHOT)
-tab._add_asset()
 rows = [r for r in tab._rows if r.get("kind") == "cache"]
-check("+ adds the shot's caches as rows, no Keys", len(rows) == 1
-      and rows[0]["asset"] == "scoutrig" and rows[0]["keys_chosen"] is None)
-check("the cache row knows it's in the scene at v002", rows[0]["in_scene"] == vid2)
-tab._add_asset()
-check("adding again: nothing doubled", len([r for r in tab._rows if r.get("kind") == "cache"]) == 1)
-check("Layout doesn't build caches", "cache" not in [d[1] for d in ui.picker_departments("layout")])
+check("Animation: the shot's caches are in the list, no Keys", tab.department() == "anim"
+      and len(rows) == 1 and rows[0]["asset"] == "scoutrig" and rows[0]["keys_chosen"] is None)
+check("the cache row knows it's in the scene at v002, unticked",
+      rows[0]["in_scene"] == vid2 and not rows[0]["checked"])
+check("caches aren't offered by the picker",
+      not [n for _, n in tab._items_for(FILM, "anim", "shot") if "cache" in n.lower()])
+tab._on_department_changed()
+check("no doubles when the department is picked again",
+      len([r for r in tab._rows if r.get("kind") == "cache"]) == 1)
+
+# A fresh scene in the shot: the cache joins unticked and stays off the
+# shot's saved list until it's built.
+cmds.file(new=True, force=True)
+fresh = os.path.join(shot_s, "scenes", "anim", LOGIN, "fresh.ma")
+cmds.file(rename=fresh); cmds.file(save=True, type="mayaAscii")
+tab.refresh()
+rows = [r for r in tab._rows if r.get("kind") == "cache"]
+check("fresh scene: cache in the list, unticked", len(rows) == 1 and not rows[0]["checked"]
+      and rows[0]["in_scene"] is None)
+tab._save_shot_list()
+check("an unbuilt cache isn't saved to the shot's list",
+      not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT) or []))
+check("Layout doesn't build caches", api.CACHE_CODE not in api.builds_for("layout"))
+tab.picker.set_current(code="layout")
+cmds.file(new=True, force=True)
+layout_scene = os.path.join(shot_s, "scenes", "layout", LOGIN, "layout.ma")
+os.makedirs(os.path.dirname(layout_scene))
+cmds.file(rename=layout_scene); cmds.file(save=True, type="mayaAscii")
+tab.refresh()
+check("a Layout scene's list has no caches", tab.department() == "layout"
+      and not [r for r in tab._rows if r.get("kind") == "cache"])
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, fs in os.walk(base):

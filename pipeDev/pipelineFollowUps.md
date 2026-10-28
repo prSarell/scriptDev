@@ -50,17 +50,19 @@ hand. One T7 session could cover most of it.
       shot's `scenes\lighting\`; model textures come from the model's
       shaders (optional). Open: `scenes\lighting\<login>\` vs all shot
       publishes under their department folder.
-- [ ] **Build by department, first pass** (built 2026-10-28): open an anim
-      scene (`scenes\anim\e131988\`), check Build starts on Animation and
-      the picker offers Modeling / Rigging / Environment / Camera; switch
-      to Modeling and check only models show, Shot greyed out; open a rig
-      scene and check it moves to Rigging.
+- [ ] **Build by department** (built 2026-10-28, picker redesigned the
+      same day): open an anim scene (`scenes\anim\e131988\`), check the
+      picker reads Shot | Animation and lists "scout (Rigging)",
+      "backpack (Modeling)", "shed (Environment)"; the camera and caches
+      are in the list by themselves. Switch to Asset | Modeling: models
+      only. Open a rig scene: Asset | Rigging. Keys from: pick another
+      shot, check the Keys column lists its keys.
 - [ ] **Shaders on caches** (built 2026-10-28, spec "Shaders on caches"):
       republish Scout's rig (it gets `_look.ma` / `_look.json` beside it)
       and a textured model; check the look files open with only shaders
       in them. Rebuild the rig into SEQ010_140, publish Animation with
-      the Final approved, then in an Animation scene pick Anim Cache, +,
-      Build: the cache sits in `scoutrig_cache_GRP` (Reference display)
+      the Final approved, then in an Animation scene tick Scout's cache
+      row (it's in the list by itself), Build: the cache sits in `scoutrig_cache_GRP` (Reference display)
       beside the rig, wearing the rig's shaders and textures. Does Scout's
       MetaHuman face come through? Does the Reference display suit
       comparing, or should it be selectable / templated?

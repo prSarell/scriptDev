@@ -1334,6 +1334,31 @@ The tools are developed side by side:
         publishes. The shot's list isn't filtered:
         rows already on it stay whatever the department. Test:
         `buildDev/test_buildDepartment_mayapy.py` (22/22).
+      - **Picker redesign, BUILT 2026-10-28** (replaces the separate
+        Department row above). User: "If we are defining the list of things
+        the department can build shouldn't that just be defined by
+        selecting the department?", "That's where I thought you were going
+        to put the department list", "you can be working in a shot for
+        layout or a shot for lighting". Build's picker is now
+        **Film | Asset or Shot | the artist's department | Asset type |
+        Asset**: Asset lists Modeling / Rigging / Creature / LookDev, Shot
+        lists Layout / Animation / FX / Lighting (FX, Lighting coming
+        soon). The last two list every publish that department builds,
+        labelled by what it is ("scout (Rigging)", "scout (Modeling)",
+        "shed (Environment)"). The "what" dropdown (Camera / Environment /
+        Anim Cache / Modeling...) is gone: the shot's camera joins the list
+        by itself (as before) and so do its caches, for departments that
+        build them. Keys from another shot moved from the picker to a
+        **Keys from:** dropdown beside Show: (this shot, or any of the
+        film's shots, for the whole list; Claude's call over a per-row
+        "Other shot..."). The Publish tool's picker is unchanged. Creature
+        is on the Asset side only for now. Tests: `test_buildDepartment`,
+        `test_addAssetOnly`, `test_shotKeysUi`, `test_buildCache`.
+      - **Caches are per scene** (Claude's call, 2026-10-28): never on the
+        shot's saved list, so one built to compare doesn't come back ticked
+        in every new scene of the shot (Layout's included). They join a
+        scene's list unticked for departments that build them, or when
+        the scene already has one.
       - **Shaders on caches, automatic (WANTED 2026-10-28, BUILT the same
         day, see "Built" below):**
         "I want to automate texture application to caches in the pipe."
@@ -1386,10 +1411,10 @@ The tools are developed side by side:
              beside each `.abc` (item, kind, the asset stamp it came from,
              frames, roots). `buildTool_api.list_shot_caches` lists them
              (one entry per item, code `cache`, typed by its asset; caches
-             without a `.json` are left out: republish). Picker: **Anim
-             Cache** on the Shot side, for Animation and Creature only; +
-             adds every cached item of the shot (only into its own shot,
-             like the camera). Built through the same pull/repoint path as
+             without a `.json` are left out: republish). For Animation and
+             Creature only, the shot's caches join the list by themselves,
+             unticked (first built as a picker choice, Anim Cache; changed
+             the same day, see "Picker redesign"). Built through the same pull/repoint path as
              other publishes, referenced with `$PIPE_SCRATCH`; Claude's
              call: namespace `<item>_cache:` and group `<item>_cache_GRP`
              with display type **Reference** (shaded, not selectable). A
