@@ -11,8 +11,8 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
   (<asset>_<dept>_GRP, pipe_sgAssetId...); no stamp = made in the shot.
 - Nothing is blocked by approval (changed 2026-10-19): every Layout or
   Animation publish writes keys + the full file and makes a ShotGrid
-  Version for review; students ask for approval in the notes. Once a
-  Version on the shot's Final task is Approved, the next Animation publish
+  Version for review; students ask for approval in the notes. When the
+  newest Version on the shot's Final task is Approved, the next Animation publish
   also makes an Alembic cache per item (animated: whole timeline; static:
   one frame). The newest final is the true source. Layout never caches.
 - One version number per publish, shared by everything in it.
@@ -334,10 +334,11 @@ def publish_stage(sg_shot, publish_for=ANIM_CODE):
     ask for approval in the publish notes, e.g. "please approve for
     lighting"). Only caches wait for approval:
       Layout     -> ("layout", Layout task), never caches;
-      Animation  -> ("final", Final task) if the shot already has an
-                    Approved Version on its Final task: this publish makes
-                    the caches; otherwise ("animation", Final task), no
-                    caches yet."""
+      Animation  -> ("final", Final task) if the newest Version on the
+                    shot's Final task is Approved: this publish makes the
+                    caches; otherwise ("animation", Final task), no caches.
+                    Final doesn't stick: the publish after a final one is
+                    iterative unless its Version is approved too."""
     if publish_for == LAYOUT_CODE:
         return LAYOUT, api.task_on(sg_shot, "Layout")
     approved = api.approved_tasks(sg_shot)

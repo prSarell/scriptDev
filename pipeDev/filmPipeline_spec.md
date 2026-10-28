@@ -2238,6 +2238,30 @@ The tools are developed side by side:
                  2026-10-19):** the Version status `apr` (Approved) in
                  project 157. Not the Shot or Task `fin` status. Newest
                  final publish wins (confirmed).
+               - **Final doesn't stick (DECIDED + BUILT 2026-10-28):** the
+                 user: "Every new version to shotgrid is marked unviewed - I
+                 have to manually mark it approved, so once a final publish
+                 has occurred it's not an ongoing set state for that shot or
+                 asset", and "It will help us reduce the number of caches."
+                 A publish is Final only when the **newest** Version on the
+                 Final task is Approved. Each publish makes a new Version
+                 (Pending Review), so the next publish is iterative unless
+                 that one is approved too. shotSub Versions (no task) and
+                 other tasks' Versions don't count. Before this, any
+                 Approved Version made every later publish Final.
+                 `publishTool_api.approved_tasks`; test
+                 `publishDev/test_finalNotSticky_mayapy.py`. Applies to
+                 assets too once they have Final publishes (OPEN: how, see
+                 "Publish thumbnail borders").
+               - **Publish thumbnail borders (DECIDED 2026-10-28, not
+                 built):** ShotGrid thumbnails of pipe publishes get a
+                 border: **dark blue = iterative**, **bright green =
+                 Final**. Plain shotSub Versions: no border. Assets have
+                 Final publishes too (no caches, "but may trigger other
+                 things"). OPEN: how an asset department becomes Final
+                 (department Tasks on every asset, like shots, or matching
+                 Version names); whether the Shot's thumbnail keeps the
+                 green after a later shotSub.
                - **The cache rule (DECIDED 2026-10-19):** approved
                  **Blocking** = no cache; approved **Final** = cache. Told
                  apart by the Version's task (Blocking / Final tasks on

@@ -258,7 +258,7 @@ class PublishToolUI(QtWidgets.QDialog):
         self.picker = picker.TargetPicker(PICKER_DEPARTMENTS, self._items_for)
         self.picker.dept_combo.setToolTip(
             "Layout: publishes the camera and what's selected; never caches.\n"
-            "Animation: the same, plus caches once a publish is approved for Final.\n"
+            "Animation: the same, plus caches when your last publish was approved for Final.\n"
             "Ask for approval in the notes (e.g. \"please approve for lighting\").\n"
             "Environment: this scene's environment_SET (landscape, buildings, sky).")
         self.picker.add_clicked.connect(self._add_row)
@@ -980,8 +980,8 @@ class PublishToolUI(QtWidgets.QDialog):
                                                  review=review, camera=row.get("camera"))
                         label += {
                             anim.FINAL: " (Final approved: caches made)",
-                            anim.ANIMATION: " (no caches yet: they're made once a publish "
-                                            "is approved for Final)",
+                            anim.ANIMATION: " (no caches: they're made when the shot's last "
+                                            "publish is approved for Final)",
                         }.get(plan["stage"], "")
                     else:
                         plan = api.publish(scene, *self._roots(), code=row["code"],

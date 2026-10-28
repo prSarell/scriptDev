@@ -1782,26 +1782,36 @@ def scene_audio(start_frame):
 # ---------------------------------------------------------------------------
 # Approval (spec §3c, rule 2026-10-23): approval blocks no publish; it only
 # triggers caches. A final publish is an iterative publish plus the
-# department's caches, made once a Version on the Final task is Approved.
+# department's caches, made when the newest Version on the Final task is
+# Approved. Final isn't a state the shot keeps (user, 2026-10-28: "once a
+# final publish has occurred it's not an ongoing set state"): each publish
+# makes a new Version, Pending Review, so the one after it is iterative
+# again unless that Version is approved too.
 # ---------------------------------------------------------------------------
 
 APPROVED = "apr"
 
 
 def approved_tasks(sg_entity):
-    """{task name (lower case): that Task} for every Task on the Shot that
-    has an Approved Version linked to it. Versions with no task (from
-    before shotSub linked them) don't count."""
+    """{task name (lower case): that Task} for every Task on the Shot whose
+    newest linked Version is Approved. Versions with no task (shotSub's)
+    don't count."""
     sg = _shotgrid().get_connection()
     versions = sg.find("Version", [["entity", "is", {"type": sg_entity.get("type", "Shot"),
                                                      "id": sg_entity["id"]}],
-                                   ["sg_status_list", "is", APPROVED]],
-                       ["sg_task", "sg_task.Task.content"])
-    found = {}
-    for v in versions:
+                                   ["sg_task", "is_not", None]],
+                       ["sg_task", "sg_task.Task.content", "sg_status_list"],
+                       order=[{"field_name": "created_at", "direction": "desc"},
+                              {"field_name": "id", "direction": "desc"}])
+    found, seen = {}, set()
+    for v in versions:              # newest first: only each task's newest counts
+        task = v.get("sg_task")
+        if not task or task["id"] in seen:
+            continue
+        seen.add(task["id"])
         name = (v.get("sg_task.Task.content") or "").strip().lower()
-        if name and v.get("sg_task"):
-            found[name] = v["sg_task"]
+        if name and v.get("sg_status_list") == APPROVED:
+            found[name] = task
     return found
 
 
