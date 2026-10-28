@@ -48,6 +48,8 @@ def _get_meshes(geo=None):
     nodes = [geo] if geo else cmds.ls(selection=True, long=True)
     if not nodes:
         cmds.error("arnoldCloudSetup: select a mesh first.")
+    # faces/verts still selected from modelling - use the object they belong to
+    nodes = list(dict.fromkeys(node.split(".")[0] for node in nodes))
     result = []
     for node in nodes:
         if cmds.nodeType(node) == "mesh":
@@ -81,8 +83,14 @@ def _build_one(geo, shape):
     volume = cmds.shadingNode("aiStandardVolume", asShader=True, name="%s_cloudVolume" % short)
     cmds.setAttr(volume + ".density", DENSITY)
     cmds.setAttr(volume + ".scatterColor", 1, 1, 1, type="double3")
-    cmds.setAttr(volume + ".scatter_diffusion_bias", DIFFUSION_BIAS)
-    cmds.setAttr(volume + ".scatter_diffusion_roughness", DIFFUSION_ROUGHNESS)
+    # scatter diffusion only exists from Arnold 7.3.3 (MtoA 5.4.5) - older
+    # Maya 2025 installs don't have it, so skip it there rather than fail
+    if cmds.attributeQuery("scatterDiffusionBias", node=volume, exists=True):
+        cmds.setAttr(volume + ".scatterDiffusionBias", DIFFUSION_BIAS)
+        cmds.setAttr(volume + ".scatterDiffusionRoughness", DIFFUSION_ROUGHNESS)
+    else:
+        print("arnoldCloudSetup: this Arnold has no Scatter Diffusion settings "
+              "(needs MtoA 5.4.5+) - skipped; clouds will render a little darker.")
 
     engine = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="%s_cloudSG" % short)
     cmds.connectAttr(volume + ".outColor", engine + ".volumeShader")

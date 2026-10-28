@@ -35,13 +35,18 @@ def _get_shapes(geo=None):
     nodes = [geo] if geo else cmds.ls(selection=True, long=True)
     if not nodes:
         cmds.error("arnoldSnowSetup: select a landscape mesh first.")
+    # listRelatives rejects the whole call if a type isn't registered, so only
+    # look for Bifrost graphs when the bifrostGraph plug-in is loaded
+    types = ["mesh"]
+    if cmds.pluginInfo("bifrostGraph", query=True, loaded=True):
+        types.append("bifrostGraphShape")
     shapes = []
     for node in nodes:
-        if cmds.nodeType(node) in ("mesh", "bifrostGraphShape"):
+        if cmds.nodeType(node) in types:
             shapes.append(node)
             continue
         shapes += cmds.listRelatives(node, shapes=True, noIntermediate=True,
-                                     fullPath=True, type=("mesh", "bifrostGraphShape")) or []
+                                     fullPath=True, type=types) or []
     if not shapes:
         cmds.error("arnoldSnowSetup: nothing selected is a mesh or Bifrost graph.")
     return shapes
