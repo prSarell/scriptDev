@@ -27,8 +27,9 @@ hand. One T7 session could cover most of it.
       and ask before acting, and that "Set Project to the scene's" clears it.
       Is the banner readable on the dark theme?
 - [ ] **Shot working folders** (spec §4 "Shot working folders",
-      2026-10-28): run h_sync on the T7 and check every shot got
-      `scenes\layout, anim, fx, lighting`. Set Project on SEQ010_140 and
+      2026-10-28): h_sync applied on the T7 2026-10-28 (363 working +
+      3648 Studio Library folders; first apply since 2026-10-21). Set
+      Project on SEQ010_140 and
       check your `scenes\lighting\e131988\` etc. Publish Animation (Final
       approved) and check the caches land in `cache\alembic\e131988\`.
 - [ ] **Asset department Tasks** (spec "Publish thumbnail borders"): run
