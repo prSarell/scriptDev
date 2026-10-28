@@ -109,6 +109,20 @@ api.import_into_asset(asset_dir, published, vid)
 check("a second import gives a second group, both spotted",
       len(cmds.ls("backpack_model_GRP*", type="dagContainer")) == 2
       and api.imported_versions(published) == [vid, vid])
+# An untextured publish (no texture folder at all): imports cleanly.
+spoon = os.path.join(H, FILM, "maya", "assets", "prop", "spoon", "scenes", "e131988")
+os.makedirs(spoon)
+cmds.file(new=True, force=True)
+cmds.polyCylinder(name="spoon_geo")
+cmds.file(rename=os.path.join(spoon, "spoon_e131988_model_v001.ma"))
+cmds.file(save=True, type="mayaAscii")
+cmds.file(scene, open=True, force=True)
+plain = [p for p in api.list_published(H, FILM) if p["asset"] == "spoon"][0]
+done = api.import_into_asset(asset_dir, plain, plain["latest"])
+check("no textures: imported, nothing copied, no texture line",
+      cmds.objExists("spoon_geo") and done == ["imported v001 (e131988)"]
+      and not os.path.exists(os.path.join(asset_dir, "sourceimages", "spoon_e131988_model_v001")))
+
 try:
     api.import_into_asset(asset_dir, {"kind": "camera"}, vid)
     check("a shot's camera can't be imported into an asset", False)
