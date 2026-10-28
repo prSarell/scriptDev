@@ -1249,11 +1249,14 @@ The tools are developed side by side:
       | Lighting | shot | animation caches, FX caches, full environment, camera, lookDev shaders, lights |
 
       - The department sets Asset vs Shot, except Creature (both).
-      - OPEN: cameras in asset scenes: a shot's camera (pick the shot),
-        a published turntable/lookDev camera, or both?
-      - OPEN: lights aren't a publishable type yet (only lights inside an
-        anim publish). A shared light rig publish for Modeling, LookDev
-        and Lighting?
+      - DECIDED 2026-10-28: cameras in asset scenes are never a shot's
+        camera: "a turntable or a witness camera". Witness cameras are a
+        new concept, not yet defined (OPEN: what one is, who publishes it,
+        where it lives).
+      - DECIDED 2026-10-28: a light rig publish is needed: "it should be
+        possible to publish lights from animation, layout or fx" (today
+        lights only travel inside an anim publish). OPEN: where light rigs
+        live on H (shot or asset), and whether Lighting publishes them too.
       - OPEN: "textures" for Modeling/Rigging: the ones that travel with
         the model/rig publish, or the render textures (lookDev)?
       - OPEN: FX gets rigs? Animation gets caches?
