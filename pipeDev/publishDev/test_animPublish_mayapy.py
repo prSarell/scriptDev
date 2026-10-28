@@ -98,7 +98,7 @@ api.approved_tasks = lambda shot: approvals
 TASKS = {"layout": 10, "blocking": 11, "final": 12}
 api.task_on = lambda shot, name: {"type": "Task", "id": TASKS[name.lower()], "content": name}
 h_scenes = os.path.join(H, *shot_rel, "scenes", "scout")
-caches = os.path.join(H, *shot_rel, "cache", "alembic")
+caches = os.path.join(H, *shot_rel, "cache", "alembic", "scout")   # per person
 
 
 def frames_left():

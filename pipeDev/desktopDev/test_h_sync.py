@@ -81,8 +81,13 @@ backpack = os.path.join(maya, "assets", "prop", "backpack")
 check("work: existing and new assets got scenes\\model, rig, lookDev",
       all(os.path.isdir(os.path.join(a, "scenes", w)) for a in (backpack, house)
           for w in ("model", "rig", "lookDev")))
-check("work: shots don't",
+check("work: shots don't get the asset ones",
       not os.path.exists(os.path.join(maya, "sequences", "SEQ010", "SEQ010_020", "scenes", "model")))
+check("work: existing and new shots got scenes\\layout, anim, fx, lighting",
+      all(os.path.isdir(os.path.join(maya, "sequences", "SEQ010", s, "scenes", w))
+          for s in ("SEQ010_010", "SEQ010_020") for w in ("layout", "anim", "fx", "lighting")))
+check("work: none for reference or sequence-less shots",
+      not os.path.exists(os.path.join(maya, "sequences", "SEQ010", "SEQ010_FULL_CUT")))
 open(os.path.join(backpack, "scenes", "anna", "work.ma"), "a").close()
 os.makedirs(os.path.join(backpack, "scenes", "rig", "anna"))
 check("work: second run adds none, people's folders left alone",

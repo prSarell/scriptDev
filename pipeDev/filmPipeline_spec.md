@@ -1198,6 +1198,67 @@ The tools are developed side by side:
       existing assets; Set Project makes the person's own; Save Here uses
       the department's; Build skips them. Publishes still go in
       `scenes\<login>\`. Test: `projectDev/test_workFolders_mayapy.py`.
+    - **Shot working folders (DECIDED + BUILT 2026-10-28):** the same for
+      shots, so a shot can be built for rendering (caches, cameras,
+      environment, everything a final render needs). The user proposed
+      `scenes\Render\`, `Animation\`, `FX\` per shot with an `s`/`e`
+      folder per person; agreed with these changes (user: "happy to go
+      with your recommendations"): department codes, lowercase, plus
+      `layout\` → every shot's `scenes\` has **`layout\`, `anim\`, `fx\`,
+      `lighting\`**, each with a folder per person
+      (`scenes\lighting\s1234567\`). **Lighting, not Render** (user,
+      2026-10-28: "it's industry standard"): the department list's
+      Render became Lighting (`lighting`), matching the Publish tool's
+      coming-soon Lighting shot stage. **Previs dropped** from the
+      department list the same day. h_sync adds them to new
+      and existing shots; Set Project makes the person's own; Build's
+      shot camera and keys lists skip them. Publishes still go in
+      `scenes\<login>\`. `publishTool_api.SHOT_WORK_FOLDERS` (h_sync has
+      its own copy). Tests: `projectDev/test_workFolders_mayapy.py`,
+      `desktopDev/test_h_sync.py`.
+      - **Animation caches per person (BUILT 2026-10-28):** the anim
+        publish now writes caches to `cache\alembic\<login>\`, as decided
+        2026-10-15 (it had been writing flat to `cache\alembic\`, where two
+        people's `v003` would collide: versions are per person). Caches
+        published before this (SEQ010_140's first final, 2026-10-28) stay
+        where they are.
+      - **Render output (DECIDED, not built):** `images\lighting\<login>\`,
+        made when the render build exists.
+    - **Build by department (DRAFT 2026-10-28, not built):** the user:
+      the Build tool's Department dropdown should be the artist's
+      department, "switching between the departments would define the
+      types of data available through the build tool - it would basically
+      filter out rigs for the lighting team etc." (today it mixes asset
+      departments with Camera / Environment entries on the Shot side).
+      Departments: Modeling, Rigging, Creature, LookDev, Layout,
+      Animation, FX, Lighting. Draft of what each sees, from the user's
+      corrections ("Modeling will need textures and lights too
+      potentially", "Look dev will likely be doing lighting as well",
+      "Rigging needs to see textures", "Creature needs rigs environments
+      caches all assets really", "They will likely all need cameras"):
+
+      | Department | Works in | Build offers |
+      |---|---|---|
+      | Modeling | asset | models, textures, lights, cameras |
+      | Rigging | asset | models, textures, cameras |
+      | Creature | asset and shot | everything |
+      | LookDev | asset | models, textures, lookDev, lights, cameras |
+      | Layout | shot | rigs, environment, camera |
+      | Animation | shot | rigs, environment, camera, layout/anim keys |
+      | FX | shot | animation caches, environment, camera |
+      | Lighting | shot | animation caches, FX caches, full environment, camera, lookDev shaders, lights |
+
+      - The department sets Asset vs Shot, except Creature (both).
+      - OPEN: cameras in asset scenes: a shot's camera (pick the shot),
+        a published turntable/lookDev camera, or both?
+      - OPEN: lights aren't a publishable type yet (only lights inside an
+        anim publish). A shared light rig publish for Modeling, LookDev
+        and Lighting?
+      - OPEN: "textures" for Modeling/Rigging: the ones that travel with
+        the model/rig publish, or the render textures (lookDev)?
+      - OPEN: FX gets rigs? Animation gets caches?
+      - Not buildable yet: animation/FX caches, lookDev shaders on caches,
+        lights.
     - **Build into an asset scene = import, never reference (DECIDED +
       BUILT 2026-10-28):** "if an artist pulls a published asset from the
       h drive it should not be referenced... a rule for all assets, so the

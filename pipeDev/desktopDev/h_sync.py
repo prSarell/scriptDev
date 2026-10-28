@@ -61,6 +61,9 @@ LIBRARY_ITEMS = ("pose", "motion")
 # (user, 2026-10-28). Same as publishTool_api.WORK_FOLDERS (this script
 # runs without Maya).
 WORK_FOLDERS = ("model", "rig", "lookDev")
+# And every shot's scenes\layout\, anim\, fx\ and lighting\ (user, 2026-10-28).
+# Same as publishTool_api.SHOT_WORK_FOLDERS.
+SHOT_WORK_FOLDERS = ("layout", "anim", "fx", "lighting")
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +180,7 @@ def plan_sync(h_root, film, shots, assets):
     exist yet are ever in "build", "library" or "work"."""
     maya_dir = os.path.join(h_root, film, "maya")
     build, skipped, expected = [], [], set()
-    work = []           # scenes\model, scenes\rig of every asset that has/gets a folder
+    work = []           # working folders of every asset/shot that has/gets a folder
     worked_on = []      # (sequence, shot) of every shot that has/gets a folder
     for shot in sorted(shots, key=lambda s: s["code"]):
         if REFERENCE_SHOT.search(shot["code"]):
@@ -191,6 +194,8 @@ def plan_sync(h_root, film, shots, assets):
         expected.add(_key(folder))
         if not os.path.isdir(folder):
             build.append(("shot", shot["code"], folder))
+        work += [os.path.join(folder, "scenes", w) for w in SHOT_WORK_FOLDERS
+                 if not os.path.isdir(os.path.join(folder, "scenes", w))]
     for asset in sorted(assets, key=lambda a: a["code"].lower()):
         if not asset["type"]:
             # Can't tell which type folder it belongs in, so nothing is
@@ -300,7 +305,7 @@ def apply_sync(h_root, film, plan, log=print):
         log("  built  %d Studio Library folder(s)" % made)
     made = 0
     for folder in plan.get("work") or []:
-        # After the asset itself is built; skipped if it couldn't be.
+        # After the asset/shot itself is built; skipped if it couldn't be.
         if not os.path.isdir(os.path.dirname(os.path.dirname(folder))):
             continue
         try:
@@ -309,7 +314,7 @@ def apply_sync(h_root, film, plan, log=print):
         except OSError as e:
             log("  skipped %s: %s" % (folder, e))
     if made:
-        log("  built  %d model/rig/lookDev working folder(s)" % made)
+        log("  built  %d working folder(s)" % made)
     return built
 
 
@@ -329,8 +334,8 @@ def report(plan, log=print):
         log("Studio Library folders to add (%d), for characters: %s"
             % (len(plan["library"]), ", ".join(plan["characters"])))
     if plan.get("work"):
-        log("Asset working folders to add (%d): scenes\\%s"
-            % (len(plan["work"]), ", scenes\\".join(WORK_FOLDERS)))
+        log("Working folders to add (%d): assets' scenes\\%s; shots' scenes\\%s"
+            % (len(plan["work"]), ", ".join(WORK_FOLDERS), ", ".join(SHOT_WORK_FOLDERS)))
 
 
 def films_on(h_root):

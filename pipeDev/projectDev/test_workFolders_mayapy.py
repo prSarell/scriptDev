@@ -64,8 +64,10 @@ check("asset: scenes\\e131988 plus model, rig and lookDev\\e131988",
           (("e131988",), ("model", "e131988"), ("rig", "e131988"), ("lookDev", "e131988"))))
 check("... and says so", any("rig\\e131988" in d for d in done))
 shot, _ = api.set_project(H, SC, ["NWF_SHF", "maya", "sequences", "EAP_010", "EAP_010_010"])
-check("shot: just scenes\\e131988",
-      os.path.isdir(os.path.join(shot, "scenes", "e131988"))
+check("shot: scenes\\e131988 plus layout, anim, fx and lighting\\e131988, no asset ones",
+      all(os.path.isdir(os.path.join(shot, "scenes", *p)) for p in
+          (("e131988",), ("layout", "e131988"), ("anim", "e131988"), ("fx", "e131988"),
+           ("lighting", "e131988")))
       and not os.path.exists(os.path.join(shot, "scenes", "model")))
 
 # -- Save Here's folder --------------------------------------------------------
@@ -73,13 +75,19 @@ check("work_folder: model, rig, lookDev get their own; others scenes\\<login>",
       [os.path.relpath(pub.work_folder(path, c, "e131988"), path) for c in ("model", "rig", "lookDev", "env")]
       == [os.path.join("scenes", "model", "e131988"), os.path.join("scenes", "rig", "e131988"),
           os.path.join("scenes", "lookDev", "e131988"), os.path.join("scenes", "e131988")])
+check("work_folder: shot departments get their own",
+      [os.path.relpath(pub.work_folder(shot, c, "e131988"), shot) for c in ("anim", "lighting")]
+      == [os.path.join("scenes", "anim", "e131988"), os.path.join("scenes", "lighting", "e131988")])
 
 # -- Project Tool names someone's new working folder on the H drive --------
 os.makedirs(os.path.join(asset_h, "scenes", "rig", "s7654321"))
 os.makedirs(os.path.join(asset_h, "scenes", "s1111111"))
+shot_h = os.path.join(H, "NWF_SHF", "maya", "sequences", "EAP_010", "EAP_010_010")
+os.makedirs(os.path.join(shot_h, "scenes", "lighting", "s2222222"))
 diff = api.structure_diff(H, SC, "NWF_SHF")
-check("a new person in scenes\\rig is named, not counted as 'other'",
-      api.describe_diff(diff) == "new people's folders: s1111111 (in scout), s7654321 (in scout)")
+check("a new person in scenes\\rig or a shot's scenes\\lighting is named, not "
+      "'lighting' itself", api.describe_diff(diff) ==
+      "new people's folders: s1111111 (in scout), s2222222 (in EAP_010_010), s7654321 (in scout)")
 
 # -- Build lists publishes only ----------------------------------------------
 pubs = os.path.join(asset_h, "scenes", "e131988")
@@ -92,4 +100,16 @@ open(os.path.join(work, "scout_e131988_rig_v009.ma"), "w").write("//")
 found = build.list_published(H, "NWF_SHF")
 check("Build: the publish is listed, the working file in scenes\\rig isn't",
       [sorted(e["versions"]) for e in found] == [["e131988/v001"]])
+# Same in a shot: a camera-publish lookalike in scenes\anim\<login>.
+cam_work = os.path.join(shot_h, "scenes", "anim", "e131988")
+os.makedirs(cam_work)
+for name in ("EAP_010_010_e131988_cam_v001.ma", "EAP_010_010_e131988_camAnim_v001.ma",
+             "EAP_010_010_e131988_camAnim_v001.json"):
+    open(os.path.join(cam_work, name), "w").write("{}")
+shot_pubs = os.path.join(shot_h, "scenes", "e131988")
+os.makedirs(shot_pubs, exist_ok=True)
+open(os.path.join(shot_pubs, "EAP_010_010_e131988_anim_v001.ma"), "w").write("//")
+seen = [n for _, names in build._walk_shot_publishes(os.path.join(shot_h, "scenes")) for n in names]
+check("Build: a shot's publishes are looked at, its scenes\\anim etc. working files aren't",
+      seen == ["EAP_010_010_e131988_anim_v001.ma"])
 print("%d/%d passed" % (sum(ok), len(ok)))

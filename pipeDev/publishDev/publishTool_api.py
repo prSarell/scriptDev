@@ -42,12 +42,11 @@ DEPARTMENTS = [
     ("Modeling", "model"),
     ("Environment", "env"),     # spec §4c: publishTool_env
     ("Rigging",  "rig"),
-    ("Previs",   "previs"),
     ("Anim",     "anim"),
     ("Creature", "creature"),
     ("LookDev",  "lookDev"),
     ("FX",       "fx"),
-    ("Render",   "render"),
+    ("Lighting", "lighting"),   # was Render; Previs dropped (user, 2026-10-28)
 ]
 
 # Film folders are named <FILM>_<TYPE>, TYPE a three-letter code (§3f).
@@ -136,6 +135,10 @@ SHOTGRID_AS = "shotgrid_as"
 # iteration and development (user, 2026-10-28). Named by department code.
 # Publishes still go in scenes\<login>\.
 WORK_FOLDERS = ("model", "rig", "lookDev")
+# Every shot's scenes folder has the same, for shot departments
+# (scenes\anim\s1234567\), so a shot can be built for rendering (user,
+# 2026-10-28).
+SHOT_WORK_FOLDERS = ("layout", "anim", "fx", "lighting")
 
 
 def clean_login(name):
@@ -395,10 +398,11 @@ def personal_folder(h_root, rel_project, login):
 
 
 def work_folder(project, code, login):
-    """Where one person's working scenes go in an asset project:
+    """Where one person's working scenes go in an asset or shot project:
     scenes\\<code>\\<login> for the WORK_FOLDERS departments (model, rig,
-    lookDev), else scenes\\<login>."""
-    if code in WORK_FOLDERS:
+    lookDev) and SHOT_WORK_FOLDERS (layout, anim, fx, render), else
+    scenes\\<login>."""
+    if code in WORK_FOLDERS + SHOT_WORK_FOLDERS:
         return os.path.join(project, "scenes", code, login)
     return os.path.join(project, "scenes", login)
 

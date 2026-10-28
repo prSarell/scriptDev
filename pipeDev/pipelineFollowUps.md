@@ -26,6 +26,17 @@ hand. One T7 session could cover most of it.
       Keep. Pick Keep, then check that Build and Publish show the red banner
       and ask before acting, and that "Set Project to the scene's" clears it.
       Is the banner readable on the dark theme?
+- [ ] **Shot working folders** (spec §4 "Shot working folders",
+      2026-10-28): run h_sync on the T7 and check every shot got
+      `scenes\layout, anim, fx, lighting`. Set Project on SEQ010_140 and
+      check your `scenes\lighting\e131988\` etc. Publish Animation (Final
+      approved) and check the caches land in `cache\alembic\e131988\`.
+- [?] **Build by department** (spec §4 "Build by department", DRAFT): the
+      department table is drafted; open: cameras in asset scenes, a light
+      rig publish, which textures, FX rigs / Animation caches.
+- [ ] **Lighting build** (spec §4 "Shot working folders"): Build a shot
+      for rendering: newest Final caches, camera, full environment. Comes
+      with Build by department; needs the open LookDev / lights decisions.
 - [ ] Publish and Build windows on the T7 (backlog from 2026-10-15).
 - [ ] Shot publish v0 with a real Approved Version on EAP_010_010
       (Layout / Blocking / Final tasks), backpack v008+ with the stamp.

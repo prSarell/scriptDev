@@ -21,8 +21,8 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
                  EAP_010_010_scout_anim_v001.ma           the full file
                  EAP_010_010_scout_backpack_anim_v001.ma  keys, per item
                  EAP_010_010_scout_backpack_anim_v001.json   + the map
-             <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\
-                 EAP_010_010_backpack_anim_v001.abc       final only
+             <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\scout\\
+                 EAP_010_010_backpack_anim_v001.abc       final only, per person
     scratch  <film>\\premiere\\shotgridMovs\\EAP_010_010.mp4  (replaced each time)
 
 Not in v0 (spec item 7): Build pulling animation back in, the camera
@@ -308,7 +308,9 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
         "publish_for": publish_for,
         "version": version,
         "dest": os.path.join(folder, api.published_name(shot, login, code, version, ext)),
-        "cache_folder": os.path.join(h_shot, "cache", "alembic"),
+        # per person, like the publishes (spec §4, 2026-10-15): versions are
+        # per person, so two people's v003 caches can't collide
+        "cache_folder": os.path.join(h_shot, "cache", "alembic", login),
     })
     for key in ("keys_dest", "map_dest"):
         plan.pop(key, None)

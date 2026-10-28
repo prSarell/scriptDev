@@ -193,6 +193,16 @@ CAMERA_RE = re.compile(r"^(?P<shot>.+)_(?P<login>[a-z0-9]+)_(?P<code>cam|camAnim
                        r"_v(?P<version>\d{3})\.(?P<ext>ma|json)$", re.IGNORECASE)
 
 
+def _walk_shot_publishes(scenes):
+    """os.walk over a shot's scenes folder, minus scenes\\layout\\, anim\\,
+    fx\\ and lighting\\: they hold working files, not publishes."""
+    work = [w.lower() for w in pub.SHOT_WORK_FOLDERS]
+    for dirpath, dirnames, filenames in os.walk(scenes):
+        if os.path.normcase(dirpath) == os.path.normcase(scenes):
+            dirnames[:] = [d for d in dirnames if d.lower() not in work]
+        yield dirpath, filenames
+
+
 def list_shot_cameras(h_root, film, seq, shot):
     """The shot's published cameras on the H drive (everyone's, from each
     person's scenes\\<login>\\), as a list with at most one entry shaped
@@ -203,7 +213,7 @@ def list_shot_cameras(h_root, film, seq, shot):
     publish time."""
     scenes = os.path.join(shot_folder(h_root, film, seq, shot), "scenes")
     found = {}
-    for dirpath, _, filenames in os.walk(scenes):
+    for dirpath, filenames in _walk_shot_publishes(scenes):
         login = os.path.basename(dirpath).lower()
         for name in filenames:
             m = CAMERA_RE.match(name)
@@ -1301,7 +1311,7 @@ def list_shot_keys(h_root, film, seq, shot):
     (no pipe stamp) and the camera are left out."""
     scenes = os.path.join(shot_folder(h_root, film, seq, shot), "scenes")
     found = {}
-    for dirpath, _, filenames in os.walk(scenes):
+    for dirpath, filenames in _walk_shot_publishes(scenes):
         login = os.path.basename(dirpath).lower()
         for name in filenames:
             m = KEYS_RE.search(name)

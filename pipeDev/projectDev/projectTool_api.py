@@ -188,14 +188,16 @@ def describe_diff(diff):
         parts.append("new assets: " + ", ".join(assets))
     # Someone's first publish makes their scenes\<login>\ folder on the H
     # drive (spec §4 "Personal work folders"): name whose, and where.
-    # Also scenes\model\<login>\ and scenes\rig\<login>\ (pub.WORK_FOLDERS).
+    # Also scenes\model\<login>\ etc. (pub.WORK_FOLDERS) in assets and
+    # scenes\anim\<login>\ etc. (pub.SHOT_WORK_FOLDERS) in shots.
     def person(r):
         if len(r) < 7 or r[1] != "maya" or r[2] not in ("sequences", "assets") \
                 or r[5] != "scenes" or r[:5] in new:
             return None
-        if len(r) == 7 and r[6] not in pub.WORK_FOLDERS:
+        work = pub.WORK_FOLDERS if r[2] == "assets" else pub.SHOT_WORK_FOLDERS
+        if len(r) == 7 and r[6] not in work:
             return r[6]
-        if len(r) == 8 and r[2] == "assets" and r[6] in pub.WORK_FOLDERS:
+        if len(r) == 8 and r[6] in work:
             return r[7]
         return None
     people = sorted(set((person(r), r[4]) for r in diff["missing"] if person(r)))
@@ -268,8 +270,8 @@ def set_project(h_root, scratch_root, rel, login=None, progress=None):
         done.append("made %s on scratch (%d folders)" % (rel[-1], folders))
     login = login or pub.who()
     mine = [os.path.join(project, "scenes", login)]
-    if rel[2] == "assets":
-        mine += [pub.work_folder(project, code, login) for code in pub.WORK_FOLDERS]
+    work = pub.WORK_FOLDERS if rel[2] == "assets" else pub.SHOT_WORK_FOLDERS
+    mine += [pub.work_folder(project, code, login) for code in work]
     for folder in mine:
         if not os.path.isdir(folder):
             os.makedirs(folder)
