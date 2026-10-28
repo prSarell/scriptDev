@@ -1358,9 +1358,12 @@ The tools are developed side by side:
              version (namespace e.g. `scout_rig_v004_look`) and assigns it
              by mesh name. Meshes it can't match are listed in the Build
              message, not an error.
-          4. Later, LookDev publishes the same two files, so Lighting can
-             choose the newest LookDev look instead of the rig's (OPEN:
-             which wins by default).
+          4. Later, LookDev publishes the same two files. DECIDED
+             2026-10-28 (user: "Yes that sounds right"): which look a
+             cache gets depends on the department building it. Layout
+             and Animation get the rig's look (what the animator saw,
+             lighter); Lighting gets the newest LookDev look, or the
+             rig's if LookDev hasn't published one.
           - DECIDED 2026-10-28: rigs published before this have no look and
             get no fallback: "going forward I will just republish new
             versions of existing assets".
