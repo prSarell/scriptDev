@@ -12,7 +12,9 @@ publishes, newest first; items made in the shot and the camera left out;
 keys replace the asset's existing keys, on the same frames; keys from
 another shot; a rig version with missing or locked controls (applied
 anyway, mismatches listed); None; the record saved with the scene; the
-rig's own driven keys left alone.
+rig's own driven keys left alone. Unkeyed settings (2026-10-28): a master
+control placed and a space switch set, never keyed, put back by Build; an
+asset with no keys at all still listed and placed.
 """
 import os, sys, json, time, shutil, tempfile
 
@@ -62,9 +64,11 @@ for v in (1, 2):
         else:
             cmds.addAttr(group, longName=attr, dataType="string")
             cmds.setAttr("%s.%s" % (group, attr), value, type="string")
-    names = ["ctrl", "locked_ctrl"] + (["tail_ctrl"] if v == 1 else [])
+    names = ["master_ctrl", "ctrl", "locked_ctrl"] + (["tail_ctrl"] if v == 1 else [])
     for name in names:
         cmds.parent(cmds.spaceLocator(name=name)[0], group)
+    cmds.addAttr("ctrl", longName="space", attributeType="enum",
+                 enumName="world:master:hips", keyable=True)
     if v == 2:
         cmds.setAttr("locked_ctrl.tx", lock=True)
         cmds.setDrivenKeyframe("locked_ctrl.sy", currentDriver="ctrl.ty",
@@ -75,13 +79,18 @@ for v in (1, 2):
     save_as(rigs[v])
 
 
-def publish_keys(shot, code, version, tx_at_10, extra=True):
+def publish_keys(shot, code, version, tx_at_10, extra=True, keyed=True):
     """An animator's scene with rig v001 referenced and keyed, published
-    through Publish's export_keys."""
+    through Publish's export_keys. The master control is placed and the
+    space switch set, neither keyed."""
     cmds.file(new=True, force=True)
     cmds.file(rigs[1], reference=True, namespace="scout_rig")
-    cmds.setKeyframe("scout_rig:ctrl", attribute="translateX", time=1, value=0)
-    cmds.setKeyframe("scout_rig:ctrl", attribute="translateX", time=10, value=tx_at_10)
+    cmds.setAttr("scout_rig:master_ctrl.translateX", 12)
+    cmds.setAttr("scout_rig:master_ctrl.rotateZ", 30)
+    cmds.setAttr("scout_rig:ctrl.space", 2)
+    if keyed:
+        cmds.setKeyframe("scout_rig:ctrl", attribute="translateX", time=1, value=0)
+        cmds.setKeyframe("scout_rig:ctrl", attribute="translateX", time=10, value=tx_at_10)
     if extra:
         cmds.setKeyframe("scout_rig:tail_ctrl", attribute="rotateY", time=1, value=0)
         cmds.setKeyframe("scout_rig:tail_ctrl", attribute="rotateY", time=10, value=90)
@@ -94,7 +103,8 @@ def publish_keys(shot, code, version, tx_at_10, extra=True):
         os.makedirs(folder)
     stem = os.path.join(folder, "%s_%s_%s_%s_v%03d" % (shot, LOGIN, item["name"], code, version))
     plan = {"shot": shot, "login": LOGIN, "version": version, "stage": code}
-    anim.export_keys(item, {"keys": stem + ".ma", "map": stem + ".json"}, plan, 1, 10, scene)
+    count = anim.export_keys(item, {"keys": stem + ".ma", "map": stem + ".json"}, plan, 1, 10, scene)
+    check("%s %s: unkeyed settings counted" % (shot, code), count > 0)
     time.sleep(1.1)     # publish times must differ (newest first)
     return stem
 
@@ -102,6 +112,8 @@ def publish_keys(shot, code, version, tx_at_10, extra=True):
 publish_keys(SHOT, "layout", 1, 2.0, extra=False)
 publish_keys(SHOT, "anim", 1, 5.0)
 publish_keys(OTHER, "anim", 1, 9.0, extra=False)
+PLACED = "SEQ010_130"
+placed_stem = publish_keys(PLACED, "layout", 1, 0, extra=False, keyed=False)
 # Not an asset's keys: an item made in the shot, and the camera's map.
 made = os.path.join(H, FILM, "maya", "sequences", SEQ, SHOT, "scenes", LOGIN,
                     "%s_%s_rock_anim_v001" % (SHOT, LOGIN))
@@ -139,6 +151,15 @@ check("nothing recorded before Build puts keys on", api.keys_in_scene(row) is No
 done, warning = api.build_keys(shot_dir, row, anim_kid, listed[key][anim_kid])
 cmds.currentTime(10)
 check("keys on, same frames", abs(cmds.getAttr("scout_rig:ctrl.tx") - 5.0) < 1e-6)
+check("unkeyed master placed: tx and rz, no keys made",
+      abs(cmds.getAttr("scout_rig:master_ctrl.tx") - 12) < 1e-6
+      and abs(cmds.getAttr("scout_rig:master_ctrl.rz") - 30) < 1e-6
+      and not cmds.listConnections("scout_rig:master_ctrl", source=True, destination=False,
+                                   type="animCurve"))
+check("unkeyed space switch set", cmds.getAttr("scout_rig:ctrl.space") == 2)
+check("says how many settings", "unkeyed settings" in done[0])
+check("a driven channel on this rig listed, not set",
+      warning and "locked_ctrl.scaleY (locked or driven)" in warning)
 check("old keys blown away", not cmds.listConnections("scout_rig:ctrl.rz", source=True,
                                                        destination=False))
 check("rig's driven keys left alone",
@@ -174,6 +195,21 @@ try:
     check("asset not in scene refused", False)
 except api.BuildError:
     check("asset not in scene refused", True)
+
+# An asset placed in the shot and never keyed: no keys file, only the map.
+check("no keys: only the map written", os.path.isfile(placed_stem + ".json")
+      and not os.path.exists(placed_stem + ".ma"))
+placed = api.list_shot_keys(H, FILM, SEQ, PLACED).get(key) or {}
+check("no keys: still listed for Build", len(placed) == 1)
+placed_dir = api.shot_folder(S, FILM, SEQ, PLACED)
+cmds.file(new=True, force=True)
+cmds.file(rigs[1], reference=True, namespace="scout_rig")
+save_as(os.path.join(placed_dir, "scenes", "%s_001.ma" % PLACED))
+done, warning = api.build_keys(placed_dir, row, list(placed)[0], list(placed.values())[0])
+check("no keys: master placed, space set, nothing to match",
+      abs(cmds.getAttr("scout_rig:master_ctrl.tx") - 12) < 1e-6
+      and cmds.getAttr("scout_rig:ctrl.space") == 2 and warning is None
+      and "0 curves" in done[0])
 
 shutil.rmtree(base, ignore_errors=True)
 failed = [n for n, ok in results if not ok]

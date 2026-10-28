@@ -86,6 +86,13 @@ hand. One T7 session could cover most of it.
       picker row and the `buildings` group. Still worth a look: does the
       sky image plane show its picture in the built shot (through
       `$PIPE_SCRATCH`)?
+- [ ] **Unkeyed settings through a clean build** (spec §4 item 7,
+      2026-10-28): reinstall the tools, republish SEQ010_140's animation
+      (the old publish has no settings), then clean-build it. The character
+      should be in camera with its master control unkeyed, and any space
+      switches as they were. Also try a prop placed in the shot with no
+      keys at all. Worth a look on a MetaHuman rig: how big the map gets
+      and how long Build takes to set it.
 - [ ] **Scratch on a different drive** (spec §3i, 2026-10-22): copy a built
       shot's scratch film folder (shot + `maya\publish\`) to another drive
       letter, e.g. a USB stick as `E:\`. With the saved scratch setting

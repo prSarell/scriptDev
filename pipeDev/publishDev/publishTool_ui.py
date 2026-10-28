@@ -524,11 +524,14 @@ class PublishToolUI(QtWidgets.QDialog):
                     dest += "\n" + plan["keys_dest"]
                 elif row["code"] == anim.ANIM_CODE:
                     files = plan["item_files"][item["name"]]
+                    settings = anim.carries_settings(item)
                     text = (os.path.basename(files["keys"]) + "  + map" if item["animated"]
-                            else "in the full shot file only (no keys)")
+                            else os.path.basename(files["map"]) + "  (unkeyed settings)"
+                            if settings else "in the full shot file only (no keys)")
                     dest = "\n".join(
                         ["Full shot file: " + plan["dest"]] +
-                        ([files["keys"], files["map"]] if item["animated"] else []) +
+                        ([files["keys"], files["map"]] if item["animated"] else
+                         [files["map"]] if settings else []) +
                         (["If the shot's Final is approved, also: " + files["cache"]]
                          if stage == anim.ANIM_CODE else []))
                 self.table.setItem(r, 4, _cell(text))

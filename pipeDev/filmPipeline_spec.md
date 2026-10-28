@@ -2247,6 +2247,24 @@ The tools are developed side by side:
                  different keys version deletes the asset's existing keys and
                  puts the chosen ones on, on the frames they were published
                  on (no offset).
+               - **Unkeyed settings go too (DECIDED + BUILT 2026-10-28).**
+                 Found building SEQ010_140: the rig's master control was
+                 placed but not keyed, so the clean build put the character
+                 at the origin, out of camera. The user: "They shouldn't need
+                 to key the master control ... this is important for things
+                 like space switching which may not be default but also may
+                 not be keyed ... settings for all controls that are not
+                 keyed need to be stored so that the pipe can reapply them to
+                 a clean build." The keys map now also lists `settings`:
+                 every keyable or channel box value on the asset with no
+                 keys, nothing driving it and not locked, changed or not.
+                 Every published asset gets a map, keyed or not (no keys =
+                 map only, no keys .ma), and Build lists it in the Keys
+                 column. Build sets the settings after the curves; what isn't
+                 on this rig, or is locked/driven on it, joins the "didn't
+                 match" list. Publish's summary says how many were carried.
+                 Not covered: constraints, animation layers, hidden
+                 (non channel box) attributes. "None" still only removes keys.
                - **Made in the shot (DECIDED 2026-10-23):** left out until a
                  "created in shot" publish is designed.
                - **PARKED: keys onto a different rig through the "Building

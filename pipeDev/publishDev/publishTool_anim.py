@@ -28,7 +28,9 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
 Not in v0 (spec item 7): Build pulling animation back in, the camera
 fingerprint, USD, final-publish checkboxes, renaming items. Keys are the
 animator's own time-based curves (not baked); constraints, expressions and
-driven keys aren't carried in the keys file.
+driven keys aren't carried in the keys file. Settings with no keys (a
+master control placed, a space switch) go in the map, for every published
+asset, keyed or not (2026-10-28).
 """
 
 import os
@@ -104,6 +106,51 @@ def time_curves(nodes):
             if cmds.nodeType(curve) in TIME_CURVES:
                 found[curve] = (node, pairs[i].split(".", 1)[1])
     return found
+
+
+# Unkeyed settings (user, 2026-10-28: "settings for all controls that are
+# not keyed need to be stored so that the pipe can reapply them to a clean
+# build"): a master control placed but never keyed, a space switch left on
+# world, a held hand pose. Every keyable or channel box setting on the item
+# that has no keys and that the animator could set (not locked, nothing
+# driving it) goes in the map with its value, whether it was changed or not.
+
+def unkeyed_settings(nodes, curves=None):
+    """{node name: {attr: value}} for the settings on nodes that aren't
+    keyed. curves: time_curves(nodes), if already worked out. Names are
+    without namespaces, like the curves in the map."""
+    keyed = set((node.split("|")[-1].split(":")[-1], attr)
+                for node, attr in (curves if curves is not None else time_curves(nodes)).values())
+    settings = {}
+    for node in nodes:
+        if cmds.ls(node, intermediateObjects=True):
+            continue
+        name = node.split("|")[-1].split(":")[-1]
+        attrs = set(cmds.listAttr(node, keyable=True, scalar=True) or []) | \
+            set(cmds.listAttr(node, channelBox=True, scalar=True) or [])
+        for attr in sorted(attrs):
+            if (name, attr) in keyed:
+                continue
+            plug = "%s.%s" % (node, attr)
+            try:
+                # Driven (a constraint, the rig's driven keys) or locked.
+                # A curve-driven plug still says it's settable.
+                if (cmds.connectionInfo(plug, isDestination=True)
+                        or not cmds.getAttr(plug, settable=True)):
+                    continue
+                value = cmds.getAttr(plug)
+            except (RuntimeError, ValueError):
+                continue
+            if isinstance(value, (bool, int, float)):
+                settings.setdefault(name, {})[attr] = value
+    return settings
+
+
+def carries_settings(item):
+    """Published assets get a map even with no keys, so Build can put their
+    unkeyed settings back (things made in the shot only live in the full
+    file)."""
+    return item["kind"] not in ("shot", LIGHT_KIND)
 
 
 # Lights made in the shot (user, 2026-10-20: "publish lights as part of the
@@ -259,26 +306,29 @@ def _writable_remove(path):
 
 def export_keys(item, files, plan, start, end, scene_path):
     """The item's keys (copies of its time curves) + a map of which curve
-    drives which node.attr, names without namespaces, so the keys can be put
-    back on the same asset by name."""
+    drives which node.attr and of its unkeyed settings, names without
+    namespaces, so both can be put back on the same asset by name. With no
+    keys only the map is written. Returns the number of settings."""
     curves = time_curves(item["nodes"])
+    settings = unkeyed_settings(item["nodes"], curves)
     namespace = _namespace(item["root"])
     copies, mapping = [], {}
-    try:
-        for curve, (node, attr) in sorted(curves.items()):
-            node_name = node.split("|")[-1].split(":")[-1]
-            copy = cmds.duplicate(curve, name="%s__%s_%s" % (item["name"], node_name, attr))[0]
-            copies.append(copy)
-            mapping[copy] = [node_name, attr]
-        cmds.select(copies, replace=True)
-        cmds.file(files["keys"], exportSelected=True, type="mayaAscii", force=True,
-                  constructionHistory=False, channels=False, constraints=False,
-                  expressions=False, shader=False, preserveReferences=False)
-    finally:
-        existing = [c for c in copies if cmds.objExists(c)]
-        if existing:
-            cmds.delete(existing)
-    api._lock(files["keys"])
+    if curves:
+        try:
+            for curve, (node, attr) in sorted(curves.items()):
+                node_name = node.split("|")[-1].split(":")[-1]
+                copy = cmds.duplicate(curve, name="%s__%s_%s" % (item["name"], node_name, attr))[0]
+                copies.append(copy)
+                mapping[copy] = [node_name, attr]
+            cmds.select(copies, replace=True)
+            cmds.file(files["keys"], exportSelected=True, type="mayaAscii", force=True,
+                      constructionHistory=False, channels=False, constraints=False,
+                      expressions=False, shader=False, preserveReferences=False)
+        finally:
+            existing = [c for c in copies if cmds.objExists(c)]
+            if existing:
+                cmds.delete(existing)
+        api._lock(files["keys"])
     info = {
         "item": item["name"],
         "kind": item["kind"],
@@ -293,10 +343,12 @@ def export_keys(item, files, plan, start, end, scene_path):
         "fps": api._scene_fps(),
         "source_scene": os.path.basename(scene_path),
         "curves": mapping,
+        "settings": settings,
     }
     with open(files["map"], "w") as f:
         json.dump(info, f, indent=2, sort_keys=True)
     api._lock(files["map"])
+    return sum(len(attrs) for attrs in settings.values())
 
 
 def cache_roots(item):
@@ -345,6 +397,8 @@ def write_anim(items, plan, start, end, scene_path):
         files = plan["item_files"][item["name"]]
         if item["animated"]:
             targets += [files["keys"], files["map"]]
+        elif carries_settings(item):
+            targets.append(files["map"])
         if item["kind"] == LIGHT_KIND:
             targets.append(files["light"])
         elif plan["stage"] == FINAL:
@@ -365,9 +419,9 @@ def write_anim(items, plan, start, end, scene_path):
         api._lock(plan["dest"])
         for item in items:
             files = plan["item_files"][item["name"]]
-            if item["animated"]:
-                export_keys(item, files, plan, start, end, scene_path)
-                written += [files["keys"], files["map"]]
+            if item["animated"] or carries_settings(item):
+                item["settings"] = export_keys(item, files, plan, start, end, scene_path)
+                written += ([files["keys"]] if item["animated"] else []) + [files["map"]]
             if item["kind"] == LIGHT_KIND:
                 export_light(item, files["light"])
                 written.append(files["light"])
@@ -438,6 +492,8 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
         PUBLISH_FOR_LABELS[publish_for], plan["version"],
         " (Final approved: caches made)" if plan["stage"] == FINAL else "",
         ", ".join(i["label"] for i in items))]
+    lines += ["%s: %d unkeyed control settings carried" % (i["name"], i["settings"])
+              for i in items if i.get("settings")]
     lines += plan["written"]
     note = "\n".join(lines)
     if notes.strip():

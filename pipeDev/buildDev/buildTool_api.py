@@ -1277,7 +1277,8 @@ def list_shot_keys(h_root, film, seq, shot):
             except (IOError, OSError, ValueError):
                 continue
             asset = data.get("asset") or {}
-            if not (os.path.isfile(keys) and data.get("curves")
+            # Keys, or only unkeyed settings (an asset placed, never keyed).
+            if not (((os.path.isfile(keys) and data.get("curves")) or data.get("settings"))
                     and asset.get("asset") and asset.get("assetType")
                     and asset.get("department")):
                 continue
@@ -1384,15 +1385,44 @@ def clear_keys(namespace):
     return len(curves)
 
 
+def apply_settings(targets, settings):
+    """Set the published unkeyed settings ({node name: {attr: value}}) on
+    the asset's nodes ({name: node}). A setting whose control or channel
+    isn't on this rig, or can't be set (locked, driven, keyed), is left out.
+    Returns (settings applied, [what didn't match])."""
+    applied, unmatched = 0, []
+    for node_name, attrs in sorted(settings.items()):
+        node = targets.get(node_name)
+        if not node:
+            unmatched.append("%s (%d settings)" % (node_name, len(attrs)))
+            continue
+        for attr, value in sorted(attrs.items()):
+            plug = "%s.%s" % (node, attr)
+            try:
+                if (cmds.connectionInfo(plug, isDestination=True)
+                        or not cmds.getAttr(plug, settable=True)):
+                    unmatched.append("%s.%s (locked or driven)" % (node_name, attr))
+                    continue
+                cmds.setAttr(plug, value)
+            except (RuntimeError, ValueError, TypeError):
+                unmatched.append("%s.%s" % (node_name, attr))
+                continue
+            applied += 1
+    return applied, unmatched
+
+
 def apply_keys(namespace, info):
     """Replace the asset's keys with a published set: import its curves,
     delete the keys already on the asset, then connect each curve to the
-    same control and channel by name, on the frames it was published on.
-    Curves whose control or channel isn't on this rig (or is locked) are
-    left out. Returns (curves applied, [controls that didn't match])."""
+    same control and channel by name, on the frames it was published on,
+    and set its unkeyed settings. Curves whose control or channel isn't on
+    this rig (or is locked) are left out. Returns (curves applied,
+    settings applied, [controls that didn't match])."""
     with open(info["map"], "r") as f:
-        mapping = json.load(f)["curves"]
-    ns, curves = _import_into_root(info["keys"], "buildKeys")
+        data = json.load(f)
+    mapping = data.get("curves") or {}
+    ns, curves = (_import_into_root(info["keys"], "buildKeys") if mapping
+                  else (None, {}))
     applied, unmatched = 0, []
     try:
         clear_keys(namespace)
@@ -1415,9 +1445,12 @@ def apply_keys(namespace, info):
             cmds.connectAttr(new + ".output", plug, force=True)
             cmds.rename(new, ":%s_%s_%s" % (namespace.replace(":", "_"), node_name, attr))
             applied += 1
+        set_count, set_unmatched = apply_settings(targets, data.get("settings") or {})
+        unmatched += set_unmatched
     finally:
-        _drop_namespace(ns)
-    return applied, unmatched
+        if ns:
+            _drop_namespace(ns)
+    return applied, set_count, unmatched
 
 
 def build_keys(shot_dir, published, kid, info=None):
@@ -1434,9 +1467,10 @@ def build_keys(shot_dir, published, kid, info=None):
         _set_keys_record(key, NO_KEYS)
         return ["keys removed (%d curves)" % removed], None
     label = keys_label(kid, info, this_shot=os.path.basename(os.path.normpath(shot_dir)))
-    applied, unmatched = apply_keys(namespace, info)
+    applied, settings, unmatched = apply_keys(namespace, info)
     _set_keys_record(key, kid)
-    done = ["keys %s on (%d curves)" % (label, applied)]
+    done = ["keys %s on (%d curves%s)" % (
+        label, applied, ", %d unkeyed settings" % settings if settings else "")]
     warning = None
     if unmatched:
         made_on = info.get("made_on") or {}
