@@ -322,6 +322,10 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
             "map": os.path.join(folder, base + ".json"),
             "cache": os.path.join(plan["cache_folder"], "%s_%s_%s_v%03d.abc"
                                   % (shot, item["name"], code, version)),
+            # What the cache is, for Build (spec "Shaders on caches"): the
+            # asset version it came from, so its look can be found.
+            "cache_info": os.path.join(plan["cache_folder"], "%s_%s_%s_v%03d.json"
+                                       % (shot, item["name"], code, version)),
         }
         if item["kind"] == LIGHT_KIND:
             plan["item_files"][item["name"]]["light"] = os.path.join(folder, base + "_light.ma")
@@ -442,6 +446,27 @@ def export_cache(item, path, start, end):
     api._lock(path)
 
 
+def write_cache_info(item, files, plan, start, end, scene_path):
+    """The .json beside a cache: which item and asset version it is, and
+    its frames. Build lists caches by it (spec "Shaders on caches")."""
+    info = {
+        "item": item["name"],
+        "kind": item["kind"],
+        "asset": item["stamp"],
+        "shot": plan["shot"],
+        "login": plan["login"],
+        "version": plan["version"],
+        "start": start,
+        "end": end if item["animated"] else start,
+        "fps": api._scene_fps(),
+        "source_scene": os.path.basename(scene_path),
+        "roots": [r.split("|")[-1].split(":")[-1] for r in cache_roots(item)],
+    }
+    with open(files["cache_info"], "w") as f:
+        json.dump(info, f, indent=2, sort_keys=True)
+    api._lock(files["cache_info"])
+
+
 def export_light(item, path):
     """The light itself: its transform, shape, settings and keys (a group
     of lights: the group and everything in it)."""
@@ -465,7 +490,7 @@ def write_anim(items, plan, start, end, scene_path):
         if item["kind"] == LIGHT_KIND:
             targets.append(files["light"])
         elif plan["stage"] == FINAL:
-            targets.append(files["cache"])
+            targets += [files["cache"], files["cache_info"]]
     for path in targets:
         if os.path.exists(path):
             raise PublishError("%s already exists — try again." % path)
@@ -491,6 +516,8 @@ def write_anim(items, plan, start, end, scene_path):
             elif plan["stage"] == FINAL:
                 export_cache(item, files["cache"], start, end)
                 written.append(files["cache"])
+                write_cache_info(item, files, plan, start, end, scene_path)
+                written.append(files["cache_info"])
     except Exception:
         for path in written:
             _writable_remove(path)

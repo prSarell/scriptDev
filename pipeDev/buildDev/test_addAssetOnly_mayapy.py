@@ -99,7 +99,7 @@ asset_side = dept_codes()
 p.set_current(code="env")
 check("picker: Environment is on the Shot side beside Camera, not an asset department "
       "(user, 2026-10-26), and lists assets", "env" not in asset_side
-      and dept_codes() == ["cam", "env"] and p.kind() == "shot"
+      and dept_codes() == ["cam", "env", "cache"] and p.kind() == "shot"
       and p.group_combo.toolTip() == "Asset type")
 p.set_current(film=FILM, code="rig")
 check("picker: Rigging lists no assets (nothing published for it)", p.name() is None)

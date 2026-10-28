@@ -87,7 +87,7 @@ check("Animation's picker: Rigging on the Asset side", tab.picker.department() =
       and "lookDev" not in codes(tab))
 tab.picker.set_current(code="cam")
 check("Animation's picker: Camera on the Shot side", tab.picker.kind() == picker.SHOT
-      and set(codes(tab)) == {"cam", "env"})
+      and set(codes(tab)) == {"cam", "env", "cache"})
 
 tab.dept_combo.setCurrentIndex(tab.dept_combo.findData("model"))
 kinds = tab.picker.kind_combo.model()

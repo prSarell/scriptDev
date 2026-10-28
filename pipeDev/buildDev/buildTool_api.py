@@ -87,16 +87,21 @@ def shot_of_scene(scene_path, scratch_root):
 # ---------------------------------------------------------------------------
 
 CAMERA_CODE = "cam"
+CACHE_CODE = "cache"
+DEPT_LABELS[CACHE_CODE] = "Anim Cache"
 ENV_CODE = pub.ENV_CODE
 # (label, department code, what it builds: published department codes,
-# "cam" for the shot camera, "env" for environments; None = coming soon).
+# "cam" for the shot camera, "env" for environments, "cache" for the shot's
+# animation caches; None = coming soon).
 BUILD_FOR = [
     ("Modeling", "model", ["model"]),
     ("Rigging", "rig", ["model"]),
-    ("Creature", "creature", ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE]),
+    ("Creature", "creature", ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE,
+                              CACHE_CODE]),
     ("LookDev", "lookDev", ["model", "lookDev"]),
     ("Layout", "layout", ["model", "rig", ENV_CODE, CAMERA_CODE]),
-    ("Animation", "anim", ["model", "rig", ENV_CODE, CAMERA_CODE]),
+    # Caches too, "occasionally to compare changes" (user, 2026-10-28).
+    ("Animation", "anim", ["model", "rig", ENV_CODE, CAMERA_CODE, CACHE_CODE]),
     ("FX", "fx", None),
     ("Lighting", "lighting", None),
 ]
@@ -291,6 +296,54 @@ def list_shot_cameras(h_root, film, seq, shot):
             _add_version(entry, login, version, files["camera"])
             entry["files"][version_id(login, version)] = files
     return [_finish(entry)] if entry["files"] else []
+
+
+# A Final animation publish's caches (publishTool_anim): one Alembic per
+# item, in the shot's cache\alembic\<login>\, with a .json beside it saying
+# what it is.
+CACHE_RE = re.compile(r"^(?P<item>.+)_anim_v(?P<version>\d{3})\.abc$", re.IGNORECASE)
+
+
+def _read_json(path):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (IOError, OSError, ValueError):
+        return None
+
+
+def list_shot_caches(h_root, film, seq, shot):
+    """The shot's published animation caches on the H drive (everyone's),
+    one entry per item shaped like list_published()'s, plus 'kind':
+    'cache', 'cache_info': {vid: the .json beside it}. asset_type is the
+    cached asset's type ('shot' for something made in the shot), code
+    'cache'. Caches from before per-person folders, or without their .json
+    (published before 2026-10-28), are left out: republish them."""
+    caches = os.path.join(shot_folder(h_root, film, seq, shot), "cache", "alembic")
+    groups = {}
+    if not os.path.isdir(caches):
+        return []
+    for login in sorted(os.listdir(caches)):
+        folder = os.path.join(caches, login)
+        if not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            if not name.lower().startswith(shot.lower() + "_"):
+                continue
+            m = CACHE_RE.match(name[len(shot) + 1:])
+            path = os.path.join(folder, name)
+            info = _read_json(os.path.splitext(path)[0] + ".json") if m else None
+            if not info:
+                continue
+            stamp = info.get("asset") or {}
+            asset_type = stamp.get("assetType") or "shot"
+            key = (asset_type, info.get("item") or m.group("item"))
+            entry = groups.setdefault(key, {
+                "kind": "cache", "asset_type": key[0], "asset": key[1], "code": CACHE_CODE,
+                "versions": {}, "info": {}, "cache_info": {}})
+            _add_version(entry, login.lower(), int(m.group("version")), path)
+            entry["cache_info"][version_id(login.lower(), int(m.group("version")))] = info
+    return [_finish(groups[k]) for k in sorted(groups, key=lambda k: (k[0], k[1].lower()))]
 
 
 def _camera_map_format(path):
@@ -783,12 +836,19 @@ def newer_maya_warning(path):
     return None
 
 
-def build_asset(shot_dir, published, vid):
+def build_asset(shot_dir, published, vid, department=None):
     """Build one asset (see _build_asset), then point any MetaHuman DNA
     nodes it brought at their files on this drive (pipeEnv.fix_dna_paths:
-    DNA nodes can't read $PIPE_SCRATCH)."""
+    DNA nodes can't read $PIPE_SCRATCH). A cache also gets its look, picked
+    by the department building (apply_look)."""
     done, warning, replaced = _build_asset(shot_dir, published, vid)
-    if published.get("kind") != "camera":
+    if published.get("kind") == "cache":
+        look_done, look_warning = apply_look(shot_dir, published, vid, department)
+        if look_done and done == ["already up to date"]:
+            done = []
+        done += look_done
+        warning = " ".join(w for w in (warning, look_warning) if w) or None
+    if published.get("kind") not in ("camera", "cache"):
         fixed = pipeEnv.fix_dna_paths()
         if fixed:
             if done == ["already up to date"]:
@@ -895,6 +955,10 @@ def _build_asset(shot_dir, published, vid):
         done.append("scene reference switched to %s" % label)
         return done, warning, replaced
 
+    if published.get("kind") == "cache":
+        reference_cache(ref_path, namespace)
+        done.append("cache referenced into scene (%s_GRP, display: Reference)" % namespace)
+        return done, warning, replaced
     reference_into_scene(ref_path, namespace)
     done.append("referenced into scene")
     return done, warning, replaced
@@ -1636,6 +1700,184 @@ def reference_into_scene(path, namespace):
     free_namespace(namespace)
     cmds.file(path, reference=True, namespace=namespace, mergeNamespacesOnClash=False)
     return path
+
+
+def reference_cache(path, namespace):
+    """Reference an animation cache (Alembic) into the open scene beside the
+    live rig (user, 2026-10-28: Animation builds caches "occasionally to
+    compare changes"): its own namespace (scout_cache:) and group
+    (scout_cache_GRP), and display type Reference so it shows shaded but
+    can't be selected or edited by accident."""
+    if not cmds.pluginInfo("AbcImport", query=True, loaded=True):
+        cmds.loadPlugin("AbcImport", quiet=True)
+    free_namespace(namespace)
+    group = namespace + "_GRP"
+    cmds.file(path, reference=True, type="Alembic", namespace=namespace,
+              mergeNamespacesOnClash=False, groupReference=True, groupName=group)
+    group = cmds.ls(group, long=True) or cmds.ls("*:" + group, long=True)
+    if group:
+        cmds.setAttr(group[0] + ".overrideEnabled", 1)
+        cmds.setAttr(group[0] + ".overrideDisplayType", 2)     # Reference
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Shaders on caches (spec §4 "Shaders on caches, automatic", user
+# 2026-10-28): an Alembic carries no shaders, so Build puts back the look
+# of the asset version the cache came from (publishTool_look writes it with
+# every rig and model publish). Which look depends on the department
+# building: Layout and Animation get the rig's (or model's) look, what the
+# animator saw; Lighting gets the asset's newest LookDev look, or the rig's
+# if LookDev hasn't published one.
+# ---------------------------------------------------------------------------
+
+LOOK_SUFFIX = "_look"
+LOOK_ATTR = "pipe_look"         # on the cache group: the look file it wears
+
+
+def _published_source(h_root, film, stamp):
+    """The H-drive publish an asset stamp names, or None."""
+    login, version = stamp.get("artistId"), stamp.get("version")
+    if not (stamp.get("assetType") and stamp.get("asset") and stamp.get("department")
+            and login and version):
+        return None
+    folder = os.path.join(asset_folder(h_root, film, stamp["assetType"], stamp["asset"]),
+                          "scenes", login)
+    for ext in (".ma", ".mb"):
+        path = os.path.join(folder, pub.published_name(stamp["asset"], login,
+                                                       stamp["department"], version, ext))
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _look_of(path):
+    """(look .ma, look .json) of a published file, or None if it has none."""
+    stem = os.path.splitext(path)[0] + LOOK_SUFFIX
+    files = (stem + ".ma", stem + ".json")
+    return files if all(os.path.isfile(f) for f in files) else None
+
+
+def look_for_cache(h_root, film, info, department=None):
+    """(look .ma, look .json, the publish it belongs to) for a cache's
+    .json info, or None (made in the shot, or published without a look).
+    Lighting: the asset's newest LookDev publish with a look first."""
+    stamp = info.get("asset") or {}
+    if department == "lighting" and stamp.get("asset"):
+        lookdev = [p for p in list_published(h_root, film)
+                   if (p["asset_type"], p["asset"], p["code"])
+                   == (stamp.get("assetType"), stamp["asset"], "lookDev")]
+        for p in lookdev:
+            for vid in sorted_versions(p):
+                look = _look_of(p["versions"][vid])
+                if look:
+                    return look + (p["versions"][vid],)
+    source = _published_source(h_root, film, stamp)
+    look = _look_of(source) if source else None
+    return look + (source,) if look else None
+
+
+def _pull_textures(source, maya_dir):
+    """The textures published with source, into the shared publish folder
+    (where the look's $PIPE_SCRATCH paths point), without the file itself."""
+    dest = os.path.join(publish_dir(maya_dir), *_maya_rel(source).split("/"))
+    textures = texture_folder_of(source)
+    for dirpath, _, filenames in os.walk(textures):
+        for name in filenames:
+            src = os.path.join(dirpath, name)
+            _copy_if_changed(src, os.path.join(texture_folder_of(dest),
+                                               os.path.relpath(src, textures)))
+
+
+def _parts(path):
+    return [p.split(":")[-1] for p in path.split("|") if p]
+
+
+def _match_meshes(group, paths):
+    """{published path: cache transform} by name: the cache transform whose
+    path below the cache group (namespaces off) ends the published path.
+    The longest match wins, so two body_geo in different groups stay apart."""
+    transforms = set()
+    for shape in cmds.listRelatives(group, allDescendents=True, fullPath=True,
+                                    type=pub.GEOMETRY_TYPES) or []:
+        transforms.update(cmds.listRelatives(shape, parent=True, fullPath=True) or [])
+    depth = len(_parts(group))
+    found = {}
+    for path in paths:
+        want = _parts(path)
+        best, best_len = None, 0
+        for t in transforms:
+            rel = _parts(t)[depth:]
+            if rel and len(rel) > best_len and want[-len(rel):] == rel:
+                best, best_len = t, len(rel)
+        if best:
+            found[path] = best
+    return found
+
+
+def apply_look(shot_dir, published, vid, department=None):
+    """Put the look on a cache built into the open scene: import the look's
+    materials (namespace <cache namespace>_look), make its shading groups
+    again and assign them by mesh name. A cache already wearing this look
+    is left alone. Returns (done lines, warning or None)."""
+    info = (published.get("cache_info") or {}).get(vid) or {}
+    namespace = namespace_for(published["asset"], published["code"])
+    group = (cmds.ls(namespace + "_GRP", long=True) or [None])[0]
+    if not group:
+        return [], None
+    h_root, rel = pub.find_film_folder(published["versions"][vid])
+    look = look_for_cache(h_root, rel[0], info, department)
+    if not look:
+        if info.get("kind") in ("rig", "model"):
+            return [], ("no look to put on the cache: %s v%03d was published without one "
+                        "(republish it to get one)." % (info["kind"], (info.get("asset") or {})
+                                                        .get("version") or 0))
+        return [], None
+    look_ma, look_json, source = look
+    with open(look_json, "r") as f:
+        data = json.load(f)
+    worn = (cmds.getAttr(group + "." + LOOK_ATTR)
+            if cmds.attributeQuery(LOOK_ATTR, node=group, exists=True) else None)
+    look_ns = namespace + "_look"
+    name = os.path.basename(look_ma)
+    if worn == name and cmds.namespace(exists=":" + look_ns):
+        return [], None
+
+    maya_dir = maya_dir_of_shot(shot_dir)
+    local, _ = copy_published(look_ma, maya_dir)
+    _pull_textures(source, maya_dir)
+    if cmds.namespace(exists=":" + look_ns):    # an older look: Build's own, replaced
+        cmds.namespace(removeNamespace=":" + look_ns, deleteNamespaceContent=True)
+    pipeEnv.set_from_path(shot_dir)
+    cmds.file(local, i=True, type="mayaAscii", namespace=look_ns,
+              mergeNamespacesOnClash=False, preserveReferences=False)
+
+    matches = _match_meshes(group, [m["path"] for e in data["shading_groups"].values()
+                                    for m in e["members"]])
+    missed = []
+    for sg_name, entry in sorted(data["shading_groups"].items()):
+        sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True,
+                       name="%s:%s" % (look_ns, sg_name))
+        for attr, src in entry["inputs"].items():
+            plug = "%s:%s" % (look_ns, src)
+            if cmds.objExists(plug.split(".")[0]):
+                cmds.connectAttr(plug, "%s.%s" % (sg, attr), force=True)
+        for member in entry["members"]:
+            target = matches.get(member["path"])
+            if not target:
+                missed.append(member["path"].split("|")[-1])
+                continue
+            cmds.sets(target + ("." + member["faces"] if member["faces"] else ""),
+                      edit=True, forceElement=sg)
+    if not cmds.attributeQuery(LOOK_ATTR, node=group, exists=True):
+        cmds.addAttr(group, longName=LOOK_ATTR, dataType="string")
+    cmds.setAttr(group + "." + LOOK_ATTR, name, type="string")
+    what = "LookDev" if "_lookDev_" in name else data.get("department") or "asset"
+    done = ["%s look v%03d put on (%d shader%s)" % (
+        what, data.get("version") or 0, len(data["shading_groups"]),
+        "" if len(data["shading_groups"]) == 1 else "s")]
+    warning = ("no cache geometry for: %s" % ", ".join(sorted(set(missed)))) if missed else None
+    return done, warning
 
 
 # ---------------------------------------------------------------------------

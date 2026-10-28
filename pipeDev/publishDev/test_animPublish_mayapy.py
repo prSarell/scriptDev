@@ -138,8 +138,14 @@ check("all published files read-only", all(not os.access(os.path.join(h_scenes, 
 approvals = {"blocking": {"type": "Task", "id": 11}, "final": {"type": "Task", "id": 12}}
 plan = anim.publish_anim(scene, H, SC, objs)
 check("approved Final: the republish is final", plan["stage"] == "final" and plan["version"] == 3)
-check("final: one Alembic per item, the static one too", listing(caches) == [
-    "EAP_010_010_backpack_anim_v003.abc", "EAP_010_010_ball_anim_v003.abc", "EAP_010_010_rock_anim_v003.abc"])
+check("final: one Alembic per item, the static one too, each with its .json", listing(caches) == [
+    "EAP_010_010_backpack_anim_v003.abc", "EAP_010_010_backpack_anim_v003.json",
+    "EAP_010_010_ball_anim_v003.abc", "EAP_010_010_ball_anim_v003.json",
+    "EAP_010_010_rock_anim_v003.abc", "EAP_010_010_rock_anim_v003.json"])
+info = json.load(open(os.path.join(caches, "EAP_010_010_backpack_anim_v003.json")))
+check("cache .json: the item and the asset version it came from",
+      info["item"] == "backpack" and info["kind"] == "model" and info["version"] == 3
+      and info["asset"]["sgAssetId"] == 1577 and info["asset"]["version"] == 8)
 cmds.file(new=True, force=True)
 cmds.loadPlugin("AbcImport", quiet=True)
 cmds.AbcImport(os.path.join(caches, "EAP_010_010_ball_anim_v003.abc"), mode="import")

@@ -55,6 +55,15 @@ hand. One T7 session could cover most of it.
       the picker offers Modeling / Rigging / Environment / Camera; switch
       to Modeling and check only models show, Shot greyed out; open a rig
       scene and check it moves to Rigging.
+- [ ] **Shaders on caches** (built 2026-10-28, spec "Shaders on caches"):
+      republish Scout's rig (it gets `_look.ma` / `_look.json` beside it)
+      and a textured model; check the look files open with only shaders
+      in them. Rebuild the rig into SEQ010_140, publish Animation with
+      the Final approved, then in an Animation scene pick Anim Cache, +,
+      Build: the cache sits in `scoutrig_cache_GRP` (Reference display)
+      beside the rig, wearing the rig's shaders and textures. Does Scout's
+      MetaHuman face come through? Does the Reference display suit
+      comparing, or should it be selectable / templated?
 - [ ] **Lighting build** (spec §4 "Shot working folders"): Build a shot
       for rendering: newest Final caches, camera, full environment. Comes
       with Build by department; needs the open LookDev / lights decisions.

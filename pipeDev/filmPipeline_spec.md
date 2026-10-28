@@ -1334,7 +1334,8 @@ The tools are developed side by side:
         publishes. The shot's list isn't filtered:
         rows already on it stay whatever the department. Test:
         `buildDev/test_buildDepartment_mayapy.py` (22/22).
-      - **Shaders on caches, automatic (WANTED 2026-10-28, not built):**
+      - **Shaders on caches, automatic (WANTED 2026-10-28, BUILT the same
+        day, see "Built" below):**
         "I want to automate texture application to caches in the pipe."
         Where a rig's look comes from (user): "For rigs they are on the
         model (from the model publish) and added by the artist before
@@ -1369,6 +1370,47 @@ The tools are developed side by side:
             versions of existing assets".
           - OPEN: MetaHuman face shaders (many maps, DNA-driven) may need
             their own handling.
+        - **Built 2026-10-28** (user: "are you good to build it?"):
+          1. **Look files** (`publishDev/publishTool_look.py`): rig and
+             model publishes write `<published>_look.ma` (the material
+             networks only: what feeds each shading group, never the
+             shading groups, which would drag the meshes in) and
+             `<published>_look.json` (each shading group's inputs and its
+             members by namespace-free path, with face ranges). Rig: the
+             cache_SET geometry; model: what's in the model group. Written
+             inside PublishedTextures, so textures already point at H.
+             Maya's default shader only = no look. The group stamp gets
+             `pipe_look`; the ShotGrid note says so. A failed export takes
+             the look files off again. Test: `test_look_mayapy.py`.
+          2. **Caches in Build**: a Final anim publish writes a `.json`
+             beside each `.abc` (item, kind, the asset stamp it came from,
+             frames, roots). `buildTool_api.list_shot_caches` lists them
+             (one entry per item, code `cache`, typed by its asset; caches
+             without a `.json` are left out: republish). Picker: **Anim
+             Cache** on the Shot side, for Animation and Creature only; +
+             adds every cached item of the shot (only into its own shot,
+             like the camera). Built through the same pull/repoint path as
+             other publishes, referenced with `$PIPE_SCRATCH`; Claude's
+             call: namespace `<item>_cache:` and group `<item>_cache_GRP`
+             with display type **Reference** (shaded, not selectable). A
+             newer version repoints the same reference. No Keys column for
+             caches.
+          3. **Look on the cache** (`apply_look`, run by `build_asset`
+             with the Build window's department): `look_for_cache` follows
+             the cache's `.json` to the rig/model publish's look; for
+             Lighting, the asset's newest LookDev publish with a look
+             first. The look's materials are imported into
+             `<item>_cache_look:`, its shading groups made again there and
+             assigned by mesh path (longest matching path below the cache
+             group; faces too). The textures of the publish the look comes
+             from are pulled into scratch `publish\`. The cache group's
+             `pipe_look` says which look it wears; the same look isn't
+             imported twice; a different one (e.g. a new rig version)
+             replaces Build's old look namespace. Meshes it can't match are
+             listed as a warning. Test: `buildDev/test_buildCache_mayapy.py`.
+          - Not yet: LookDev publishes don't write a look (they use the
+            plain publish path), so Lighting falls back to the rig's look
+            for now; Lighting itself is still "coming soon" in Build.
     - **Build into an asset scene = import, never reference (DECIDED +
       BUILT 2026-10-28):** "if an artist pulls a published asset from the
       h drive it should not be referenced... a rule for all assets, so the

@@ -1148,10 +1148,23 @@ def export_rig_to_h_drive(objects, plan, scene_path, textures=(), dna=(), face_f
     plan["set_uuids"] = list(plan.get("set_uuids") or []) + [d["uuid"] for d in dna or []]
     sets = plan.get("control_sets") or {}
     pipe_sets = [plan.get("cache_set"), sets.get("body"), sets.get("face")]
+    import publishTool_look as look
     with _AddedToSet(*face_fill), _PublishSet(plan, pipe_sets), \
             tex.PublishedTextures(textures, plan, dna) as files:
         with _RigGroup(plan, objects, rig_group_info(plan, scene_path, files)) as rig:
-            export_to_h_drive([rig.group] if objects else [], plan)
+            # The look of what the rig caches (its cache_SET), for animation
+            # caches (spec "Shaders on caches").
+            cache_set = plan.get("cache_set")
+            roots = (cache_transforms(cmds.sets(cache_set, query=True) or [])
+                     if cache_set and cmds.objExists(cache_set) else [])
+            looks = look.export_look(plan, roots) if roots else None
+            if looks:
+                _stamp(rig.group, [("look", os.path.basename(looks[0]))])
+            try:
+                export_to_h_drive([rig.group] if objects else [], plan)
+            except Exception:
+                look.remove(looks)      # no publish: no look left behind
+                raise
     if files.stamp_dna:
         plan.setdefault("warnings", []).append(
             "MetaHuman DNA published: %s. Check head and body point at the right files."
@@ -1516,16 +1529,25 @@ def _export_model(objects, plan, info):
                 group = make_pipe_group(group_name)
                 made.append(cmds.ls(group, uuid=True)[0])
                 cmds.parent(cmds.ls(copies, long=True), group)
-                _stamp(group, info)
+                # The model's look, for animation caches (spec "Shaders on
+                # caches"): the copies share the originals' shaders, so only
+                # what's assigned inside the group counts.
+                import publishTool_look as look
+                looks = look.export_look(plan, [cmds.ls(group, long=True)[0]])
+                _stamp(group, info + ([("look", os.path.basename(looks[0]))] if looks else []))
                 finish_pipe_group(group)
                 cmds.select(group, replace=True)
                 # Unknown plug-in data (old editor bookmarks, Redshift...)
                 # never belongs to a model and stops a .ma being written.
-                with _WithoutUnknownData() as unknown:
-                    cmds.file(plan["dest"], exportSelected=True, type=file_type,
-                              constructionHistory=True, channels=True, constraints=True,
-                              expressions=True, shader=True, preserveReferences=True,
-                              force=True)
+                try:
+                    with _WithoutUnknownData() as unknown:
+                        cmds.file(plan["dest"], exportSelected=True, type=file_type,
+                                  constructionHistory=True, channels=True, constraints=True,
+                                  expressions=True, shader=True, preserveReferences=True,
+                                  force=True)
+                except Exception:
+                    look.remove(looks)      # no publish: no look left behind
+                    raise
                 plan["left_out"]["unknown"] = len(unknown.removed)
                 plan["left_out"]["requires"] = drop_unknown_requires(plan["dest"])
             finally:
@@ -2090,6 +2112,9 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     if plan.get("textures"):
         note += "\nTextures: %d file(s), MetaHuman DNA: %d, in %s" % (
             plan["textures"]["files"], plan["textures"].get("dna", 0), plan["textures"]["folder"])
+    if plan.get("look"):
+        note += "\nLook (for animation caches): %d shading group(s), %s" % (
+            plan["look"]["shading_groups"], os.path.basename(plan["look"]["file"]))
     if notes.strip():
         # The student's own words first, the file details underneath.
         note = notes.strip() + "\n\n---\n" + note

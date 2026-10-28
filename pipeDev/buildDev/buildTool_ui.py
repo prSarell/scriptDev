@@ -50,7 +50,10 @@ BUILD_DEPARTMENTS = (
     [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
      if code in ASSET_DEPARTMENTS] +
     [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True),
-     (api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.SHOT, True, picker.ASSET)])
+     (api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.SHOT, True, picker.ASSET),
+     (api.DEPT_LABELS[api.CACHE_CODE], api.CACHE_CODE, picker.SHOT, True)])
+# Published for a shot itself, not an asset: they only build into it.
+SHOT_ITEMS = ("camera", "cache")
 
 
 def picker_departments(department):
@@ -378,6 +381,8 @@ class BuildShotTab(QtWidgets.QWidget):
         self._published = api.list_published(h_root, film)
         # The shot's own camera, if one has been published (spec "Cameras").
         self._published += api.list_shot_cameras(h_root, film, seq, shot)
+        # And its Final animation caches (one per item), added with +.
+        self._published += api.list_shot_caches(h_root, film, seq, shot)
         self.picker.refill()
 
         shot_dir = self._shot_dir()
@@ -446,7 +451,7 @@ class BuildShotTab(QtWidgets.QWidget):
         # Keys: an asset already in the scene starts at the keys Build put
         # on it, or "keep" if Build didn't (keyed by hand: never wiped
         # unasked). A new one starts at this shot's latest keys.
-        if p.get("kind") == "camera":
+        if p.get("kind") in SHOT_ITEMS:
             keys = None
         elif in_scene is not None:
             keys = api.keys_in_scene(p) or api.KEEP_KEYS
@@ -471,7 +476,7 @@ class BuildShotTab(QtWidgets.QWidget):
 
     def _keys_for(self, p, shot):
         """{keys id: info} published in shot for this row's asset."""
-        if not shot or p.get("kind") == "camera":
+        if not shot or p.get("kind") in SHOT_ITEMS:
             return {}
         if shot not in self._shot_keys:
             h_root = self._get_roots()[0]
@@ -684,7 +689,7 @@ class BuildShotTab(QtWidgets.QWidget):
         for p in self._rows:
             if p["code"] not in codes:
                 codes.append(p["code"])
-        order = api.DEPT_CODES + [api.CAMERA_CODE]
+        order = api.DEPT_CODES + [api.CAMERA_CODE, api.CACHE_CODE]
         codes.sort(key=lambda c: order.index(c) if c in order else len(order))
         self.filter_combo.blockSignals(True)
         self.filter_combo.clear()
@@ -717,13 +722,19 @@ class BuildShotTab(QtWidgets.QWidget):
                                      % ("shot" if self._target_shot else "asset",
                                         target[0], target[0]), ok=False)
             return
+        what = "caches" if code == api.CACHE_CODE else "camera"
         if self._target_asset and self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
-            self.status.show_message("A shot's camera only builds into its own shot.", ok=False)
+            self.status.show_message("A shot's %s only build%s into its own shot."
+                                     % (what, "" if what == "caches" else "s"), ok=False)
             return
         if self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
             if (group, name) != tuple(self._target_shot[1:]):
-                self.status.show_message("A shot's camera only builds into its own shot (%s)."
-                                         % self._target_shot[2], ok=False)
+                self.status.show_message("A shot's %s only build%s into its own shot (%s)."
+                                         % (what, "" if what == "caches" else "s",
+                                            self._target_shot[2]), ok=False)
+                return
+            if code == api.CACHE_CODE:
+                self._add_caches()
                 return
             match = [p for p in self._published if p.get("kind") == "camera"]
         else:
@@ -743,6 +754,28 @@ class BuildShotTab(QtWidgets.QWidget):
         if self.filter_combo.currentData() not in (None, code):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
+
+    def _add_caches(self):
+        """+ with Anim Cache: every cached item of the shot not already in
+        the list, ticked (one row each; - takes off the ones not wanted)."""
+        caches = [p for p in self._published if p.get("kind") == "cache"]
+        if not caches:
+            self.status.show_message("This shot has no animation caches yet: they come from "
+                                     "an Animation publish once the shot's Final is "
+                                     "approved.", ok=False)
+            return
+        have = set(self._key(r) for r in self._rows)
+        new = [p for p in caches if self._key(p) not in have]
+        if not new:
+            self.status.show_message("The shot's caches are already in the list.", ok=False)
+            return
+        for p in new:
+            self._removed.discard(self._key(p))
+            self._rows.append(self._row(p, p["latest"]))
+        if self.filter_combo.currentData() not in (None, api.CACHE_CODE):
+            self.filter_combo.setCurrentIndex(0)    # don't add them out of sight
+        self._render_table()
+        self.status.show_message("Added caches: %s" % ", ".join(p["asset"] for p in new))
 
     def _remove_rows(self):
         """Take the selected rows off the list (user, 2026-10-21: list only).
@@ -864,7 +897,8 @@ class BuildShotTab(QtWidgets.QWidget):
                 label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
                 try:
                     done, warning, old = api.build_asset(shot_dir, p,
-                                                         p.get("chosen", p["latest"]))
+                                                         p.get("chosen", p["latest"]),
+                                                         self.department())
                 except Exception as e:
                     warnings.append("%s: %s" % (label, e))
                     continue
