@@ -75,9 +75,33 @@ def _config_path():
     return os.path.join(cmds.internalVar(userPrefDir=True), CONFIG_NAME)
 
 
-def load_config():
+def _carry_forward(path):
+    """A new Maya version starts with empty prefs (maya\\2027\\prefs), so the
+    first time the pipe runs there it copies the settings from the newest
+    other version's prefs (the move to 2027, 2026-10-28). Only for the real
+    prefs location (<maya>\\<version>\\prefs). Returns True if copied."""
+    prefs = os.path.dirname(path)
+    version_dir = os.path.dirname(prefs)
+    if os.path.basename(prefs).lower() != "prefs" or not os.path.basename(version_dir).isdigit():
+        return False
+    others = [p for p in glob.glob(os.path.join(os.path.dirname(version_dir), "*", "prefs", CONFIG_NAME))
+              if os.path.basename(os.path.dirname(os.path.dirname(p))).isdigit()
+              and not _same_path(p, path)]
+    if not others:
+        return False
     try:
-        with open(_config_path(), "r") as f:
+        shutil.copy2(max(others, key=os.path.getmtime), path)
+    except (IOError, OSError):
+        return False
+    return True
+
+
+def load_config():
+    path = _config_path()
+    if not os.path.isfile(path):
+        _carry_forward(path)
+    try:
+        with open(path, "r") as f:
             return json.load(f)
     except (IOError, OSError, ValueError):
         return {}
@@ -1514,11 +1538,18 @@ def _model_panel():
 def playblast_frames(plan, frame_count, objects=None, camera=None):
     """Playblast frame_count frames from the playback start (None = the
     whole playback range) into
-    <scene's asset project>/images/publish/<asset>/<code>_v###/ on scratch.
-    If objects are given, only they are shown (isolate select). If camera
-    is given, the playblast looks through it.
-    Returns (folder, files)."""
+    <scene's asset project>/images/publish/<asset>/<login>_<code>_v###/ on
+    scratch. If objects are given, only they are shown (isolate select). If
+    camera is given, the playblast looks through it.
+    Returns (folder, files).
+
+    The folder's name is the ShotGrid Version's name after the entity
+    (Shed_e131988_env_v002, like the file on H). Without the login, version
+    numbers restarting for a new login (scout -> e131988) found and reused
+    the old person's Versions, replacing their movies (2026-10-28)."""
     version_name = "%s_v%03d" % (plan["code"], plan["version"])
+    if plan.get("login"):
+        version_name = "%s_%s" % (plan["login"], version_name)
     folder = os.path.join(plan["asset_project"], "images", "publish",
                           plan["asset"], version_name)
     if os.path.isdir(folder):

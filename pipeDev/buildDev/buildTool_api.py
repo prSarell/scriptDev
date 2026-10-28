@@ -676,6 +676,43 @@ def scene_version(shot_dir, published):
     return None
 
 
+# Files from a newer Maya (the move to 2027, 2026-10-28): Maya opens older
+# scenes, not reliably newer ones, so while some machines are on 2025 and
+# some on 2027 Build says when a publish was saved in a newer Maya. Read
+# from the "requires maya" line every .ma carries, so it works for
+# publishes made before this check.
+
+_REQUIRES_MAYA = re.compile(r'^requires maya "(\d{4})')
+
+
+def saved_in_maya(path):
+    """The Maya version (e.g. 2027) a .ma was saved in, or None."""
+    if not path.lower().endswith(".ma") or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", errors="replace") as f:
+            for i, line in enumerate(f):
+                m = _REQUIRES_MAYA.match(line)
+                if m:
+                    return int(m.group(1))
+                if i > 500 or line.startswith("createNode"):
+                    break
+    except (IOError, OSError):
+        pass
+    return None
+
+
+def newer_maya_warning(path):
+    """A warning if path was saved in a newer Maya than this one, else None."""
+    made = saved_in_maya(path)
+    this = int(cmds.about(majorVersion=True))
+    if made and made > this:
+        return ("published from Maya %d, newer than this Maya (%d): it may not load "
+                "correctly here. Open this in Maya %d, or ask for it to be published "
+                "from Maya %d." % (made, this, made, this))
+    return None
+
+
 def build_asset(shot_dir, published, vid):
     """Build one asset (see _build_asset), then point any MetaHuman DNA
     nodes it brought at their files on this drive (pipeEnv.fix_dna_paths:
@@ -736,10 +773,11 @@ def _build_asset(shot_dir, published, vid):
     # the version in the publish folder for everything else.
     new_entry = read_manifest(shot_dir)[key]
     target = entry_path(shot_dir, new_entry)
-    warning = None
+    warning = newer_maya_warning(dest)
     if linked and not new_entry.get("hardlink"):
-        warning = ("this drive can't hardlink, so the rig is a full copy in this shot "
-                   "(works the same, uses more disk).")
+        warning = " ".join(w for w in (warning, "this drive can't hardlink, so the rig is a "
+                                       "full copy in this shot (works the same, uses more disk).")
+                           if w)
 
     # References are written with $PIPE_SCRATCH so the shot opens from any
     # drive (spec "Reference paths that work on any drive"). Point the
@@ -1652,6 +1690,9 @@ def import_into_asset(asset_dir, published, vid):
         done.append("textures copied into this asset's sourceimages")
     if pipeEnv.fix_dna_paths():
         done.append("MetaHuman DNA pointed at this asset's copy")
+    newer = newer_maya_warning(pulled)
+    if newer:
+        done.append(newer)
     return done
 
 

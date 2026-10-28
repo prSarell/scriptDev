@@ -198,6 +198,21 @@ hand. One T7 session could cover most of it.
 
 ## 6. Open threads (not started)
 
+- [ ] **Before the move to Maya 2027** (checked 2026-10-28, 2027 installed
+      on this machine; pipe tests all pass under it):
+      - Studio Library 2.20.2 won't import in 2027 (bundled `six` 1.12 vs
+        Python 3.13). Update it in both toolsets (newer release, or a
+        current `six`).
+      - 2027 builds needed: mGear (Scout's rig; `mGear.mod` stops at 2026),
+        MetaHuman for Maya (v1.2.50 lists 2023-2026), ngSkinTools2,
+        DuBlast, MetaHumanExtraTools, Fab bridge.
+      - Students rerun the installers in 2027 (shelves/prefs are per
+        version; scripts are shared, so tools must keep working in both).
+      - Decide: switch everyone at once, or allow a mixed year (Build now
+        warns on files from a newer Maya).
+      - If docked windows misbehave: Autodesk known issue MAYA-142238
+        (Qt AA_DontCreateNativeWidgetSiblings in userSetup.py).
+
 - [?] **PARKED 2026-10-26: things made in the shot + reusing them in
       another shot** (spec §4d). Your idea of a shot group with
       rig / model / lights / reference / cache / fx groups and sets, a

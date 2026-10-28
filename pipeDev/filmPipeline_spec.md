@@ -1657,8 +1657,22 @@ The tools are developed side by side:
               aren't in the keys file; Alembic names have no login
               (`<SHOT>_<item>_anim_v###.abc`, as decided), so two people's
               same-numbered finals would clash (the second is refused, not
-              overwritten); ShotGrid Version codes (`<SHOT>_anim_v###`) can
-              also repeat between people (existing issue for all publishes).
+              overwritten). ShotGrid Version codes used to repeat between
+              people too: **FIXED 2026-10-28.** After the move to e-numbers
+              restarted version numbers, e131988's shed env v001/v002 and
+              SEQ010_140 anim v001 were uploaded into scout's existing
+              Versions of the same name, replacing their movies. Versions
+              are now named with the login, like the file on H
+              (`Shed_e131988_env_v002`, `SEQ010_140_e131988_anim_v001`):
+              the playblast folder is `<login>_<code>_v###`. The three
+              older Versions were left holding the new movies.
+            - **Maya 2027 (2026-10-28):** the whole pipe suite passes under
+              2027's mayapy (Python 3.13, PySide6 6.8) except Studio
+              Library, whose bundled `six` 1.12 fails on Python 3.12+. The
+              pipe's settings now carry into a new version's prefs (copied
+              from the newest other `maya\<ver>\prefs` the first time), and
+              Build warns when a publish was saved in a newer Maya than the
+              one running (read from the `.ma`'s `requires maya` line).
           1. **One version number per publish:** everything from one
              animation publish shares a `v###` ("anim v003 of
              EAP_010_010").
