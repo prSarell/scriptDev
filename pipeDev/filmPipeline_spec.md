@@ -1250,13 +1250,24 @@ The tools are developed side by side:
 
       - The department sets Asset vs Shot, except Creature (both).
       - DECIDED 2026-10-28: cameras in asset scenes are never a shot's
-        camera: "a turntable or a witness camera". Witness cameras are a
-        new concept, not yet defined (OPEN: what one is, who publishes it,
-        where it lives).
+        camera: "a turntable or a witness camera".
+      - DEFINED 2026-10-28: **witness camera** = "a camera created to
+        review work from an angle other than the shot cam". It is part of
+        the "created in shot" pipe (§4d), not an asset publish. OPEN: how
+        one reaches an asset scene (the line above), whether it renders,
+        and whether it's kept out of the edit/playblast.
       - DECIDED 2026-10-28: a light rig publish is needed: "it should be
         possible to publish lights from animation, layout or fx" (today
-        lights only travel inside an anim publish). OPEN: where light rigs
-        live on H (shot or asset), and whether Lighting publishes them too.
+        lights only travel inside an anim publish). Light rigs "publish to
+        the H drive following the lighting folder inside the shot scene
+        folder same as animation or rigging is currently setup", i.e. the
+        shot's `scenes\lighting\` with a folder per person. Note: today
+        anim publishes go in `scenes\<login>\` (only working files use
+        `scenes\anim\<login>\`, "Shot working folders" above), so OPEN:
+        `scenes\lighting\<login>\` for light rig publishes, or move all
+        shot publishes under their department folder? Also OPEN: light
+        rigs for asset scenes (Modeling/LookDev) and whether Lighting
+        publishes them too.
       - LEANING 2026-10-28 (user "not sure about this yet"): no separate
         texture publish. "Textures are part of look dev... look dev is
         really about develop textures with shaders." A LookDev publish
@@ -1265,9 +1276,17 @@ The tools are developed side by side:
         publish does (`publishTool_textures.py`, UDIMs/sequences/.tx
         already handled). No publish tool inside Substance Painter:
         artists export from Painter into the asset's `sourceimages\` and
-        publish from Maya. OPEN: what "textures" means for Modeling and
-        Rigging in Build (the ones in the model/rig publish, or the
-        LookDev ones?), and how LookDev shaders get onto rigs and caches.
+        publish from Maya. OPEN: how LookDev shaders get onto rigs and
+        caches.
+      - DECIDED 2026-10-28: **textures for a model** are "textures created
+        for the model as part of the modeling process", possibly made in
+        other software, loaded on the model through a shader. The model
+        publish finds them by walking the model's shader networks, "just
+        like it currently does for the rig". A model can also be published
+        without textures. So Modeling/Rigging's "textures" in Build = the
+        ones carried in the model/rig publish. NOT BUILT: today only the
+        rig (and environment) publish calls `publishTool_textures.collect`;
+        a model publish leaves its file nodes pointing at scratch.
       - DECIDED 2026-10-28: Animation gets caches too ("occasionally to
         compare changes etc"); FX does not get rigs. Animation row:
         rigs, environment, camera, layout/anim keys, animation caches.
