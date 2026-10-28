@@ -28,6 +28,7 @@ import glob
 import json
 import stat
 import shutil
+import tempfile
 from datetime import datetime
 
 import maya.cmds as cmds
@@ -1825,6 +1826,23 @@ def task_on(sg_entity, name):
     return None
 
 
+def newest_approved(sg_entity, task):
+    """True when the newest Version on task (a Task on sg_entity) is
+    Approved: the publish going on that task is a Final publish (user,
+    2026-10-28). Shots: caches; assets and Layout: no caches, but a green
+    thumbnail border, and whatever Final triggers later."""
+    if not task:
+        return False
+    return any(t["id"] == task["id"] for t in approved_tasks(sg_entity).values())
+
+
+# Each asset department's publishes go on a Task of this name on the
+# ShotGrid Asset (user, 2026-10-28: department Tasks, like the shots'
+# Final task). desktopDev/asset_tasks.py makes them.
+ASSET_TASKS = {"model": "Model", "rig": "Rig", "creature": "Creature",
+               "lookDev": "LookDev", "env": "Environment"}
+
+
 def link_version_to_task(plan, task):
     """Point the publish's ShotGrid Version at its Task. Best effort: the
     publish itself is already done."""
@@ -1856,7 +1874,60 @@ def upload_with_audio(sg, plan, audio_path, audio_offset, *args, **kwargs):
     import inspect
     if plan.get("movie_path") and "movie_path" in inspect.signature(sg.upload_playblast).parameters:
         kwargs["movie_path"] = plan["movie_path"]
-    return sg.upload_playblast(*args, **kwargs)
+    version = sg.upload_playblast(*args, **kwargs)
+    upload_bordered_thumbnail(sg, plan, version, args[0], args[1], kwargs.get("files"))
+    return version
+
+
+# Publish thumbnail borders (user, 2026-10-28): a pipe publish's ShotGrid
+# thumbnail gets a dark blue border when it's iterative and a bright green
+# one when it's Final, so they stand out from plain shotSub Versions (no
+# border). Only the thumbnail: the movie stays as it is.
+BORDER_ITERATIVE = (25, 45, 120)
+BORDER_FINAL = (40, 230, 70)
+
+
+def bordered_thumbnail(path, final):
+    """A copy of the JPEG at path with a blue (iterative) or green (final)
+    border, in a new temp folder. Returns the copy's path."""
+    from PySide6 import QtGui
+    image = QtGui.QImage(path)
+    if image.isNull():
+        raise RuntimeError("couldn't read %s" % path)
+    width, height = image.width(), image.height()
+    edge = max(8, int(min(width, height) * 0.05))
+    colour = QtGui.QColor(*(BORDER_FINAL if final else BORDER_ITERATIVE))
+    painter = QtGui.QPainter(image)
+    for x, y, w, h in ((0, 0, width, edge), (0, height - edge, width, edge),
+                       (0, 0, edge, height), (width - edge, 0, edge, height)):
+        painter.fillRect(x, y, w, h, colour)
+    painter.end()
+    out = os.path.join(tempfile.mkdtemp(prefix="pipeThumb_"), os.path.basename(path))
+    if not image.save(out, "JPG", 95):
+        raise RuntimeError("couldn't write %s" % out)
+    return out
+
+
+def upload_bordered_thumbnail(sgc, plan, version, entity_type, entity_id, files):
+    """Replace the thumbnail upload_playblast just set (its middle frame, on
+    the Version and its Shot/Asset) with the same frame bordered. Uploaded
+    after the movie, so ShotGrid's own thumbnail from the movie doesn't come
+    later. Publishes without plan['final'] (shotSub never has one) are left
+    alone; a failure is a warning, never a failed publish."""
+    if "final" not in plan or not (version and files):
+        return
+    try:
+        thumb = bordered_thumbnail(files[len(files) // 2], plan["final"])
+        try:
+            sg = sgc.get_connection()
+            sg.upload_thumbnail("Version", version["id"], thumb)
+            sg.upload_thumbnail(entity_type, entity_id, thumb)
+        finally:
+            shutil.rmtree(os.path.dirname(thumb), ignore_errors=True)
+    except Exception as e:
+        plan.setdefault("warnings", []).append(
+            "The ShotGrid thumbnail has no %s border: %s"
+            % ("Final (green)" if plan["final"] else "iterative (blue)", e))
 
 
 def review_before_publish(plan, review, project, audio_path=None, audio_offset=0.0):
@@ -2009,6 +2080,15 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     plan["movie_warning"] = None if rvio else (
         "RV's rvio wasn't found on this machine, so ShotGrid got a thumbnail "
         "but no playable movie.")
+    # The department's Task on the Asset; Final when its newest Version is
+    # Approved (user, 2026-10-28). No Task yet: iterative, Version unlinked.
+    plan["sg_task"], plan["final"] = None, False
+    try:
+        plan["sg_task"] = task_on(plan["sg_asset"], ASSET_TASKS.get(code, code))
+        plan["final"] = newest_approved(plan["sg_asset"], plan["sg_task"])
+    except Exception as e:
+        plan.setdefault("warnings", []).append(
+            "Couldn't check ShotGrid for a Final approval (published as iterative): %s" % e)
     try:
         plan["sg_version"] = upload_with_audio(
             _shotgrid(), plan, plan["audio"], audio_offset,
@@ -2018,6 +2098,13 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     except Exception as e:     # H-drive copy already done; report, don't lose it
         plan["sg_error"] = str(e)
     else:
+        if plan["sg_task"]:
+            link_version_to_task(plan, plan["sg_task"])
+        else:
+            plan.setdefault("warnings", []).append(
+                "The ShotGrid Asset has no %s task, so this publish can't be approved "
+                "for Final yet (staff: run desktopDev/asset_tasks.py)."
+                % ASSET_TASKS.get(code, code))
         if not note_no_movie(plan):
             # ShotGrid has the frames/movie now, so the local copies on
             # scratch are no longer needed. Kept if the upload failed or

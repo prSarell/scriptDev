@@ -543,6 +543,11 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     plan["objects"] = [i["root"] for i in items]
     plan["sg_shot"] = cam.find_shotgrid_shot(plan, h_root)
     plan["stage"], plan["sg_task"] = publish_stage(plan["sg_shot"], publish_for)
+    # Final = green thumbnail border (user, 2026-10-28). Animation: the
+    # caching stage. Layout: Final when the Layout task's newest Version is
+    # Approved, but still never caches.
+    plan["final"] = plan["stage"] == FINAL or (
+        plan["stage"] == LAYOUT and api.newest_approved(plan["sg_shot"], plan["sg_task"]))
     cam_plan = edit_warning = None
     start = int(cmds.playbackOptions(query=True, minTime=True))
     end = int(cmds.playbackOptions(query=True, maxTime=True))

@@ -31,6 +31,14 @@ hand. One T7 session could cover most of it.
       `scenes\layout, anim, fx, lighting`. Set Project on SEQ010_140 and
       check your `scenes\lighting\e131988\` etc. Publish Animation (Final
       approved) and check the caches land in `cache\alembic\e131988\`.
+- [ ] **Asset department Tasks** (spec "Publish thumbnail borders"): run
+      `python desktopDev/asset_tasks.py --project 157 --apply` (61 Tasks,
+      dry run checked 2026-10-28). Until then asset publishes stay
+      iterative (blue) with a "no task" warning.
+- [ ] **Thumbnail borders** (spec "Publish thumbnail borders"): publish
+      iterative and check the Version and Shot thumbnails are dark blue;
+      approve it, publish again, check green. Does ShotGrid's own thumbnail
+      from the movie ever replace ours (thumbnail goes up after the movie)?
 - [?] **Build by department** (spec §4 "Build by department", DRAFT): the
       department table is drafted; open: cameras in asset scenes, a light
       rig publish, which textures, FX rigs / Animation caches.

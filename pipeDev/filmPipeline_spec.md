@@ -2251,17 +2251,38 @@ The tools are developed side by side:
                  Approved Version made every later publish Final.
                  `publishTool_api.approved_tasks`; test
                  `publishDev/test_finalNotSticky_mayapy.py`. Applies to
-                 assets too once they have Final publishes (OPEN: how, see
-                 "Publish thumbnail borders").
-               - **Publish thumbnail borders (DECIDED 2026-10-28, not
-                 built):** ShotGrid thumbnails of pipe publishes get a
-                 border: **dark blue = iterative**, **bright green =
-                 Final**. Plain shotSub Versions: no border. Assets have
-                 Final publishes too (no caches, "but may trigger other
-                 things"). OPEN: how an asset department becomes Final
-                 (department Tasks on every asset, like shots, or matching
-                 Version names); whether the Shot's thumbnail keeps the
-                 green after a later shotSub.
+                 assets too (department Tasks, see "Publish thumbnail
+                 borders").
+               - **Publish thumbnail borders (DECIDED + BUILT 2026-10-28):**
+                 ShotGrid thumbnails of pipe publishes get a border:
+                 **dark blue = iterative**, **bright green = Final**.
+                 Plain shotSub Versions: no border (shotSub unchanged).
+                 The middle frame, bordered, replaces the thumbnail on the
+                 Version and its Shot/Asset after the movie is uploaded
+                 (`upload_bordered_thumbnail`, in `upload_with_audio`, so
+                 asset, camera and anim publishes all get it). The movie
+                 has no border. A failure is a warning. The Shot's
+                 thumbnail shows whatever was uploaded last, so a later
+                 shotSub replaces the green (user: "go with your
+                 recommendation for now").
+                 - **What's Final, per publish:** the newest Version on
+                   the task the publish goes on is Approved
+                   (`newest_approved`). Animation: Final task (caches).
+                   Layout and camera: Layout/Final task, never caches.
+                 - **Assets have Final publishes too** (no caches, "but
+                   may trigger other things"). DECIDED (option A, user:
+                   "go with your recommendation"): every asset gets a Task
+                   per department, `publishTool_api.ASSET_TASKS`: Model,
+                   Rig, Creature (characters), LookDev, Environment
+                   (environments). Each asset publish links its Version to
+                   its department's Task; Final when that Task's newest
+                   Version is Approved. No Task: iterative, unlinked, with
+                   a warning. `desktopDev/asset_tasks.py` makes the
+                   missing Tasks (dry run; `--apply`), only adds. Dry run
+                   on project 157 (2026-10-28): 61 Tasks to make, none for
+                   the 3 Graphic assets and Farm Equipment (no type).
+                   NOT APPLIED yet.
+                 - Test: `publishDev/test_thumbnailBorder_mayapy.py`.
                - **The cache rule (DECIDED 2026-10-19):** approved
                  **Blocking** = no cache; approved **Final** = cache. Told
                  apart by the Version's task (Blocking / Final tasks on

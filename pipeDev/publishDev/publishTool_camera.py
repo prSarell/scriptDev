@@ -571,6 +571,9 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     # task of the stage it was published from.
     plan["sg_task"] = api.task_on(plan["sg_shot"],
                                   "Layout" if publish_for == "layout" else "Final")
+    # Final (green thumbnail border) when that task's newest Version is
+    # Approved (user, 2026-10-28). A camera never caches.
+    plan["final"] = api.newest_approved(plan["sg_shot"], plan["sg_task"])
     api.check_rv()
     start = int(cmds.playbackOptions(query=True, minTime=True))
     end = int(cmds.playbackOptions(query=True, maxTime=True))
