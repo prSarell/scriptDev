@@ -907,9 +907,18 @@ class PublishToolUI(QtWidgets.QDialog):
         for _, stage, _ in anim.PUBLISH_FOR:
             items = [r for r in anim_rows if r["publish_for"] == stage]
             if items:
-                jobs.append({"asset_type": "shot", "asset": ", ".join(r["asset"] for r in items),
-                             "code": anim.ANIM_CODE, "publish_for": stage,
-                             "objects": [r["objects"][0] for r in items]})
+                job = {"asset_type": "shot", "asset": ", ".join(r["asset"] for r in items),
+                       "code": anim.ANIM_CODE, "publish_for": stage,
+                       "objects": [r["objects"][0] for r in items]}
+                # The shot camera for the same stage goes in the same publish:
+                # one movie, one ShotGrid Version (user, 2026-10-28).
+                camera = next((r for r in jobs if r["code"] == cam.CAM_CODE
+                               and r["publish_for"] == stage and r["objects"]), None)
+                if camera:
+                    jobs.remove(camera)
+                    job["camera"] = camera["objects"][0]
+                    job["asset"] += " + camera"
+                jobs.append(job)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for row in jobs:
@@ -936,7 +945,7 @@ class PublishToolUI(QtWidgets.QDialog):
                         plan = anim.publish_anim(scene, *self._roots(),
                                                  objects=row["objects"], notes=notes,
                                                  publish_for=row["publish_for"],
-                                                 review=review)
+                                                 review=review, camera=row.get("camera"))
                         label += {
                             anim.FINAL: " (Final approved: caches made)",
                             anim.ANIMATION: " (no caches yet: they're made once a publish "
@@ -960,6 +969,8 @@ class PublishToolUI(QtWidgets.QDialog):
                     continue
                 published = True
                 version = "v%03d (%s)" % (plan["version"], plan["login"])
+                if plan.get("camera_plan"):
+                    version += ", camera v%03d" % plan["camera_plan"]["version"]
                 if plan["sg_error"]:
                     lines.append("%s: %s saved to the H drive, but the ShotGrid "
                                  "upload failed:\n  %s" % (label, version, plan["sg_error"]))

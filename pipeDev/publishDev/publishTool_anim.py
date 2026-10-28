@@ -459,10 +459,16 @@ def copy_movie_for_edit(plan):
 # ---------------------------------------------------------------------------
 
 def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_for=ANIM_CODE,
-                 review=None):
+                 review=None, camera=None):
     """Approval check -> playblast through the shot camera -> keys, full
     file (and caches if Final) to the H drive -> ShotGrid Version on the
     Shot, linked to its task -> movie copy for the edit.
+
+    camera: the shot camera, when it's published with the same stage. It
+    goes out in this publish (user, 2026-10-28: "We don't need a mov per
+    asset in a publish"): the movie is made through it, and its files are
+    written with its own camera version (plan["camera_plan"]), but there's
+    one movie and one ShotGrid Version for everything.
 
     Everything that can refuse (what's selected, approval, RV) happens
     before the playblast and any H-drive write."""
@@ -474,17 +480,39 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     plan["objects"] = [i["root"] for i in items]
     plan["sg_shot"] = cam.find_shotgrid_shot(plan, h_root)
     plan["stage"], plan["sg_task"] = publish_stage(plan["sg_shot"], publish_for)
-    api.check_rv()
+    cam_plan = edit_warning = None
     start = int(cmds.playbackOptions(query=True, minTime=True))
     end = int(cmds.playbackOptions(query=True, maxTime=True))
-    camera = SHOT_CAMERA if cam.camera_transform(SHOT_CAMERA) else None
+    if camera:
+        camera = cam.check_camera([camera])
+        cam_plan = cam.plan_camera(scene_path, h_root, scratch_root)
+        cam_plan["objects"] = [cmds.ls(camera)[0]]
+        cam_plan["publish_for"] = publish_for
+        cam_plan["sg_shot"] = plan["sg_shot"]
+        try:
+            cam_plan["edit_range"] = cam.shot_edit_range(api._shotgrid().get_connection(),
+                                                         plan["sg_shot"])
+        except Exception as e:      # the range is a record, not a reason to stop
+            cam_plan["edit_range"] = {"source": cam.EDIT_NONE, "cut": "", "error": str(e)}
+        edit_warning = cam.edit_range_warning(cam_plan["edit_range"], start, end)
+    plan["camera_plan"] = cam_plan
+    api.check_rv()
+    if not camera:
+        camera = SHOT_CAMERA if cam.camera_transform(SHOT_CAMERA) else None
     plan["frames_folder"], files = api.playblast_frames(plan, None, camera=camera)
     plan["audio"], audio_offset = api.scene_audio(start)
     api.review_before_publish(plan, review, plan["shot_project"], plan["audio"], audio_offset)
 
+    cam_written = []
     try:
-        plan["written"] = write_anim(items, plan, start, end, scene_path)
+        if cam_plan:
+            plan["warnings"] = list(cam.export_camera(camera, cam_plan, start, end, scene_path)
+                                    or []) + ([edit_warning] if edit_warning else [])
+            cam_written = [cam_plan[k] for k in ("dest", "keys_dest", "map_dest")]
+        plan["written"] = cam_written + write_anim(items, plan, start, end, scene_path)
     except Exception:
+        for path in cam_written:        # all or nothing, the camera too
+            _writable_remove(path)
         api.remove_frames(plan["frames_folder"], plan["shot_project"])
         raise
 
@@ -492,6 +520,9 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
         PUBLISH_FOR_LABELS[publish_for], plan["version"],
         " (Final approved: caches made)" if plan["stage"] == FINAL else "",
         ", ".join(i["label"] for i in items))]
+    if cam_plan:
+        lines.append("Camera v%03d (%s, keys baked %d-%d)" % (
+            cam_plan["version"], cam_plan["objects"][0], start, end))
     lines += ["%s: %d unkeyed control settings carried" % (i["name"], i["settings"])
               for i in items if i.get("settings")]
     lines += plan["written"]

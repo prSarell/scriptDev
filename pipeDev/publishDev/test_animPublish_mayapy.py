@@ -210,4 +210,38 @@ check("published camera carries the pipe stamp, from animation",
       stamp.get("pipe_publishedFrom") == "anim" and stamp.get("pipe_sgShotId") == 2560
       and stamp.get("pipe_department") == "cam" and stamp.get("pipe_version") == plan["version"])
 check("camera stamp locked", cmds.getAttr(grp + ".pipe_publishedFrom", lock=True))
+
+# -- camera + animation from one scene: one movie, one Version (2026-10-28) --
+cmds.file(scene, open=True, force=True)
+uploads, blasts = [], []
+FakeSG.upload_playblast = lambda self, *a, **k: uploads.append(k) or {"type": "Version", "id": 56}
+real_blast = api.playblast_frames
+api.playblast_frames = lambda plan, n, objects=None, camera=None: (
+    blasts.append(camera) or real_blast(plan, n, objects=objects, camera=camera))
+cam_before = len(cam.published_camera_versions(h_scenes, "EAP_010_010", "scout"))
+plan = anim.publish_anim(scene, H, SC, objs, camera="camera1")
+cp = plan["camera_plan"]
+check("camera + anim: one playblast, through the camera, one Version",
+      len(blasts) == 1 and blasts[0].split("|")[-1] == "camera1" and len(uploads) == 1
+      and plan["sg_version"] == {"type": "Version", "id": 56})
+check("camera + anim: the camera's own files, next camera version",
+      cp["version"] == cam_before + 1
+      and all(os.path.isfile(cp[k]) for k in ("dest", "keys_dest", "map_dest"))
+      and cp["dest"] in plan["written"])
+check("camera + anim: the anim files too", any(n.endswith("_ball_anim_v%03d.ma" % plan["version"])
+                                               for n in listing(h_scenes)))
+check("camera + anim: the Version's notes list the camera",
+      "Camera v%03d" % cp["version"] in (uploads[0].get("notes") or str(uploads[0])))
+real_write = anim.write_anim
+def broken(*a):
+    raise RuntimeError("disk full")
+anim.write_anim = broken
+before = listing(h_scenes)
+try:
+    anim.publish_anim(scene, H, SC, objs, camera="camera1")
+    check("camera + anim failure raised", False)
+except RuntimeError:
+    check("camera + anim failure: nothing new on H, camera files too", listing(h_scenes) == before)
+anim.write_anim = real_write
+api.playblast_frames = real_blast
 print("%d/%d passed" % (sum(ok), len(ok)))

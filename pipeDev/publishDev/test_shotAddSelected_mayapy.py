@@ -1,7 +1,8 @@
 # The Publish window's picker row (user, 2026-10-22). In a shot scene, +
 # with Layout/Animation sorts each selected thing (camera / published
-# asset / made in the shot), and one Publish click = the camera
-# publish(es) + ONE animation publish with every ticked item. In an asset
+# asset / made in the shot), and one Publish click = ONE animation publish
+# with every ticked item, carrying the camera of the same stage (one movie,
+# 2026-10-28); a camera on its own still publishes by itself. In an asset
 # scene, + adds the picked asset. Runs the real window offscreen.
 # Run: mayapy test_shotAddSelected_mayapy.py
 import sys, os, tempfile
@@ -96,18 +97,19 @@ cmds.select("backpack:backpack_model_GRP", replace=True)
 w._add_row()
 check("adding the same thing again doesn't duplicate it", len(w._rows) == 3)
 
-# Publish: cameras one by one, the animation items as ONE publish.
+# Publish: the animation items and the camera as ONE publish.
 calls = []
 cam.publish_camera = lambda *a, **k: (calls.append(("cam", k["camera"])), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None})[1]
-anim.publish_anim = lambda *a, **k: (calls.append((k["publish_for"], sorted(k["objects"]))), {
+anim.publish_anim = lambda *a, **k: (calls.append((k["publish_for"], sorted(k["objects"]),
+                                                    k.get("camera"))), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None, "stage": "blocking"})[1]
 w._publish()
-check("one camera publish + ONE animation publish with both items",
-      sorted(c[0] for c in calls) == ["anim", "cam"]
-      and [c for c in calls if c[0] == "anim"][0][1] == ["backpack:backpack_model_GRP", "ball"])
+check("ONE animation publish with both items and the camera: no camera publish of its own",
+      [c[0] for c in calls] == ["anim"] and calls[0][1] == ["backpack:backpack_model_GRP", "ball"]
+      and calls[0][2].split("|")[-1] == "camera1")
 
 # Untick the ball: only ticked rows publish.
 row = [i for i, r in enumerate(w._rows) if r["asset"] == "ball"][0]

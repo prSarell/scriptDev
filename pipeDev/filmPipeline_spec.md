@@ -1662,6 +1662,17 @@ The tools are developed side by side:
           1. **One version number per publish:** everything from one
              animation publish shares a `v###` ("anim v003 of
              EAP_010_010").
+             **One movie per publish (DECIDED + BUILT 2026-10-28).** A
+             camera and a character ticked together made two movies. The
+             user: "We don't need a mov per asset in a publish. We should be
+             able to publish many assets in a animation or layout from one
+             maya file and only have one mov." The camera row now goes out
+             inside the Layout/Animation publish of the same stage: one
+             playblast through that camera, one review, one ShotGrid
+             Version (its notes list the camera version). The camera keeps
+             its own files and version series on H, so Build is unchanged;
+             a failure removes the camera files with the rest. A camera
+             ticked with no animation items still publishes on its own.
           2. *(Superseded 2026-10-19 by 6a: the list starts empty,
              select and add.)* **The animator chooses, everything ticked:** Publish scans
              the scene and lists every pipeline rig, made-in-shot item and

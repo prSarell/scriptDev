@@ -93,6 +93,11 @@ hand. One T7 session could cover most of it.
       switches as they were. Also try a prop placed in the shot with no
       keys at all. Worth a look on a MetaHuman rig: how big the map gets
       and how long Build takes to set it.
+- [ ] **One movie for camera + animation** (spec §4 item 1, 2026-10-28):
+      tick the camera and a character for Animation and publish. You should
+      get one review, one movie and one ShotGrid Version, with the
+      Status line showing "vNNN (login), camera vNNN". On H: the camera's
+      three files plus the anim files.
 - [ ] **Scratch on a different drive** (spec §3i, 2026-10-22): copy a built
       shot's scratch film folder (shot + `maya\publish\`) to another drive
       letter, e.g. a USB stick as `E:\`. With the saved scratch setting
