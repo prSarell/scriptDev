@@ -1496,6 +1496,131 @@ def reference_into_scene(path, namespace):
     return path
 
 
+# ---------------------------------------------------------------------------
+# Asset development: a published asset pulled into an asset scene is
+# imported, never referenced; referencing is for building shots (user,
+# 2026-10-28). It arrives as published (its stamped pipe group, no
+# namespace) and its textures and DNA become this asset's own, copied into
+# its sourceimages.
+# ---------------------------------------------------------------------------
+
+def asset_of_scene(scene_path, scratch_root):
+    """(film, asset_type, asset) if the scene is inside an asset on scratch, else None."""
+    try:
+        root, rel = pub.find_film_folder(scene_path)
+    except BuildError:
+        return None
+    if (not pub._same_path(root, scratch_root) or len(rel) < 5
+            or rel[1] != "maya" or rel[2] != "assets"):
+        return None
+    return rel[0], rel[3], rel[4]
+
+
+def asset_folder(root, film, asset_type, asset):
+    return os.path.join(root, film, "maya", "assets", asset_type, asset)
+
+
+def _stamp(node, name):
+    plug = "%s.%s" % (node, name)
+    return cmds.getAttr(plug) if cmds.objExists(plug) else None
+
+
+def imported_versions(published):
+    """Version ids of this asset + department already in the open scene,
+    read from the stamps on their pipe groups (pipe_asset etc.)."""
+    found = []
+    for node in cmds.ls("*.pipe_asset", objectsOnly=True, recursive=True) or []:
+        if ((_stamp(node, "pipe_asset") or "").lower() != published["asset"].lower()
+                or _stamp(node, "pipe_department") != published["code"]):
+            continue
+        version = _stamp(node, "pipe_version")
+        found.append(version_id(_stamp(node, "pipe_artistId"), int(version))
+                     if version is not None else "")
+    return found
+
+
+def _set_string(plug, value):
+    locked = cmds.getAttr(plug, lock=True)
+    if locked:
+        cmds.setAttr(plug, lock=False)
+    cmds.setAttr(plug, value, type="string")
+    if locked:
+        cmds.setAttr(plug, lock=True)
+
+
+def _own_files(nodes, pulled, asset_dir):
+    """Copy the pulled version's texture folder (textures, DNA) into
+    <asset>\\sourceimages\\<published file name>\\ and point the imported
+    nodes at the copies: texture and image-plane nodes, and each rig
+    group's pipe_dna list (so the DNA nodes follow it when the scene
+    opens, pipeEnv.fix_dna_paths). Returns the number of nodes repointed."""
+    import publishTool_textures as tex
+    folder = texture_folder_of(pulled)
+    if not os.path.isdir(folder):
+        return 0
+    own = os.path.join(asset_dir, tex.FOLDER, os.path.basename(folder))
+    for dirpath, _, filenames in os.walk(folder):
+        for name in filenames:
+            dest = os.path.join(own, os.path.relpath(os.path.join(dirpath, name), folder))
+            if not os.path.isfile(dest):
+                if not os.path.isdir(os.path.dirname(dest)):
+                    os.makedirs(os.path.dirname(dest))
+                shutil.copyfile(os.path.join(dirpath, name), dest)     # writable: the asset's own
+    key = os.path.normcase(os.path.normpath(folder)) + os.sep
+
+    def owned(path):
+        """The copy in this asset for a path inside the pulled folder, else None."""
+        full = os.path.normcase(os.path.normpath(os.path.expandvars(path or "")))
+        if not full.startswith(key):
+            return None
+        return os.path.join(own, os.path.normpath(os.path.expandvars(path))[len(key):]
+                            ).replace("\\", "/")
+
+    repointed = 0
+    attrs = dict(tex.TEXTURE_NODES, **tex.IMAGE_PLANES)
+    for node in set(cmds.ls(nodes, long=True) or []):
+        attr = attrs.get(cmds.nodeType(node))
+        if attr:
+            path = owned(cmds.getAttr("%s.%s" % (node, attr)))
+            if path:
+                _set_string("%s.%s" % (node, attr), path)
+                repointed += 1
+        dna = _stamp(node, pipeEnv.DNA_STAMP)
+        if dna:
+            entries = json.loads(dna)
+            for entry in entries:
+                path = owned(entry.get("published"))
+                if path:
+                    entry["published"] = path
+                    repointed += 1
+            _set_string("%s.%s" % (node, pipeEnv.DNA_STAMP), json.dumps(entries))
+    return repointed
+
+
+def import_into_asset(asset_dir, published, vid):
+    """Pull one published version into the scratch publish folder and
+    import it into the open asset scene: no reference, no namespace, its
+    pipe group and stamps as published, its textures and DNA copied into
+    this asset. Returns the list of what was done."""
+    if published.get("kind") == "camera":
+        raise BuildError("A shot's camera only builds into its shot.")
+    if vid not in published["versions"]:
+        raise BuildError("%s of %s %s isn't on the H drive."
+                         % (vid, published["asset"], published["code"]))
+    maya_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.normpath(asset_dir))))
+    pulled, _ = copy_published(published["versions"][vid], maya_dir)
+    # The published file's $PIPE_SCRATCH paths, on this drive.
+    pipeEnv.set_from_path(asset_dir)
+    nodes = cmds.file(pulled, i=True, defaultNamespace=True, preserveReferences=False,
+                      returnNewNodes=True) or []
+    done = ["imported %s" % version_label(published, vid, mark_latest=False)]
+    if _own_files(nodes, pulled, asset_dir):
+        done.append("textures copied into this asset's sourceimages")
+    if pipeEnv.fix_dna_paths():
+        done.append("MetaHuman DNA pointed at this asset's copy")
+    return done
+
+
 def set_maya_project(shot_dir):
     pub.set_maya_project(shot_dir)
 

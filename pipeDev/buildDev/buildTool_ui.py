@@ -7,6 +7,9 @@ Two tabs:
                 from the H drive and references it into the open scene.
                 Each asset's Keys dropdown puts a Layout/Animation
                 publish's keys back on it (from the picker's shot).
+                In an asset scene it becomes Import into Asset: the
+                picked publishes are imported, never referenced
+                (referencing is for shots), textures copied into the asset.
   My Scratch  — what's on the scratch drive, how safe it is to remove,
                 and removal to the Recycle Bin.
 
@@ -123,6 +126,9 @@ class BuildShotTab(QtWidgets.QWidget):
         super(BuildShotTab, self).__init__(parent)
         self._get_roots = get_roots
         self._target_shot = None     # (film, seq, shot) being built into
+        # Or (film, asset_type, asset) when the open scene is an asset's:
+        # then the list is imported, never referenced (user, 2026-10-28).
+        self._target_asset = None
         self._published = []     # everything on the H drive for the shot's film
         self._other_films = {}   # film -> list_published, for the picker
         self._shot_keys = {}     # (film, seq, shot) -> api.list_shot_keys
@@ -173,12 +179,8 @@ class BuildShotTab(QtWidgets.QWidget):
         list_btns.addWidget(repair_btn)
         list_btns.addStretch(1)
 
-        build_btn = QtWidgets.QPushButton("Build Shot")
+        build_btn = self.build_btn = QtWidgets.QPushButton("Build Shot")
         build_btn.setMinimumHeight(36)
-        build_btn.setToolTip(
-            "Builds every ticked asset into the open scene (pulled from the H drive "
-            "into your scratch publish folder). New assets, and ones you pick another "
-            "version for, start ticked; ones already in the scene start unticked.")
         build_btn.clicked.connect(self._build_shot)
 
         self.status = StatusLabel()
@@ -197,35 +199,45 @@ class BuildShotTab(QtWidgets.QWidget):
         """Find the shot to build into, refill the picker's films and load
         the shot's list."""
         h_root, scratch_root = self._get_roots()
-        self._target_shot = self._find_target()
+        self._target_shot, self._target_asset = self._find_target()
         films = api.list_films(h_root) if h_root else []
-        film = self._target_shot[0] if self._target_shot else None
-        self.picker.set_films(films, film)
+        target = self._target_shot or self._target_asset
+        self.picker.set_films(films, target[0] if target else None)
         self._load_shot()
 
     def check_target(self):
         """Another scene opened since the list was made: start again from
         its shot. Otherwise the list (and its ticks) stays as it is."""
-        if self._find_target() != self._target_shot:
+        if self._find_target() != (self._target_shot, self._target_asset):
             self.refresh()
 
     def _find_target(self):
-        """(film, seq, shot) to build into: the open scene's shot, or for a
-        new scene the Maya project's (e.g. set by the Project tool)."""
+        """(shot, asset) to build into: the open scene's shot as (film,
+        seq, shot) or its asset as (film, asset_type, asset), the other
+        None; for a new scene the Maya project's (e.g. set by the Project
+        tool)."""
         scratch_root = self._get_roots()[1]
         if not scratch_root:
-            return None
+            return None, None
         scene = cmds.file(query=True, sceneName=True) or ""
         if not scene:
             workspace = cmds.workspace(query=True, rootDirectory=True)
             if not workspace:
-                return None
+                return None, None
             scene = os.path.join(workspace, "scenes", "untitled.ma")
-        return api.shot_of_scene(scene, scratch_root)
+        shot = api.shot_of_scene(scene, scratch_root)
+        return shot, None if shot else api.asset_of_scene(scene, scratch_root)
 
     def film(self):
-        """The shot's film, else the picker's (for the My Scratch tab)."""
-        return self._target_shot[0] if self._target_shot else self.picker.film()
+        """The shot's or asset's film, else the picker's (for the My Scratch tab)."""
+        target = self._target_shot or self._target_asset
+        return target[0] if target else self.picker.film()
+
+    def _asset_dir(self):
+        scratch_root = self._get_roots()[1]
+        if not (self._target_asset and scratch_root):
+            return None
+        return api.asset_folder(scratch_root, *self._target_asset)
 
     def _shot_dir(self):
         scratch_root = self._get_roots()[1]
@@ -245,7 +257,8 @@ class BuildShotTab(QtWidgets.QWidget):
                 if p["code"] == code]
 
     def _published_in(self, film):
-        if self._target_shot and film == self._target_shot[0]:
+        target = self._target_shot or self._target_asset
+        if target and film == target[0]:
             return self._published
         if film not in self._other_films:
             self._other_films[film] = api.list_published(self._get_roots()[0], film)
@@ -264,13 +277,25 @@ class BuildShotTab(QtWidgets.QWidget):
             self.target_lbl.setText("")
             self.status.show_message(str(e), ok=False)
             return
+        self.build_btn.setText("Import into Asset" if self._target_asset else "Build Shot")
+        self.build_btn.setToolTip(
+            "Imports every ticked asset into the open asset scene (pulled from the H "
+            "drive into your scratch publish folder). Nothing is referenced: in asset "
+            "work you own what you pull, and its textures are copied into this asset."
+            if self._target_asset else
+            "Builds every ticked asset into the open scene (pulled from the H drive "
+            "into your scratch publish folder). New assets, and ones you pick another "
+            "version for, start ticked; ones already in the scene start unticked.")
+        if self._target_asset:
+            self._load_asset()
+            return
         if not self._target_shot:
             self.target_lbl.setText("")
             self.picker.refill()
             self.status.show_message(
-                "Open a scene in the shot you want to build (or set the shot as your Maya "
-                "project with the Project tool). Build adds the assets to the open scene.",
-                ok=False)
+                "Open a scene in the shot you want to build, or in an asset to import "
+                "published assets into it (or set it as your Maya project with the "
+                "Project tool).", ok=False)
             return
         film, seq, shot = self._target_shot
         scene = cmds.file(query=True, sceneName=True)
@@ -312,10 +337,33 @@ class BuildShotTab(QtWidgets.QWidget):
             "" if self._published else "Nothing has been published for %s yet." % film,
             ok=bool(self._published))
 
+    def _load_asset(self):
+        """An asset scene: the list starts empty (nothing to remember, as an
+        import can't be updated) and fills from the picker."""
+        h_root = self._get_roots()[0]
+        film, asset_type, asset = self._target_asset
+        scene = cmds.file(query=True, sceneName=True)
+        self.target_lbl.setText(
+            "Importing into asset <b>%s</b> (%s, %s), in %s.<br>Published assets are "
+            "imported, not referenced: referencing is for shots." % (
+                asset, asset_type, film, os.path.basename(scene) if scene else "a new scene"))
+        self._published = api.list_published(h_root, film)
+        self.picker.refill()
+        self._render_table()
+        self.status.show_message(
+            "Add what you need with the picker and +, then Import into Asset."
+            if self._published else "Nothing has been published for %s yet." % film,
+            ok=bool(self._published))
+
     def _row(self, p, chosen):
         """A list row. 'in_scene' is what the open scene already has (see
         api.scene_version); such a row starts at that version and is only
         built if the student picks another one ('start' remembers it)."""
+        if self._target_asset:
+            # Already imported: from the stamps, ticked all the same (the
+            # import asks first). No keys in asset work.
+            return dict(p, chosen=chosen, start=chosen, keys_chosen=None, keys_start=None,
+                        imported=api.imported_versions(p), checked=True)
         shot_dir = self._shot_dir()
         in_scene = api.scene_version(shot_dir, p) if shot_dir else None
         if in_scene in p["versions"]:
@@ -462,6 +510,9 @@ class BuildShotTab(QtWidgets.QWidget):
             row["checked"] = checked
         self.picker.set_current(*picked)
         self._render_table()
+        if self._target_asset:
+            self.status.show_message("Refreshed.")
+            return
         manifest = api.read_manifest(self._shot_dir()) if self._shot_dir() else {}
         newer = [r["asset"] for r in self._rows
                  if api.newer_available(r, manifest.get(self._key(r)))]
@@ -492,6 +543,15 @@ class BuildShotTab(QtWidgets.QWidget):
             self.table.setCellWidget(row, 3, combo)
             self._keys_cell(row, p)
 
+            if self._target_asset:
+                imported = p.get("imported") or []
+                self.table.setItem(row, 5, _cell(", ".join(
+                    api.version_label(p, v, mark_latest=False) if v in p["versions"]
+                    else (v or "?") for v in imported) or "-"))
+                self.table.setItem(row, 6, _cell(
+                    "Already imported: importing asks first" if imported
+                    else "Ready to import", "#e0a060" if imported else "#9fc5ff"))
+                continue
             entry = manifest.get(self._key(p))
             if not entry:
                 self.table.setItem(row, 5, _cell("-"))
@@ -534,7 +594,7 @@ class BuildShotTab(QtWidgets.QWidget):
         """Picking another version ticks the row; picking back the one the
         scene has unticks it again."""
         p["chosen"] = vid
-        p["checked"] = not self._left_as_is(p, self._shot_dir())
+        p["checked"] = bool(self._target_asset) or not self._left_as_is(p, self._shot_dir())
         rows = [i for i, r in enumerate(self._rows) if r is p]
         if rows:
             item = self.table.item(rows[0], 0)
@@ -573,13 +633,18 @@ class BuildShotTab(QtWidgets.QWidget):
         film, code = self.picker.film(), self.picker.department()
         group, name = self.picker.group(), self.picker.name()
         label = self.picker.dept_combo.currentText()
-        if not self._target_shot:
-            self.status.show_message("Open a scene in the shot you want to build first.",
-                                     ok=False)
+        target = self._target_shot or self._target_asset
+        if not target:
+            self.status.show_message("Open a scene in the shot you want to build, or in "
+                                     "the asset to import into, first.", ok=False)
             return
-        if film != self._target_shot[0]:
-            self.status.show_message("This shot is in %s: pick from %s's assets."
-                                     % ((self._target_shot[0],) * 2), ok=False)
+        if film != target[0]:
+            self.status.show_message("This %s is in %s: pick from %s's assets."
+                                     % ("shot" if self._target_shot else "asset",
+                                        target[0], target[0]), ok=False)
+            return
+        if self._target_asset and self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
+            self.status.show_message("A shot's camera only builds into its own shot.", ok=False)
             return
         if self.picker.kind() == picker.SHOT and code != pub.ENV_CODE:
             if (group, name) != tuple(self._target_shot[1:]):
@@ -641,7 +706,57 @@ class BuildShotTab(QtWidgets.QWidget):
 
     # -- actions ----------------------------------------------------------
 
+    def _import_into_asset(self):
+        """Import every ticked row into the open asset scene. One already
+        imported (by its stamp) asks first; nothing is ever deleted."""
+        asset_dir = self._asset_dir()
+        rows = [p for p in self._rows if p["checked"]]
+        if not rows:
+            self.status.show_message("Nothing ticked to import.", ok=False)
+            return
+        lines, warnings = [], []
+        for p in rows:
+            label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
+            vid = p.get("chosen", p["latest"])
+            already = api.imported_versions(p)
+            if already:
+                box = QtWidgets.QMessageBox(self)
+                box.setIcon(QtWidgets.QMessageBox.Question)
+                box.setWindowTitle("Already imported")
+                box.setText("%s is already in this scene (%s).\n\nImport %s as well? The one "
+                            "already here is left as it is: delete it yourself if you don't "
+                            "need it." % (label, ", ".join(
+                                api.version_label(p, v, mark_latest=False)
+                                if v in p["versions"] else (v or "?") for v in already),
+                                api.version_label(p, vid, mark_latest=False)))
+                again = box.addButton("Import Again", QtWidgets.QMessageBox.AcceptRole)
+                box.addButton("Skip", QtWidgets.QMessageBox.RejectRole)
+                box.setDefaultButton(again)
+                box.exec()
+                if box.clickedButton() != again:
+                    lines.append("%s: skipped, already in the scene" % label)
+                    continue
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            try:
+                done = api.import_into_asset(asset_dir, p, vid)
+            except Exception as e:
+                warnings.append("%s: %s" % (label, e))
+                continue
+            finally:
+                QtWidgets.QApplication.restoreOverrideCursor()
+            p["imported"] = api.imported_versions(p)
+            p["checked"] = False
+            lines.append("%s: %s" % (label, ", ".join(done)))
+        self._render_table()
+        text = "\n".join(lines)
+        if warnings:
+            text += ("\n\n" if text else "") + "\n".join(warnings)
+        self.status.show_message(text, ok=not warnings)
+
     def _build_shot(self):
+        if self._target_asset:
+            self._import_into_asset()
+            return
         shot_dir = self._shot_dir()
         if not shot_dir:
             self.status.show_message("Open a scene in the shot you want to build first.",
@@ -772,6 +887,11 @@ class BuildShotTab(QtWidgets.QWidget):
                                      "versions (open in another program?).", ok=False)
 
     def _repair(self):
+        if self._target_asset:
+            self.status.show_message("Repair fixes a shot's references. An asset scene has "
+                                     "none: what Build brings into an asset is imported.",
+                                     ok=False)
+            return
         h_root, _ = self._get_roots()
         if not h_root or not os.path.isdir(h_root):
             self.status.show_message("Set the H drive first.", ok=False)

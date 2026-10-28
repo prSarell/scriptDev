@@ -129,11 +129,18 @@ def fix_dna_paths():
         except ValueError:
             continue
         ns = group.split("|")[-1].rpartition(":")[0]
+        group_path = (cmds.ls(group, long=True) or [group])[0]
         for entry in entries:
-            node = (ns + ":" if ns else "") + entry["node"]
             path = os.path.expandvars(entry["published"])
-            if not cmds.objExists(node) or "$" in path or not os.path.isfile(path):
+            if "$" in path or not os.path.isfile(path):
                 continue
+            # The same name can be in the scene twice (an asset imported
+            # twice, 2026-10-28): the one under this group, else the only one.
+            matches = cmds.ls((ns + ":" if ns else "") + entry["node"], long=True) or []
+            inside = [m for m in matches if m.startswith(group_path + "|")]
+            if len(inside or matches) != 1:
+                continue
+            node = (inside or matches)[0]
             path = os.path.normpath(path).replace("\\", "/")
             plug = "%s.%s" % (node, entry.get("attr", "dnaFilePath"))
             now = cmds.getAttr(plug) or ""

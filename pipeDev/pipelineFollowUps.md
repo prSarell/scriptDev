@@ -43,6 +43,10 @@ hand. One T7 session could cover most of it.
       run h_sync on the T7 to add them to existing assets; Set Project an
       asset and check scenes\model|rig|lookDev\e131988 are made; Save Here a
       model scene; publish it and check it lands in scenes\e131988.
+- [ ] Import into Asset (2026-10-28): open a scene in scout\scenes\rig\,
+      Build: import the latest Scout model and a textured rig; check no
+      reference, textures load from scout\sourceimages\<publish name>\, DNA
+      works after reopening; import again and pick Skip.
 - [?] MetaHuman model publish (2026-10-28): the plain model publish drags
       the original meshes in through the `*_pgcombined` face sets (Scout
       model v001 has the model twice) and those sets must be kept. Needs its

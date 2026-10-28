@@ -1198,6 +1198,19 @@ The tools are developed side by side:
       existing assets; Set Project makes the person's own; Save Here uses
       the department's; Build skips them. Publishes still go in
       `scenes\<login>\`. Test: `projectDev/test_workFolders_mayapy.py`.
+    - **Build into an asset scene = import, never reference (DECIDED +
+      BUILT 2026-10-28):** "if an artist pulls a published asset from the
+      h drive it should not be referenced... a rule for all assets, so the
+      referencing only really applies to the shot building." With an asset
+      scene open, Build Shot becomes **Import into Asset**: any published
+      asset/department of the film (not shot cameras) is pulled to scratch
+      `publish\` and imported as published (stamped pipe group, no
+      namespace). Its version texture folder (textures + DNA) is copied
+      into `<asset>\sourceimages\<published file name>\` (writable, the
+      asset's own) and the texture/image-plane nodes and the group's
+      `pipe_dna` list point there. Already in the scene (by its stamp) =
+      asks before importing again; nothing is deleted. No shot list, keys
+      or manifest for assets. Test: `buildDev/test_assetImport_mayapy.py`.
       - Tests: `test_buildTool_mayapy.py` 76/76 (2026-10-15), including
         two people's series, latest by time, `publish_as`, and a camera
         published by Publish's own code and built by Build Shot.
