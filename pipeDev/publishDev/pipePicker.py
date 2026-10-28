@@ -59,9 +59,7 @@ class TargetPicker(QtWidgets.QWidget):
 
     def __init__(self, departments, items_for, parent=None):
         super(TargetPicker, self).__init__(parent)
-        self._departments = departments
-        self._kinds = dict((d[1], d[2]) for d in departments)
-        self._lists = dict((d[1], d[4] if len(d) > 4 else d[2]) for d in departments)
+        self._take_departments(departments)
         self._items_for = items_for
         self._items = []
         # False: the last dropdown starts on "(pick one)" instead of the
@@ -72,7 +70,7 @@ class TargetPicker(QtWidgets.QWidget):
         self.film_combo = QtWidgets.QComboBox()
         self.film_combo.setToolTip("Film")
         self.kind_combo = QtWidgets.QComboBox()
-        _set_items(self.kind_combo, [(label, kind, True) for kind, label in KIND_LABELS])
+        self._fill_kinds()
         self.kind_combo.setToolTip("Asset or Shot: sets which departments are listed.")
         self.dept_combo = QtWidgets.QComboBox()
         self.dept_combo.setToolTip("Department")
@@ -137,6 +135,29 @@ class TargetPicker(QtWidgets.QWidget):
         if code in self._kinds:
             self._fill_departments(code=code)
         self.refill(group, name)
+
+    def _take_departments(self, departments):
+        self._departments = departments
+        self._kinds = dict((d[1], d[2]) for d in departments)
+        self._lists = dict((d[1], d[4] if len(d) > 4 else d[2]) for d in departments)
+
+    def _fill_kinds(self):
+        """Asset and Shot, a side with nothing listed under it greyed out."""
+        sides = set(self._kinds.values())
+        _set_items(self.kind_combo, [(label, kind, kind in sides) for kind, label in KIND_LABELS],
+                   self.kind() if self.kind() in sides else None)
+
+    def set_departments(self, departments):
+        """Swap the Department list (Build's department filter, user
+        2026-10-28), keeping what's picked where it's still listed, else
+        moving to a side that has something."""
+        code = self.department()
+        self._take_departments(departments)
+        self._fill_kinds()
+        if code in self._kinds:
+            self.set_current(code=code)
+        else:
+            self._fill_departments(True)
 
     def _fill_departments(self, refill=False, code=None):
         """The departments on the picked side (Asset or Shot), keeping the

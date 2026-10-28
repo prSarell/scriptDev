@@ -40,16 +40,23 @@ import buildTool_api as api
 import pipePicker as picker
 pub = api.pub
 
-# The picker's Department dropdown: the asset departments that publish,
-# then the shot's camera (spec "Cameras") and its environment, which lists
-# the environment assets (user, 2026-10-26: Environment isn't a department,
-# as in the Publish Tool).
+# The picker's middle dropdown: the asset departments that publish, then
+# the shot's camera (spec "Cameras") and its environment, which lists the
+# environment assets (user, 2026-10-26: Environment isn't a department, as
+# in the Publish Tool). Only what the artist's department builds is listed
+# (api.BUILD_FOR, user 2026-10-28).
 ASSET_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
 BUILD_DEPARTMENTS = (
     [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
      if code in ASSET_DEPARTMENTS] +
     [(api.DEPT_LABELS[api.CAMERA_CODE], api.CAMERA_CODE, picker.SHOT, True),
      (api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.SHOT, True, picker.ASSET)])
+
+
+def picker_departments(department):
+    """BUILD_DEPARTMENTS, only what this department builds."""
+    wanted = api.builds_for(department)
+    return [d for d in BUILD_DEPARTMENTS if d[1] in wanted]
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -142,9 +149,29 @@ class BuildShotTab(QtWidgets.QWidget):
         # Scene and Maya project in different shots/assets (2026-10-28).
         self.project_banner = picker.ProjectBanner(self._match_project)
 
+        # The artist's department (user, 2026-10-28): decides what the
+        # picker offers. Starts on the open scene's, can be changed.
+        self._dept_scene = None      # the scene the department was last set from
+        self.dept_combo = QtWidgets.QComboBox()
+        for label, code, builds in api.BUILD_FOR:
+            self.dept_combo.addItem(label if builds else "%s (coming soon)" % label, code)
+            if not builds:
+                self.dept_combo.model().item(self.dept_combo.count() - 1).setEnabled(False)
+        self.dept_combo.setToolTip(
+            "Your department: Build only offers what it works with (no rigs for "
+            "Modeling, ...). Caches, lights and the FX and Lighting builds come later.")
+        self.dept_combo.currentIndexChanged.connect(self._on_department_changed)
+        dept_row = QtWidgets.QHBoxLayout()
+        dept_row.addWidget(QtWidgets.QLabel("Department:"))
+        dept_row.addWidget(self.dept_combo)
+        dept_row.addStretch(1)
+
         # What to add (user, 2026-10-22): Film | Asset or Shot | Department |
         # Type or Sequence | Asset or Shot, then - and +.
-        self.picker = picker.TargetPicker(BUILD_DEPARTMENTS, self._items_for)
+        self.picker = picker.TargetPicker(picker_departments(self.department()),
+                                          self._items_for)
+        self.picker.dept_combo.setToolTip("What to build: the publishes your department "
+                                          "works with.")
         self.picker.add_clicked.connect(self._add_asset)
         # Pointing the picker at a shot lists that shot's keys (user, 2026-10-23).
         for combo in (self.picker.film_combo, self.picker.kind_combo,
@@ -189,6 +216,7 @@ class BuildShotTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.target_lbl)
         layout.addWidget(self.project_banner)
+        layout.addLayout(dept_row)
         layout.addWidget(self.picker)
         layout.addLayout(show)
         layout.addWidget(self.table, 1)
@@ -203,6 +231,7 @@ class BuildShotTab(QtWidgets.QWidget):
         the shot's list."""
         h_root, scratch_root = self._get_roots()
         self._target_shot, self._target_asset = self._find_target()
+        self._default_department()
         films = api.list_films(h_root) if h_root else []
         target = self._target_shot or self._target_asset
         self.picker.set_films(films, target[0] if target else None)
@@ -215,7 +244,29 @@ class BuildShotTab(QtWidgets.QWidget):
         if self._find_target() != (self._target_shot, self._target_asset):
             self.refresh()
         else:
+            self._default_department()  # another scene of the same shot
             self._show_mismatch()      # the project may have changed
+
+    def department(self):
+        return self.dept_combo.currentData()
+
+    def _default_department(self):
+        """A newly opened scene starts on its own department (its working
+        folder or file name); the same scene keeps what was picked."""
+        scene = cmds.file(query=True, sceneName=True) or ""
+        if not scene:
+            workspace = cmds.workspace(query=True, rootDirectory=True) or ""
+            scene = os.path.join(workspace, "scenes", "untitled.ma") if workspace else ""
+        if scene == self._dept_scene:
+            return
+        self._dept_scene = scene
+        code = api.department_of_scene(scene) if scene else None
+        index = self.dept_combo.findData(code) if code else -1
+        if index >= 0 and index != self.dept_combo.currentIndex():
+            self.dept_combo.setCurrentIndex(index)      # refills the picker
+
+    def _on_department_changed(self, *args):
+        self.picker.set_departments(picker_departments(self.department()))
 
     def _show_mismatch(self):
         mismatch = api.pub.project_mismatch()

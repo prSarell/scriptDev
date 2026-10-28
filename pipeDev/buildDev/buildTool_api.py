@@ -79,6 +79,67 @@ def shot_of_scene(scene_path, scratch_root):
 
 
 # ---------------------------------------------------------------------------
+# Build by department (spec §4 "Build by department", user 2026-10-28): the
+# artist's department decides what Build offers, "it would basically filter
+# out rigs for the lighting team". Only what Build can build today is
+# listed; caches, lights and lookDev shaders on caches come later, and FX
+# and Lighting with them.
+# ---------------------------------------------------------------------------
+
+CAMERA_CODE = "cam"
+ENV_CODE = pub.ENV_CODE
+# (label, department code, what it builds: published department codes,
+# "cam" for the shot camera, "env" for environments; None = coming soon).
+BUILD_FOR = [
+    ("Modeling", "model", ["model"]),
+    ("Rigging", "rig", ["model"]),
+    ("Creature", "creature", ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE]),
+    ("LookDev", "lookDev", ["model", "lookDev"]),
+    ("Layout", "layout", ["model", "rig", ENV_CODE, CAMERA_CODE]),
+    ("Animation", "anim", ["model", "rig", ENV_CODE, CAMERA_CODE]),
+    ("FX", "fx", None),
+    ("Lighting", "lighting", None),
+]
+BUILD_FOR_LABELS = dict((code, label) for label, code, _ in BUILD_FOR)
+
+
+def builds_for(department):
+    """What a department's Build offers (codes, see BUILD_FOR); [] for one
+    that's coming soon or unknown."""
+    return next((list(t or []) for _, c, t in BUILD_FOR if c == department), [])
+
+
+def live_departments():
+    return [c for _, c, t in BUILD_FOR if t]
+
+
+def department_of_scene(scene_path):
+    """The department the open scene is worked in, from its working folder
+    (scenes\\<department>\\<login>\\, spec "Shot working folders" and
+    "Asset working folders"), else from its file name (scout_rig_v002 ->
+    rig, as the Publish tool does), else Animation for a shot and Modeling
+    for an asset. Never a coming-soon department: a lighting scene starts
+    on Layout until Lighting builds. None outside the pipe."""
+    try:
+        _, rel = pub.find_film_folder(scene_path)
+    except BuildError:
+        return None
+    if len(rel) < 6 or rel[1] != "maya" or rel[2] not in ("sequences", "assets"):
+        return None
+    shot = rel[2] == "sequences"
+    live = live_departments()
+    found = None
+    if len(rel) > 7 and rel[5] == "scenes":
+        found = next((c for c in BUILD_FOR_LABELS if c.lower() == rel[6].lower()), None)
+    if not found:
+        words = re.split(r"[_.]", os.path.basename(scene_path).lower())
+        found = next((c for c in BUILD_FOR_LABELS if c.lower() in words), None)
+    if found in live:
+        return found
+    return "layout" if shot and found else "anim" if shot else "model"
+
+
+# ---------------------------------------------------------------------------
 # Published assets on the H drive
 # ---------------------------------------------------------------------------
 
@@ -178,7 +239,6 @@ def list_published(h_root, film):
 
 
 CAMERA_TYPE = "camera"              # asset_type used for a shot's camera
-CAMERA_CODE = "cam"
 CAMERA_NAME = "camera1"             # the shot camera is always live as camera1
 OLD_CAMERA_NAME = "camera1_old"     # what an existing camera1 is renamed to
 DATA_NAME = CAMERA_NAME + "_DATA"   # holds the keys, drives camera1 1:1

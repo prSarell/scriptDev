@@ -1312,6 +1312,27 @@ The tools are developed side by side:
         rigs, environment, camera, layout/anim keys, animation caches.
       - Not buildable yet: animation/FX caches, lookDev shaders on caches,
         lights.
+      - **First pass BUILT 2026-10-28:** a Department dropdown above
+        Build's picker (`buildTool_api.BUILD_FOR`, `builds_for`); the
+        picker's middle dropdown lists only what that department builds,
+        a side with nothing greyed out (`pipePicker.set_departments`).
+        Starts on the open scene's department
+        (`department_of_scene`: working folder `scenes\<dept>\<login>\`,
+        else file name, else Animation for a shot / Modeling for an
+        asset); the same scene keeps what was picked. What's listed, from
+        what Build can build today:
+        | Department | Picker offers |
+        |---|---|
+        | Modeling, Rigging | Modeling (models; their textures come with them) |
+        | LookDev | Modeling, LookDev |
+        | Creature | everything |
+        | Layout, Animation | Modeling, Rigging, Environment, Camera |
+        | FX, Lighting | coming soon (greyed out); a scene in their folders starts on Layout |
+        Claude's call, to check: Layout/Animation also get models (props
+        and set dressing published as models would otherwise be stuck),
+        and don't get Creature publishes. The shot's list isn't filtered:
+        rows already on it stay whatever the department. Test:
+        `buildDev/test_buildDepartment_mayapy.py` (22/22).
       - **Shaders on caches, automatic (WANTED 2026-10-28, not built):**
         "I want to automate texture application to caches in the pipe."
         Where a rig's look comes from (user): "For rigs they are on the
