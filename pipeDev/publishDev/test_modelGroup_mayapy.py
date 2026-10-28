@@ -121,7 +121,7 @@ check("working scene keeps its unknown node and plug-in requirement",
       cmds.ls("oldEditorBookmark1") != [] and "notARealPlugin" in (cmds.unknownPlugin(q=True, list=True) or []))
 text = open(pm["dest"]).read()
 check("published file doesn't ask for the missing plug-in", "notARealPlugin" not in text
-      and 'requires maya "2025' in text)
+      and ('requires maya "%s' % cmds.about(majorVersion=True)) in text)
 crafted = os.path.join(d, "crafted.ma")
 with open(crafted, "w") as f:
     f.write('//Maya ASCII 2025 scene\nrequires maya "2025ff03";\n'

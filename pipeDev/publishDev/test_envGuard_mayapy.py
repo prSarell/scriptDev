@@ -154,7 +154,8 @@ check("outside the pipe + Cancel: nothing made, nothing added",
 del asked[:]; answers[:] = ["Save Here"]
 w._add_row()
 fieldB_sc = os.path.join(SC, "NWF_SHF", "maya", "assets", "environment", "fieldB")
-dest = os.path.join(fieldB_sc, "scenes", "scout", "fieldB_001.ma")
+# Picked as Model: the model working folder (2026-10-28, scenes/model/<login>).
+dest = os.path.join(fieldB_sc, "scenes", "model", "scout", "fieldB_001.ma")
 check("asked once, saying fieldB will be made on scratch",
       len(asked) == 1 and "isn't on your scratch drive yet" in asked[0])
 check("fieldB made on scratch like Set Project (workspace.mel, sourceimages, scenes/scout)",
