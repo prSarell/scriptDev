@@ -1257,8 +1257,17 @@ The tools are developed side by side:
         possible to publish lights from animation, layout or fx" (today
         lights only travel inside an anim publish). OPEN: where light rigs
         live on H (shot or asset), and whether Lighting publishes them too.
-      - OPEN: "textures" for Modeling/Rigging: the ones that travel with
-        the model/rig publish, or the render textures (lookDev)?
+      - LEANING 2026-10-28 (user "not sure about this yet"): no separate
+        texture publish. "Textures are part of look dev... look dev is
+        really about develop textures with shaders." A LookDev publish
+        publishes shaders and the pipe finds the textures they use, adds
+        them to the publish and saves them on H, the same way the rig
+        publish does (`publishTool_textures.py`, UDIMs/sequences/.tx
+        already handled). No publish tool inside Substance Painter:
+        artists export from Painter into the asset's `sourceimages\` and
+        publish from Maya. OPEN: what "textures" means for Modeling and
+        Rigging in Build (the ones in the model/rig publish, or the
+        LookDev ones?), and how LookDev shaders get onto rigs and caches.
       - OPEN: FX gets rigs? Animation gets caches?
       - Not buildable yet: animation/FX caches, lookDev shaders on caches,
         lights.

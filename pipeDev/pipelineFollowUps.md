@@ -43,8 +43,10 @@ hand. One T7 session could cover most of it.
 - [?] **Build by department** (spec §4 "Build by department", DRAFT): the
       department table is drafted. Decided 2026-10-28: asset scenes get
       turntable or witness cameras (never a shot's); a light rig publish
-      from Animation, Layout or FX. Open: what a witness camera is, where
-      light rigs live, which textures, FX rigs / Animation caches.
+      from Animation, Layout or FX. Leaning: textures travel in a LookDev
+      shader publish (like the rig's), no Substance Painter tool. Open:
+      what a witness camera is, where light rigs live, FX rigs /
+      Animation caches.
 - [ ] **Lighting build** (spec §4 "Shot working folders"): Build a shot
       for rendering: newest Final caches, camera, full environment. Comes
       with Build by department; needs the open LookDev / lights decisions.
