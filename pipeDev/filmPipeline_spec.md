@@ -2938,6 +2938,30 @@ installed separately from both toolsets.
       on every Set Project (fine for NWF's ~3,600 folders; time it at
       RMIT).
 
+### 4e. Open scene vs Maya project — DECIDED + BUILT (2026-10-28)
+
+The user: "I keep changing the project expecting that to effect where the
+build tool is building from and where the publish tool is publishing to and
+I think that's why I keep sending stuff to the wrong place." Build and
+Publish go by the open scene (it's what they build into and publish);
+Set Project only changed the Maya project. Decided (both from options put
+to the user):
+
+- **Set Project offers to switch scene.** When the open scene is in another
+  shot or asset (or is unsaved with changes), the Project Tool asks: Open
+  <newest scene in the new project> / New Scene / Keep Current Scene, and
+  Save / Don't Save / Cancel for unsaved changes before switching. Its old
+  "Set the project anyway?" prompt is gone.
+- **Mismatch: warn, let me carry on.** When the open scene and the Maya
+  project are in different pipe shots/assets, Build and Publish show a red
+  banner ("Your open scene is in shot SEQ010_140, but your Maya project is
+  asset shed. Publish uses the open scene: shot SEQ010_140.") with a "Set
+  Project to the scene's" button, and ask before building or publishing
+  (Build Anyway / Publish Anyway / Cancel). Scenes or projects outside the
+  pipe, and untitled scenes, don't count.
+- With an unsaved scene, Publish's picker now starts on the Maya project's
+  shot or asset, as Build already did.
+
 ### 4d. Things made in the shot, and reusing them in another shot — PARKED (2026-10-26)
 
 Raised 2026-10-26; nothing built, nothing decided. The user: "lets record

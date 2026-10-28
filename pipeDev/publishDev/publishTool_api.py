@@ -277,6 +277,65 @@ def find_film_folder(scene_path):
         "Open it from your scratch drive's film folder.")
 
 
+# ---------------------------------------------------------------------------
+# The open scene vs the Maya project (user, 2026-10-28: "I keep changing the
+# project expecting that to effect where the build tool is building from and
+# where the publish tool is publishing to ... that's why I keep sending stuff
+# to the wrong place"). Build and Publish go by the open scene; when it's in
+# a different shot or asset from the Maya project they say so loudly, and
+# let the artist carry on.
+# ---------------------------------------------------------------------------
+
+def pipe_place(path):
+    """The shot or asset folder a path is in (a scene, or a project folder
+    itself): {"film", "kind" ("shot"/"asset"), "group", "name", "folder"},
+    or None outside the pipe's <film>\\maya\\sequences|assets layout."""
+    if not path:
+        return None
+    try:
+        root, rel = find_film_folder(os.path.normpath(path))
+    except PublishError:
+        return None
+    if len(rel) < 5 or rel[1].lower() != "maya" or rel[2].lower() not in ("sequences", "assets"):
+        return None
+    return {"film": rel[0], "kind": "shot" if rel[2].lower() == "sequences" else "asset",
+            "group": rel[3], "name": rel[4], "folder": os.path.join(root, *rel[:5])}
+
+
+def place_label(place):
+    return "%s %s" % (place["kind"], place["name"])
+
+
+def project_mismatch():
+    """{"scene": place, "project": place} when the open scene is in one shot
+    or asset and the Maya project is set to another, else None. Untitled
+    scenes, and scenes or projects outside the pipe, never count."""
+    scene = cmds.file(query=True, sceneName=True) or ""
+    project = cmds.workspace(query=True, rootDirectory=True) or ""
+    s, p = pipe_place(scene), pipe_place(project)
+    if not (s and p) or _same_path(s["folder"], p["folder"]):
+        return None
+    return {"scene": s, "project": p}
+
+
+def mismatch_text(mismatch, verb):
+    """The banner: 'Your open scene is in shot SEQ010_140, but your Maya
+    project is asset shed. <verb> uses the open scene: shot SEQ010_140.'"""
+    return ("Your open scene is in <b>%s</b>, but your Maya project is <b>%s</b>.<br>"
+            "%s uses the open scene: <b>%s</b>." % (
+                place_label(mismatch["scene"]), place_label(mismatch["project"]),
+                verb, place_label(mismatch["scene"])))
+
+
+def latest_scene(project):
+    """The newest .ma/.mb under a project's scenes folder, or None."""
+    found = []
+    for dirpath, _, filenames in os.walk(os.path.join(project, "scenes")):
+        found += [os.path.join(dirpath, n) for n in filenames
+                  if os.path.splitext(n)[1].lower() in (".ma", ".mb")]
+    return max(found, key=os.path.getmtime) if found else None
+
+
 def asset_context(scene_path):
     """Describe the asset a scene belongs to.
 

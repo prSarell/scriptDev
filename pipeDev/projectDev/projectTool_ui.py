@@ -322,13 +322,8 @@ class ProjectToolUI(QtWidgets.QDialog):
         rel = items[0].data(0, ROLE_REL) if items else None
         if not rel:
             return
-        if cmds.file(query=True, modified=True):
-            answer = QtWidgets.QMessageBox.question(
-                self, "Unsaved changes",
-                "Your scene has unsaved changes. Set the project anyway?\n"
-                "(The open scene stays open; only the Maya project changes.)")
-            if answer != QtWidgets.QMessageBox.Yes:
-                return
+        # Unsaved changes are asked about only if the scene is switched
+        # (_offer_scene_switch).
         h_root, scratch_root = self._roots()
         dialog, step = self._progress("Building %s on your scratch drive..." % rel[0])
         try:
@@ -340,6 +335,64 @@ class ProjectToolUI(QtWidgets.QDialog):
             dialog.close()
         self._fill_film()
         self._message("%s: %s.\n%s" % (rel[-1], "; ".join(done), path))
+        switched = self._offer_scene_switch(path)
+        if switched:
+            self._message("%s: %s; %s.\n%s" % (rel[-1], "; ".join(done), switched, path))
+
+    def _offer_scene_switch(self, project):
+        """The open scene is in another shot or asset than the project just
+        set: offer to open the newest scene here, or start a new one, so
+        the scene, the project, Build and Publish all agree (user,
+        2026-10-28: Build and Publish go by the open scene). Returns what
+        was done, or None if the scene was kept."""
+        scene = cmds.file(query=True, sceneName=True) or ""
+        here = pub.pipe_place(project)
+        there = pub.pipe_place(scene)
+        if not here or (there and pub._same_path(here["folder"], there["folder"])):
+            return None
+        if not scene and not cmds.file(query=True, modified=True):
+            return None     # an empty new scene: it already follows the project
+        latest = pub.latest_scene(project)
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Question)
+        box.setWindowTitle("Switch scene?")
+        box.setText("The project is now %s, but the open scene is %s.\n\n"
+                    "Build and Publish go by the open scene. Switch to a scene in %s?"
+                    % (pub.place_label(here), pub.place_label(there) if there else
+                       (os.path.basename(scene) or "an unsaved scene"), here["name"]))
+        open_btn = (box.addButton("Open %s" % os.path.basename(latest),
+                                  QtWidgets.QMessageBox.AcceptRole) if latest else None)
+        new_btn = box.addButton("New Scene", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton("Keep Current Scene", QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(open_btn or new_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked not in (open_btn, new_btn) or not self._save_or_discard(scene):
+            return None
+        if clicked is open_btn:
+            cmds.file(latest, open=True, force=True)
+            return "opened %s" % os.path.basename(latest)
+        cmds.file(new=True, force=True)
+        return "started a new scene"
+
+    def _save_or_discard(self, scene):
+        """Before switching: save the open scene's changes, or drop them.
+        False to stay put."""
+        if not cmds.file(query=True, modified=True):
+            return True
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText("%s has unsaved changes." % (os.path.basename(scene) or "The open scene"))
+        save_btn = box.addButton("Save", QtWidgets.QMessageBox.AcceptRole) if scene else None
+        drop_btn = box.addButton("Don't Save", QtWidgets.QMessageBox.DestructiveRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(save_btn or drop_btn)
+        box.exec()
+        if box.clickedButton() is save_btn:
+            cmds.file(save=True)
+            return True
+        return box.clickedButton() is drop_btn
 
 
 _instance = None

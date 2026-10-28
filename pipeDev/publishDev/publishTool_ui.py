@@ -250,6 +250,8 @@ class PublishToolUI(QtWidgets.QDialog):
         scene_row = QtWidgets.QHBoxLayout()
         scene_row.addWidget(QtWidgets.QLabel("Scene:"))
         scene_row.addWidget(self.scene_lbl, 1)
+        # Scene and Maya project in different shots/assets (2026-10-28).
+        self.project_banner = picker.ProjectBanner(self._match_project)
 
         # What to add to the list (user, 2026-10-22): Film | Asset or Shot |
         # Department | Type or Sequence | Asset or Shot, then - and +.
@@ -320,6 +322,7 @@ class PublishToolUI(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(roots)
         layout.addLayout(scene_row)
+        layout.addWidget(self.project_banner)
         layout.addWidget(self.picker)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
@@ -382,22 +385,33 @@ class PublishToolUI(QtWidgets.QDialog):
             login = "?"
         # Publishes are personal: say whose folder and name they'll go under.
         self.scene_lbl.setText("%s\nPublishing as: %s" % (scene or "(unsaved scene)", login))
+        mismatch = api.project_mismatch()
+        self.project_banner.show_mismatch(api.mismatch_text(mismatch, "Publish") if mismatch
+                                          else None)
         h_root = self._roots()[0]
-        key = (scene, h_root)
+        # An unsaved scene starts the picker on the Maya project's shot or
+        # asset (as Build does, 2026-10-28), e.g. just after Set Project.
+        place = None if scene else api.pipe_place(cmds.workspace(query=True, rootDirectory=True))
+        key = (scene, h_root, place and place["folder"])
         if key != self._picker_key:
             # New scene or H drive: refill the picker, starting on what the
             # open scene is. The student can still pick anything.
             self._picker_key = key
             # A scene outside the pipe has no asset of its own to start on:
             # nothing is picked until the student picks it.
-            self.picker.pick_first = bool(ctx)
+            self.picker.pick_first = bool(ctx or place)
             films = api.list_films(h_root) if h_root else []
-            if ctx and ctx["film"] not in films:
-                films.append(ctx["film"])
-            self.picker.set_films(films, ctx["film"] if ctx else None)
+            film = ctx["film"] if ctx else place["film"] if place else None
+            if film and film not in films:
+                films.append(film)
+            self.picker.set_films(films, film)
             if ctx and ctx["kind"] == "shot":
                 self.picker.set_current(code=anim.ANIM_CODE, group=ctx["seq"],
                                         name=ctx["shot"])
+            elif place:
+                self.picker.set_current(
+                    code=anim.ANIM_CODE if place["kind"] == "shot" else LIVE_DEPARTMENTS[0],
+                    group=place["group"], name=place["name"])
             elif ctx:
                 # Start on the department the file name says (scout_rig_v002
                 # -> Rigging), so a rig isn't published as a model by default.
@@ -859,7 +873,25 @@ class PublishToolUI(QtWidgets.QDialog):
 
     # -- publish ----------------------------------------------------------
 
+    def _match_project(self):
+        mismatch = api.project_mismatch()
+        if mismatch:
+            try:
+                api.set_maya_project(mismatch["scene"]["folder"])
+            except api.PublishError as e:
+                self.status.show_message(str(e), ok=False)
+                return
+            self.status.show_message("Maya project set to %s, where the open scene is."
+                                     % api.place_label(mismatch["scene"]))
+        self.refresh()
+
     def _publish(self):
+        mismatch = api.project_mismatch()
+        if mismatch and not picker.confirm_mismatch(
+                self, api.mismatch_text(mismatch, "Publish"), "Publish"):
+            self.status.show_message("Not published: the open scene isn't in your Maya "
+                                     "project.", ok=False)
+            return
         if cmds.file(query=True, modified=True):
             box = QtWidgets.QMessageBox(self)
             box.setIcon(QtWidgets.QMessageBox.Question)

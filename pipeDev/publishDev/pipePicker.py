@@ -172,3 +172,57 @@ class TargetPicker(QtWidgets.QWidget):
         if items and not self.pick_first:
             items.insert(0, (PICK_TEXT, None, True))
         _set_items(self.name_combo, items or [(NONE_TEXT, None, False)], name or self.name())
+
+
+# ---------------------------------------------------------------------------
+# Open scene vs Maya project (user, 2026-10-28): when they're in different
+# shots or assets, Build and Publish show this red banner above the list,
+# and ask before building or publishing ("warn, but let me carry on").
+# The text comes from publishTool_api.mismatch_text.
+# ---------------------------------------------------------------------------
+
+class ProjectBanner(QtWidgets.QFrame):
+    """Red banner with a 'Set Project to the scene's' button. Hidden until
+    show_mismatch is given some text."""
+
+    def __init__(self, on_match, parent=None):
+        super(ProjectBanner, self).__init__(parent)
+        self.setStyleSheet("ProjectBanner { background: #5a1f1f; border: 2px solid #e05050; "
+                           "border-radius: 4px; }")
+        self.label = QtWidgets.QLabel()
+        self.label.setWordWrap(True)
+        self.label.setTextFormat(QtCore.Qt.RichText)
+        font = QtGui.QFont()
+        font.setPointSize(10)
+        font.setBold(True)
+        self.label.setFont(font)
+        self.label.setStyleSheet("color: #ffb3ab; background: transparent; border: none;")
+        self.match_btn = QtWidgets.QPushButton("Set Project to the scene's")
+        self.match_btn.setToolTip("Set the Maya project to the shot or asset the open scene "
+                                  "is in, so they match.")
+        self.match_btn.clicked.connect(on_match)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.addWidget(self.label, 1)
+        layout.addWidget(self.match_btn)
+        self.hide()
+
+    def show_mismatch(self, text):
+        """text: the banner's rich text, or None to hide it."""
+        self.label.setText(text or "")
+        self.setVisible(bool(text))
+
+
+def confirm_mismatch(parent, text, action):
+    """Ask before acting on a scene that isn't in the Maya project. True to
+    carry on. action: the button's word ("Publish", "Build")."""
+    box = QtWidgets.QMessageBox(parent)
+    box.setIcon(QtWidgets.QMessageBox.Warning)
+    box.setWindowTitle("Scene and project don't match")
+    box.setTextFormat(QtCore.Qt.RichText)
+    box.setText(text + "<br><br>%s anyway?" % action)
+    go = box.addButton("%s Anyway" % action, QtWidgets.QMessageBox.AcceptRole)
+    box.addButton(QtWidgets.QMessageBox.Cancel)
+    box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+    box.exec()
+    return box.clickedButton() == go

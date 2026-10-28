@@ -139,6 +139,8 @@ class BuildShotTab(QtWidgets.QWidget):
         # Which shot: always the open scene's.
         self.target_lbl = QtWidgets.QLabel()
         self.target_lbl.setWordWrap(True)
+        # Scene and Maya project in different shots/assets (2026-10-28).
+        self.project_banner = picker.ProjectBanner(self._match_project)
 
         # What to add (user, 2026-10-22): Film | Asset or Shot | Department |
         # Type or Sequence | Asset or Shot, then - and +.
@@ -186,6 +188,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self.status = StatusLabel()
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.target_lbl)
+        layout.addWidget(self.project_banner)
         layout.addWidget(self.picker)
         layout.addLayout(show)
         layout.addWidget(self.table, 1)
@@ -204,12 +207,32 @@ class BuildShotTab(QtWidgets.QWidget):
         target = self._target_shot or self._target_asset
         self.picker.set_films(films, target[0] if target else None)
         self._load_shot()
+        self._show_mismatch()
 
     def check_target(self):
         """Another scene opened since the list was made: start again from
         its shot. Otherwise the list (and its ticks) stays as it is."""
         if self._find_target() != (self._target_shot, self._target_asset):
             self.refresh()
+        else:
+            self._show_mismatch()      # the project may have changed
+
+    def _show_mismatch(self):
+        mismatch = api.pub.project_mismatch()
+        self.project_banner.show_mismatch(
+            api.pub.mismatch_text(mismatch, "Build") if mismatch else None)
+
+    def _match_project(self):
+        mismatch = api.pub.project_mismatch()
+        if mismatch:
+            try:
+                api.pub.set_maya_project(mismatch["scene"]["folder"])
+            except api.pub.PublishError as e:
+                self.status.show_message(str(e), ok=False)
+                return
+            self.status.show_message("Maya project set to %s, where the open scene is."
+                                     % api.pub.place_label(mismatch["scene"]))
+        self._show_mismatch()
 
     def _find_target(self):
         """(shot, asset) to build into: the open scene's shot as (film,
@@ -754,6 +777,12 @@ class BuildShotTab(QtWidgets.QWidget):
         self.status.show_message(text, ok=not warnings)
 
     def _build_shot(self):
+        mismatch = api.pub.project_mismatch()
+        if mismatch and not picker.confirm_mismatch(
+                self, api.pub.mismatch_text(mismatch, "Build"), "Build"):
+            self.status.show_message("Nothing built: the open scene isn't in your Maya "
+                                     "project.", ok=False)
+            return
         if self._target_asset:
             self._import_into_asset()
             return

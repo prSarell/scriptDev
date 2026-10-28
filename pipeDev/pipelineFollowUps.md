@@ -21,6 +21,11 @@ section, "Wip between machines: CLOSED").
 Everything below passes its mayapy tests, but none of it has been tried by
 hand. One T7 session could cover most of it.
 
+- [ ] **Scene vs project** (spec §4e, 2026-10-28): open a SEQ010_140 scene,
+      Set Project to the shed. Check that you're offered Open / New Scene /
+      Keep. Pick Keep, then check that Build and Publish show the red banner
+      and ask before acting, and that "Set Project to the scene's" clears it.
+      Is the banner readable on the dark theme?
 - [ ] Publish and Build windows on the T7 (backlog from 2026-10-15).
 - [ ] Shot publish v0 with a real Approved Version on EAP_010_010
       (Layout / Blocking / Final tasks), backpack v008+ with the stamp.
