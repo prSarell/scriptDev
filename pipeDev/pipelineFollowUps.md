@@ -69,6 +69,11 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the shot list: build a shot on one drive, open a scene in
       that shot on another drive (T7 / D:), check the list comes back with
       the latest keys; "-" an asset, reopen, check it stays off.
+- [ ] **Model textures** (2026-10-28): publish a textured model (a
+      Painter export in sourceimages, UDIMs if you have them) and an
+      untextured one. Check the textures land in
+      `<asset>\sourceimages\e131988\<published name>\` on H, then Build the
+      model into a shot on another drive and check they show.
 - [ ] Publish failure popup (2026-10-28): make a publish fail in Maya and
       check the red PUBLISH FAILED window reads well on Maya's dark theme.
 - [ ] Model/rig/lookDev folders (2026-10-28, spec "Asset working folders"):

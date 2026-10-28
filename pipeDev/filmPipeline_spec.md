@@ -1298,9 +1298,15 @@ The tools are developed side by side:
         publish finds them by walking the model's shader networks, "just
         like it currently does for the rig". A model can also be published
         without textures. So Modeling/Rigging's "textures" in Build = the
-        ones carried in the model/rig publish. NOT BUILT: today only the
-        rig (and environment) publish calls `publishTool_textures.collect`;
-        a model publish leaves its file nodes pointing at scratch.
+        ones carried in the model/rig publish. BUILT 2026-10-28: the
+        model publish collects the textures on its objects' shaders
+        (`tex.collect(_model_roots(objects))`, a missing one refuses, an
+        empty file node is skipped), copies them to
+        `<asset>\sourceimages\<login>\<published name>\` and points the
+        published file at them through `$PIPE_SCRATCH`, like the rig; the
+        model group's stamp gets `pipe_textures`. Build already pulled any
+        publish's texture folder. Test:
+        `publishDev/test_modelTextures_mayapy.py` (14/14).
       - DECIDED 2026-10-28: Animation gets caches too ("occasionally to
         compare changes etc"); FX does not get rigs. Animation row:
         rigs, environment, camera, layout/anim keys, animation caches.

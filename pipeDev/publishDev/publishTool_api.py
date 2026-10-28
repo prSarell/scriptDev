@@ -1417,12 +1417,16 @@ def _remove_empty_groups(nodes):
     return sorted(removed)
 
 
-def export_model_to_h_drive(objects, plan, scene_path):
+def export_model_to_h_drive(objects, plan, scene_path, textures=()):
     """Model publish: the published file holds a clean copy of the model,
     transforms frozen and history deleted, inside <asset>_model_GRP with
     the publish's identity stamped on it. Done on duplicates; the working
     scene ends exactly as it was (names, transforms, history, selection).
-    objects empty = every top-level object."""
+    objects empty = every top-level object. textures (from
+    publishTool_textures.collect) are copied to the version's folder on
+    the H drive like a rig's (user, 2026-10-28); none = an untextured
+    model, published as before."""
+    import publishTool_textures as tex
     missing = [o for o in objects if not cmds.objExists(o)]
     if missing:
         raise PublishError("Not in the scene any more: %s" % ", ".join(missing))
@@ -1430,9 +1434,18 @@ def export_model_to_h_drive(objects, plan, scene_path):
         raise PublishError("%s already exists — try again." % plan["dest"])
     if not os.path.isdir(plan["h_folder"]):
         os.makedirs(plan["h_folder"])
+    # The copies share the originals' shaders, so pointing the file nodes
+    # at the H drive copies for the export is enough.
+    with tex.PublishedTextures(textures, plan) as files:
+        info = pipe_group_info(plan, scene_path)
+        if files.stamp_textures:
+            info.append(("textures", json.dumps(files.stamp_textures)))
+        _export_model(objects, plan, info)
+
+
+def _export_model(objects, plan, info):
     file_type = "mayaAscii" if plan["ext"] == ".ma" else "mayaBinary"
     group_name = pipe_group_name(plan["asset"], plan["code"])
-    info = pipe_group_info(plan, scene_path)
     selection = cmds.ls(selection=True)
     uuids = cmds.ls(objects, uuid=True) if objects else []
     moved, made = [], []      # (uuid, name) renamed out of the way; temp nodes
@@ -1996,6 +2009,11 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     textures, dna = [], []
     if code == MODEL_CODE:
         check_not_a_rig(plan["objects"])
+        # The model's textures travel with it, found through its shaders
+        # like the rig's (user, 2026-10-28); a missing one stops the
+        # publish here. No textures is fine.
+        import publishTool_textures as tex
+        textures = tex.collect(_model_roots(plan["objects"]))
     if code == RIG_CODE:
         # Checked before anything is made or uploaded.
         import publishTool_textures as tex
@@ -2024,7 +2042,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
                                               plan.setdefault("warnings", []))
         elif code == MODEL_CODE:
             # Always a clean copy in its pipe group (spec §4 item 6a).
-            export_model_to_h_drive(plan["objects"], plan, scene_path)
+            export_model_to_h_drive(plan["objects"], plan, scene_path, textures)
         elif code == RIG_CODE:
             # Always exported: in its pipe group, with textures and DNA.
             export_rig_to_h_drive(plan["objects"], plan, scene_path, textures, dna, face_fill)

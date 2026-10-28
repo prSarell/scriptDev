@@ -808,7 +808,9 @@ class PublishToolUI(QtWidgets.QDialog):
                     "Open the shot scene and use a Camera row." % ", ".join(cameras))
         if code == api.MODEL_CODE:
             try:
+                import publishTool_textures as tex
                 api.check_not_a_rig(objects)
+                tex.collect(api._model_roots(objects))     # missing textures
             except api.PublishError as e:
                 return str(e)
         if code == api.RIG_CODE:
