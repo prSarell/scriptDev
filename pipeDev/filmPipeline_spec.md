@@ -1252,10 +1252,16 @@ The tools are developed side by side:
       - DECIDED 2026-10-28: cameras in asset scenes are never a shot's
         camera: "a turntable or a witness camera".
       - DEFINED 2026-10-28: **witness camera** = "a camera created to
-        review work from an angle other than the shot cam". It is part of
-        the "created in shot" pipe (§4d), not an asset publish. OPEN: how
-        one reaches an asset scene (the line above), whether it renders,
-        and whether it's kept out of the edit/playblast.
+        review work from an angle other than the shot cam", for "showing
+        work in shots or assets if want to publish a camera that doesn't
+        overwrite a shot camera for example". So it's its own camera
+        publish, in shot AND asset scenes, never replacing the shot
+        camera (part of the "created in shot" pipe, §4d, on the shot
+        side). SUGGESTION (Claude), not agreed: a named publish beside the
+        shot camera's (`<shot or asset>_witness_<name>_v###`), several
+        allowed, Build lists them under Camera after the shot camera,
+        never used for the edit, review movie or render unless picked.
+        OPEN: naming, and whether its playblast goes to ShotGrid.
       - DECIDED 2026-10-28: a light rig publish is needed: "it should be
         possible to publish lights from animation, layout or fx" (today
         lights only travel inside an anim publish). Light rigs "publish to
