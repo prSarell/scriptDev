@@ -31,7 +31,7 @@ from publishTool_api import PublishError
 WORKSPACE = "workspace.mel"
 # Settings key: who to be in ShotGrid on a machine whose Windows login isn't
 # an RMIT login (home testing). Same idea as publish_as, for ShotGrid only.
-SHOTGRID_AS = "shotgrid_as"
+SHOTGRID_AS = pub.SHOTGRID_AS
 # Made on scratch by the tools or Maya, never on the H drive: not "extra".
 SCRATCH_ONLY = (("maya", "publish"),)
 
@@ -188,15 +188,23 @@ def describe_diff(diff):
         parts.append("new assets: " + ", ".join(assets))
     # Someone's first publish makes their scenes\<login>\ folder on the H
     # drive (spec §4 "Personal work folders"): name whose, and where.
-    people = sorted(set((r[6], r[4]) for r in diff["missing"] if len(r) == 7 and r[1] == "maya"
-                        and r[2] in ("sequences", "assets") and r[5] == "scenes"
-                        and r[:5] not in new))
+    # Also scenes\model\<login>\ and scenes\rig\<login>\ (pub.WORK_FOLDERS).
+    def person(r):
+        if len(r) < 7 or r[1] != "maya" or r[2] not in ("sequences", "assets") \
+                or r[5] != "scenes" or r[:5] in new:
+            return None
+        if len(r) == 7 and r[6] not in pub.WORK_FOLDERS:
+            return r[6]
+        if len(r) == 8 and r[2] == "assets" and r[6] in pub.WORK_FOLDERS:
+            return r[7]
+        return None
+    people = sorted(set((person(r), r[4]) for r in diff["missing"] if person(r)))
     if people:
         parts.append("new people's folders: " + ", ".join("%s (in %s)" % p for p in people))
     # Folders inside a new shot/asset (scenes, images...) aren't news.
     others = len([r for r in diff["missing"] if r not in new
                   and not any(r[:5] == n for n in new)
-                  and not (len(r) == 7 and r[5] == "scenes" and (r[6], r[4]) in people)
+                  and not person(r)
                   and not (len(r) == 4 and r[1] == "maya" and r[2] in ("sequences", "assets"))])
     if others:
         parts.append("%d other new folder(s)" % others)
@@ -259,10 +267,13 @@ def set_project(h_root, scratch_root, rel, login=None, progress=None):
         folders, _ = update_structure(h_root, scratch_root, film, diff=diff)
         done.append("made %s on scratch (%d folders)" % (rel[-1], folders))
     login = login or pub.who()
-    mine = os.path.join(project, "scenes", login)
-    if not os.path.isdir(mine):
-        os.makedirs(mine)
-        done.append("made your scenes\\%s folder" % login)
+    mine = [os.path.join(project, "scenes", login)]
+    if rel[2] == "assets":
+        mine += [pub.work_folder(project, code, login) for code in pub.WORK_FOLDERS]
+    for folder in mine:
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+            done.append("made your %s folder" % os.path.relpath(folder, project))
     done += set_studio_library(h_root, scratch_root, rel, login)
     pub.set_maya_project(project)
     done.append("Maya project set")

@@ -76,5 +76,17 @@ check("library: what students saved is never touched", os.path.isfile(os.path.jo
 plan = h_sync.plan_sync(H, film, shots, chars + [{"code": "ATKS", "type": "Character"}])
 check("library: a new character gets folders everywhere, the rest left as is",
       len(plan["library"]) == 3 * 8 and all(os.sep + "ATKS" + os.sep in p for p in plan["library"]))
+# -- scenes\model, rig, lookDev working folders (user, 2026-10-28) ------------
+backpack = os.path.join(maya, "assets", "prop", "backpack")
+check("work: existing and new assets got scenes\\model, rig, lookDev",
+      all(os.path.isdir(os.path.join(a, "scenes", w)) for a in (backpack, house)
+          for w in ("model", "rig", "lookDev")))
+check("work: shots don't",
+      not os.path.exists(os.path.join(maya, "sequences", "SEQ010", "SEQ010_020", "scenes", "model")))
+open(os.path.join(backpack, "scenes", "anna", "work.ma"), "a").close()
+os.makedirs(os.path.join(backpack, "scenes", "rig", "anna"))
+check("work: second run adds none, people's folders left alone",
+      not h_sync.plan_sync(H, film, shots, chars)["work"]
+      and os.path.isdir(os.path.join(backpack, "scenes", "rig", "anna")))
 check("Maya never loaded", not any(m == "maya" or m.startswith("maya.") for m in sys.modules))
 print("%d/%d passed" % (sum(ok), len(ok)))

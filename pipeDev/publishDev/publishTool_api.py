@@ -102,8 +102,16 @@ def get_root(key):
 # in the file name, so everyone has their own version series. The login
 # is the Windows login (RMIT logins match ShotGrid logins). "publish_as"
 # in the machine's settings overrides it, for staff testing on a machine
-# whose Windows login isn't their RMIT one.
+# whose Windows login isn't their RMIT one; failing that "shotgrid_as" (the
+# Project Tool's RMIT ID setting), so staff set their e-number once and it
+# names their folders too (user, 2026-10-28: "scout" read as the character).
 PUBLISH_AS = "publish_as"
+SHOTGRID_AS = "shotgrid_as"
+# Every asset's scenes folder has these working folders, each holding one
+# folder per person (scenes\model\s1234567\): model, rig and lookdev
+# iteration and development (user, 2026-10-28). Named by department code.
+# Publishes still go in scenes\<login>\.
+WORK_FOLDERS = ("model", "rig", "lookDev")
 
 
 def clean_login(name):
@@ -114,7 +122,8 @@ def clean_login(name):
 def who():
     """The login publishes are made under, e.g. 's1234567'."""
     import getpass
-    login = clean_login(load_config().get(PUBLISH_AS, ""))
+    config = load_config()
+    login = clean_login(config.get(PUBLISH_AS, "")) or clean_login(config.get(SHOTGRID_AS, ""))
     if not login:
         try:
             login = clean_login(getpass.getuser())
@@ -297,6 +306,15 @@ def personal_folder(h_root, rel_project, login):
     """<H>\\<film>\\maya\\...\\<asset or shot>\\scenes\\<login>: where one
     person's publishes for an asset or shot go."""
     return os.path.join(h_root, *(list(rel_project) + ["scenes", login]))
+
+
+def work_folder(project, code, login):
+    """Where one person's working scenes go in an asset project:
+    scenes\\<code>\\<login> for the WORK_FOLDERS departments (model, rig,
+    lookDev), else scenes\\<login>."""
+    if code in WORK_FOLDERS:
+        return os.path.join(project, "scenes", code, login)
+    return os.path.join(project, "scenes", login)
 
 
 def list_h_assets(h_root, film):

@@ -647,7 +647,7 @@ class PublishToolUI(QtWidgets.QDialog):
             return False
         rel = (film, "maya", "assets", group, name)
         project = proj.scratch_project(scratch_root, rel)
-        folder = os.path.join(project, "scenes", login)
+        folder = api.work_folder(project, code, login)
         current = cmds.file(query=True, sceneName=True)
         ext = os.path.splitext(current)[1].lower() if current else ".ma"
         ext = ext if ext in api.SCENE_EXTS else ".ma"

@@ -151,7 +151,11 @@ def list_published(h_root, film):
     groups = {}
     for asset_type, asset in pub.list_h_assets(h_root, film):
         scenes = os.path.join(assets_dir, asset_type, asset, "scenes")
-        for dirpath, _, filenames in os.walk(scenes):
+        for dirpath, dirnames, filenames in os.walk(scenes):
+            if os.path.normcase(dirpath) == os.path.normcase(scenes):
+                # scenes\model\, rig\, lookDev\ hold working files, not publishes.
+                work = [w.lower() for w in pub.WORK_FOLDERS]
+                dirnames[:] = [d for d in dirnames if d.lower() not in work]
             login = os.path.basename(dirpath)
             for name in filenames:
                 m = PUBLISHED_RE.match(name)

@@ -56,6 +56,11 @@ LIBRARY_TYPE = "Character"
 LIBRARY_KINDS = ("keyframe", "mocap")
 LIBRARY_PARTS = ("face", "body")
 LIBRARY_ITEMS = ("pose", "motion")
+# Every asset's scenes\model\, scenes\rig\ and scenes\lookDev\ working
+# folders (each holds a folder per person), new and existing assets alike
+# (user, 2026-10-28). Same as publishTool_api.WORK_FOLDERS (this script
+# runs without Maya).
+WORK_FOLDERS = ("model", "rig", "lookDev")
 
 
 # ---------------------------------------------------------------------------
@@ -168,10 +173,11 @@ def library_folders(maya_dir, shots, characters):
 def plan_sync(h_root, film, shots, assets):
     """{"build": [(kind, label, folder)], "skipped": [(label, why)],
         "not_in_shotgrid": [folder], "library": [folder],
-        "characters": [name]}. Only folders that don't exist yet are ever
-    in "build" or "library"."""
+        "characters": [name], "work": [folder]}. Only folders that don't
+    exist yet are ever in "build", "library" or "work"."""
     maya_dir = os.path.join(h_root, film, "maya")
     build, skipped, expected = [], [], set()
+    work = []           # scenes\model, scenes\rig of every asset that has/gets a folder
     worked_on = []      # (sequence, shot) of every shot that has/gets a folder
     for shot in sorted(shots, key=lambda s: s["code"]):
         if REFERENCE_SHOT.search(shot["code"]):
@@ -207,6 +213,8 @@ def plan_sync(h_root, film, shots, assets):
         expected.add(_key(folder))
         if not os.path.isdir(folder):
             build.append(("asset", "%s (%s)" % (asset["code"], asset["type"]), folder))
+        work += [os.path.join(folder, "scenes", w) for w in WORK_FOLDERS
+                 if not os.path.isdir(os.path.join(folder, "scenes", w))]
     # Folders on the H drive that ShotGrid doesn't have (renamed/removed, or
     # made by hand): reported, never touched.
     not_in_shotgrid = []
@@ -227,7 +235,7 @@ def plan_sync(h_root, film, shots, assets):
     library = [f for f in library_folders(maya_dir, worked_on, characters)
                if not os.path.isdir(f)]
     return {"build": build, "skipped": skipped, "not_in_shotgrid": not_in_shotgrid,
-            "library": library, "characters": characters}
+            "library": library, "characters": characters, "work": work}
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +298,18 @@ def apply_sync(h_root, film, plan, log=print):
             log("  skipped Studio Library folder %s: %s" % (folder, e))
     if made:
         log("  built  %d Studio Library folder(s)" % made)
+    made = 0
+    for folder in plan.get("work") or []:
+        # After the asset itself is built; skipped if it couldn't be.
+        if not os.path.isdir(os.path.dirname(os.path.dirname(folder))):
+            continue
+        try:
+            os.makedirs(folder, exist_ok=True)
+            made += 1
+        except OSError as e:
+            log("  skipped %s: %s" % (folder, e))
+    if made:
+        log("  built  %d model/rig/lookDev working folder(s)" % made)
     return built
 
 
@@ -308,6 +328,9 @@ def report(plan, log=print):
     if plan.get("library"):
         log("Studio Library folders to add (%d), for characters: %s"
             % (len(plan["library"]), ", ".join(plan["characters"])))
+    if plan.get("work"):
+        log("Asset working folders to add (%d): scenes\\%s"
+            % (len(plan["work"]), ", scenes\\".join(WORK_FOLDERS)))
 
 
 def films_on(h_root):
@@ -339,7 +362,8 @@ def main(argv=None):
         plan = plan_sync(args.h_root, film, shots, assets)
         report(plan)
         plans.append((film, plan))
-    total = sum(len(p["build"]) + len(p.get("library") or []) for _, p in plans)
+    total = sum(len(p["build"]) + len(p.get("library") or []) + len(p.get("work") or [])
+                for _, p in plans)
     print("")
     if not total:
         print("Nothing new: the H drive already has a folder for everything in ShotGrid.")
