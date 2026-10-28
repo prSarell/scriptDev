@@ -206,6 +206,7 @@ check("made in the shot: no look", api.look_for_cache(H, FILM, {"kind": "shot", 
 
 # --- the Build tab: Animation's list gets the shot's caches by itself
 parent = QtWidgets.QWidget()
+cmds.workspace(shot_s, openWorkspace=True)      # the Project Tool sets the shot
 cmds.file(save=True, type="mayaAscii")
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
@@ -233,7 +234,7 @@ tab._save_shot_list()
 check("an unbuilt cache isn't saved to the shot's list",
       not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT) or []))
 check("Layout doesn't build caches", api.CACHE_CODE not in api.builds_for("layout"))
-tab.picker.set_current(code="layout")
+tab.target_picker.set_current(code="layout")
 cmds.file(new=True, force=True)
 layout_scene = os.path.join(shot_s, "scenes", "layout", LOGIN, "layout.ma")
 os.makedirs(os.path.dirname(layout_scene))

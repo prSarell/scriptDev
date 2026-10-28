@@ -96,7 +96,7 @@ save_as(os.path.join(shot, "scenes", "%s_001.ma" % SHOT))
 parent = QtWidgets.QWidget()
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-tab.picker.set_current(film=FILM, code="anim", group="character", name="scout (Rigging)")
+tab.picker.set_current(film=FILM, code="rig", group="character", name="scout")
 tab._add_asset()
 row = tab._rows[0]
 check("new rig row starts at the shot's latest keys", row["keys_chosen"] == ANIM)

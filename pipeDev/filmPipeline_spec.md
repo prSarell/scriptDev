@@ -1354,6 +1354,53 @@ The tools are developed side by side:
         "Other shot..."). The Publish tool's picker is unchanged. Creature
         is on the Asset side only for now. Tests: `test_buildDepartment`,
         `test_addAssetOnly`, `test_shotKeysUi`, `test_buildCache`.
+      - **Two rows: Add to list / Build into, BUILT 2026-10-28** (replaces
+        the picker redesign above, same evening). User: "the difference
+        between build and populate list mode. Right now that is being
+        handled by one menu and the build button", "what if we added the
+        same dropdown menu under the list but above the build shot button
+        that defines where the build is going to. It could be set to
+        anything by the artist, but by default it sets itself to whatever
+        the project is set to", "it works in two ways. 1) Sanity check 'I
+        want these things in this place' 2) Keeps the list of assets
+        associated with the build dynamic".
+        - **Add to list** (above the list): Film | Asset | what's published
+          (Modeling / Rigging / Creature / LookDev / Environment) | Asset
+          type | Asset, then - and +. Only what the Build into department
+          builds is offered (`source_departments`).
+        - **Build into** (under the list, above Build Shot): Film | Asset or
+          Shot | the artist's department | Sequence or asset type | Shot or
+          asset. Starts on the **Maya project** (else the open scene's
+          place) and the scene's department (`department_of_scene`); a
+          new scene or a new project (e.g. the Project Tool) resets it, the
+          same scene and project keep a hand-picked one. The list is the
+          target's: picking another shot loads that shot's list, camera
+          and caches. An Asset target is Import into Asset, as before.
+        - **The project is never changed** (user: "don't change the
+          project"). Build Shot used to set the project to the shot on
+          every build; now only when no pipe project is set at all (a
+          fresh Maya), so references resolve.
+        - **Publish still follows where the scene is saved** (user asked
+          whether Build into should steer it; Claude: no, it decides the
+          publish's names, version series, ShotGrid shot and keys, so a
+          scene in SEQ010_140 publishing to 150 is §4d's parked "publish
+          to another shot").
+        - **Build refuses off-pipe builds (DECIDED 2026-10-28).** User: "if
+          the user changes the [Build into] menu to a destination other
+          than the one the project is set to the pipe should refuse and
+          make the user reset the project and save the file in the correct
+          structure", then "the students will need help to stay on pipe".
+          (1) Build into isn't the Maya project: red banner ("Build won't
+          run... set it as your project with the Project Tool and save your
+          scene there", button "Back to the project's shot") and Build
+          Shot refuses, no "build anyway". (2) The scene is saved outside
+          the project: also refused now (it was a warning with "Build
+          anyway?", spec "Scene vs project"), banner button "Set Project to
+          the scene's". An untitled scene, or no pipe project at all (a
+          fresh Maya), is fine. OPEN: the Publish tool still only warns on
+          scene vs project; should it refuse too?
+        - Keys from: stays beside Show:. Test: `test_buildDepartment`
+          (34/34), plus the four tests above updated.
       - **Caches are per scene** (Claude's call, 2026-10-28): never on the
         shot's saved list, so one built to compare doesn't come back ticked
         in every new scene of the shot (Layout's included). They join a

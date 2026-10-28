@@ -50,13 +50,16 @@ hand. One T7 session could cover most of it.
       shot's `scenes\lighting\`; model textures come from the model's
       shaders (optional). Open: `scenes\lighting\<login>\` vs all shot
       publishes under their department folder.
-- [ ] **Build by department** (built 2026-10-28, picker redesigned the
-      same day): open an anim scene (`scenes\anim\e131988\`), check the
-      picker reads Shot | Animation and lists "scout (Rigging)",
-      "backpack (Modeling)", "shed (Environment)"; the camera and caches
-      are in the list by themselves. Switch to Asset | Modeling: models
-      only. Open a rig scene: Asset | Rigging. Keys from: pick another
-      shot, check the Keys column lists its keys.
+- [ ] **Build: Add to list / Build into** (built 2026-10-28): Set Project
+      SEQ010_140, open an anim scene (`scenes\anim\e131988\`). Build into
+      should read NWF_SHF | Shot | Animation | SEQ010 | SEQ010_140; Add to
+      list offers Modeling / Rigging / Environment. Pick another shot in
+      Build into: its list loads, the red banner says Build won't run, the
+      Maya project doesn't move, Build Shot refuses; the banner button
+      goes back. Open a scene saved in another shot: refused too, with
+      Set Project to the scene's. Set Project to another shot with the
+      Project Tool: Build into follows. Open a rig scene: Asset | Rigging,
+      Import into Asset. Keys from: pick another shot, its keys listed.
 - [ ] **Shaders on caches** (built 2026-10-28, spec "Shaders on caches"):
       republish Scout's rig (it gets `_look.ma` / `_look.json` beside it)
       and a textured model; check the look files open with only shaders
