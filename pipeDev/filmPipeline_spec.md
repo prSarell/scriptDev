@@ -1292,6 +1292,38 @@ The tools are developed side by side:
         rigs, environment, camera, layout/anim keys, animation caches.
       - Not buildable yet: animation/FX caches, lookDev shaders on caches,
         lights.
+      - **Shaders on caches, automatic (WANTED 2026-10-28, not built):**
+        "I want to automate texture application to caches in the pipe."
+        Where a rig's look comes from (user): "For rigs they are on the
+        model (from the model publish) and added by the artist before
+        publish. Rigs can also be published without textures."
+        - Today: the anim publish's Alembic (`-uvWrite`, no face sets, no
+          shaders) is grey; its `.json` already records the rig's stamp
+          (`"asset"`: asset id, department, version), so a cache can be
+          traced back to the exact rig publish that made it.
+        - SUGGESTION (Claude), not agreed:
+          1. **Rig and model publishes also write a look**, next to the
+             published file: `<name>_look.ma` (the shading networks of the
+             cache_SET meshes only: shadingEngines, shaders, file nodes,
+             already pointing at the published textures through
+             `$PIPE_SCRATCH`) and `<name>_look.json` (each mesh, by its
+             name with no namespace, → shadingEngine, with face ranges for
+             per-face assignments). No shaders = no look files, no warning.
+          2. **The anim publish changes nothing**: the cache's `.json`
+             already names the rig version.
+          3. **Build, when it brings in a cache**, reads the rig version
+             from the cache's `.json`, imports that rig's look once per
+             version (namespace e.g. `scout_rig_v004_look`) and assigns it
+             by mesh name. Meshes it can't match are listed in the Build
+             message, not an error.
+          4. Later, LookDev publishes the same two files, so Lighting can
+             choose the newest LookDev look instead of the rig's (OPEN:
+             which wins by default).
+          - Rigs published before this have no look: republish the rig, or
+            (OPEN) a fallback that pulls the shading out of the published
+            rig file itself.
+          - OPEN: MetaHuman face shaders (many maps, DNA-driven) may need
+            their own handling.
     - **Build into an asset scene = import, never reference (DECIDED +
       BUILT 2026-10-28):** "if an artist pulls a published asset from the
       h drive it should not be referenced... a rule for all assets, so the
