@@ -313,7 +313,10 @@ def project_mismatch():
     scene = cmds.file(query=True, sceneName=True) or ""
     project = cmds.workspace(query=True, rootDirectory=True) or ""
     s, p = pipe_place(scene), pipe_place(project)
-    if not (s and p) or _same_path(s["folder"], p["folder"]):
+    # The same shot or asset on another drive (a shot carried to a new
+    # scratch drive) isn't a mismatch: Build and Publish follow the scene.
+    same = lambda a, b: all(a[k].lower() == b[k].lower() for k in ("film", "kind", "group", "name"))
+    if not (s and p) or same(s, p):
         return None
     return {"scene": s, "project": p}
 

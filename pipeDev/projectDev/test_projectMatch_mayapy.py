@@ -67,6 +67,11 @@ pub.set_maya_project(shot_dir)
 check("scene in the project: no mismatch", pub.project_mismatch() is None)
 cmds.file(new=True, force=True)
 check("unsaved scene: no mismatch", pub.project_mismatch() is None)
+other_drive = os.path.join(base, "S2", *SHOT)
+os.makedirs(os.path.join(other_drive, "scenes"))
+pub.set_maya_project(other_drive)
+cmds.file(shot_scene, open=True, force=True)
+check("same shot on another drive: no mismatch", pub.project_mismatch() is None)
 
 # -- the Publish window ---------------------------------------------------------
 import publishTool_ui as pui
