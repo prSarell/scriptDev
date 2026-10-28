@@ -1361,9 +1361,9 @@ The tools are developed side by side:
           4. Later, LookDev publishes the same two files, so Lighting can
              choose the newest LookDev look instead of the rig's (OPEN:
              which wins by default).
-          - Rigs published before this have no look: republish the rig, or
-            (OPEN) a fallback that pulls the shading out of the published
-            rig file itself.
+          - DECIDED 2026-10-28: rigs published before this have no look and
+            get no fallback: "going forward I will just republish new
+            versions of existing assets".
           - OPEN: MetaHuman face shaders (many maps, DNA-driven) may need
             their own handling.
     - **Build into an asset scene = import, never reference (DECIDED +
