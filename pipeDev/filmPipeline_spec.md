@@ -1244,7 +1244,7 @@ The tools are developed side by side:
       | Creature | asset and shot | everything |
       | LookDev | asset | models, textures, lookDev, lights, cameras |
       | Layout | shot | rigs, environment, camera |
-      | Animation | shot | rigs, environment, camera, layout/anim keys |
+      | Animation | shot | rigs, environment, camera, layout/anim keys, animation caches |
       | FX | shot | animation caches, environment, camera |
       | Lighting | shot | animation caches, FX caches, full environment, camera, lookDev shaders, lights |
 
@@ -1268,7 +1268,9 @@ The tools are developed side by side:
         publish from Maya. OPEN: what "textures" means for Modeling and
         Rigging in Build (the ones in the model/rig publish, or the
         LookDev ones?), and how LookDev shaders get onto rigs and caches.
-      - OPEN: FX gets rigs? Animation gets caches?
+      - DECIDED 2026-10-28: Animation gets caches too ("occasionally to
+        compare changes etc"); FX does not get rigs. Animation row:
+        rigs, environment, camera, layout/anim keys, animation caches.
       - Not buildable yet: animation/FX caches, lookDev shaders on caches,
         lights.
     - **Build into an asset scene = import, never reference (DECIDED +

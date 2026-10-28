@@ -45,8 +45,8 @@ hand. One T7 session could cover most of it.
       turntable or witness cameras (never a shot's); a light rig publish
       from Animation, Layout or FX. Leaning: textures travel in a LookDev
       shader publish (like the rig's), no Substance Painter tool. Open:
-      what a witness camera is, where light rigs live, FX rigs /
-      Animation caches.
+      what a witness camera is, where light rigs live. Decided: Animation
+      gets caches (to compare), FX gets no rigs.
 - [ ] **Lighting build** (spec §4 "Shot working folders"): Build a shot
       for rendering: newest Final caches, camera, full environment. Comes
       with Build by department; needs the open LookDev / lights decisions.
