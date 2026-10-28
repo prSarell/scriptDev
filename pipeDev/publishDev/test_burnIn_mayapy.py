@@ -21,8 +21,8 @@ plan = {"code": "anim", "version": 3, "asset": "EAP_010_010", "asset_project": d
         "dest": os.path.join(d, "EAP_010_010_scout_anim_v003.ma")}
 
 text = api.burn_in_text(plan, cam)
-check("text: fps, published name, focal length, artist (login)",
-      text == {"top_left": "24 fps", "top_middle": "EAP_010_010_scout_anim_v003",
+check("text: fps, shot name (not the file name), focal length, artist (login)",
+      text == {"top_left": "24 fps", "top_middle": "EAP_010_010",
                "bottom_left": "50mm", "bottom_right": "Scout Test (scout)"})
 check("no camera: no focal length", api.burn_in_text(plan)["bottom_left"] == "")
 

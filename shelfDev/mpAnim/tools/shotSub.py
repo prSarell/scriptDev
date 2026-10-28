@@ -199,7 +199,7 @@ class ShotSub(object):
         )
         inner = cmds.columnLayout(adj=True)
         self.widgets["show_fps"] = cmds.checkBox(label="Show Frame Rate", value=True)
-        self.widgets["show_scene"] = cmds.checkBox(label="Show Scene Name", value=True)
+        self.widgets["show_scene"] = cmds.checkBox(label="Show Shot / Asset Name", value=True)
         self.widgets["show_frame"] = cmds.checkBox(label="Show Frame Number", value=True)
         self.widgets["show_focal"] = cmds.checkBox(label="Show Focal Length", value=True)
         self.widgets["show_student"] = cmds.checkBox(label="Show Student Name/ID", value=True)
@@ -319,6 +319,24 @@ class ShotSub(object):
 
     def get_scene_basename_no_ext(self):
         return os.path.splitext(self.get_scene_name())[0]
+
+    # The film pipe's layout: <film>/maya/sequences/<seq>/<shot>/scenes/...
+    # and <film>/maya/assets/<type>/<asset>/scenes/...
+    _PIPE_NAME_RE = re.compile(r"[\\/](?:sequences|assets)[\\/][^\\/]+[\\/]([^\\/]+)[\\/]scenes[\\/]",
+                               re.IGNORECASE)
+
+    def get_burnin_name(self):
+        """The shot or asset name for the burn-in, not the file name (user,
+        2026-10-28): the Shot/Asset this scene is linked to in ShotGrid, else
+        the shot/asset folder a film pipe scene is in, else the scene's file
+        name."""
+        link = self.read_shotgrid_link() or {}
+        if link.get("sg_entity_code"):
+            return link["sg_entity_code"]
+        match = self._PIPE_NAME_RE.search(self.ensure_scene_saved())
+        if match:
+            return match.group(1)
+        return self.get_scene_basename_no_ext()
 
     def get_project_root(self):
         root = cmds.workspace(q=True, rootDirectory=True)
@@ -908,7 +926,7 @@ class ShotSub(object):
         show_student = cmds.checkBox(self.widgets["show_student"], q=True, value=True)
 
         fps_text = self.get_frame_rate_label() if show_fps else ""
-        scene_text = self.get_scene_name() if show_scene else ""
+        scene_text = self.get_burnin_name() if show_scene else ""
 
         # Reads whatever's already saved (see ensure_student_identity()) --
         # deliberately does NOT prompt here, so a playblast never blocks on

@@ -1577,12 +1577,14 @@ def playblast_frames(plan, frame_count, objects=None, camera=None):
 
 # Burn-ins on publish movies (user, 2026-10-20: "published shotsubs are
 # missing burn ins"). Same layout as shotSub's: frame rate top left, name
-# top middle (here the published name, so a reviewer knows which publish),
+# top middle (here the shot or asset name),
 # frame number top right, focal length bottom left, artist bottom right.
 
 def burn_in_text(plan, camera=None):
-    """{corner: text} for a publish's burn-ins. Frame numbers are per file."""
-    name = os.path.splitext(os.path.basename(plan.get("dest") or ""))[0]
+    """{corner: text} for a publish's burn-ins. Frame numbers are per file.
+    Top middle is the shot or asset name, not the file name (user,
+    2026-10-28)."""
+    name = plan.get("asset") or os.path.splitext(os.path.basename(plan.get("dest") or ""))[0]
     login = plan.get("login") or ""
     artist = artist_name(login) if login else ""
     focal = ""
