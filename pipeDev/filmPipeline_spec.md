@@ -1184,6 +1184,20 @@ The tools are developed side by side:
         beside `pipeCameraVersion`.
       - Old-style publishes (`backpack_model_v003.ma`, no login) are
         ignored by Build.
+    - **Staff named by e-number (DECIDED + BUILT 2026-10-28):** "scout"
+      (the dev machine's Windows login) read as the Scout character.
+      `who()` is now `publish_as`, else `shotgrid_as` (the e-number the
+      Project Tool already used for ShotGrid), else the Windows login. The
+      dev machine publishes as `e131988`. The existing `scout` publishes on
+      the T7 stay as they are (user: "going forward we will just publish
+      on the pipe for future assets"): not renamed or migrated.
+    - **Asset working folders (DECIDED + BUILT 2026-10-28):** every asset's
+      `scenes\` has `model\`, `rig\` and `lookDev\` (named by department
+      code), each with a folder per person: `scenes\rig\e131988\`. On the
+      H drive and scratch, every asset type. h_sync adds them to new and
+      existing assets; Set Project makes the person's own; Save Here uses
+      the department's; Build skips them. Publishes still go in
+      `scenes\<login>\`. Test: `projectDev/test_workFolders_mayapy.py`.
       - Tests: `test_buildTool_mayapy.py` 76/76 (2026-10-15), including
         two people's series, latest by time, `publish_as`, and a camera
         published by Publish's own code and built by Build Shot.

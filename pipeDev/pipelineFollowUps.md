@@ -37,6 +37,16 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the shot list: build a shot on one drive, open a scene in
       that shot on another drive (T7 / D:), check the list comes back with
       the latest keys; "-" an asset, reopen, check it stays off.
+- [ ] Publish failure popup (2026-10-28): make a publish fail in Maya and
+      check the red PUBLISH FAILED window reads well on Maya's dark theme.
+- [ ] Model/rig/lookDev folders (2026-10-28, spec "Asset working folders"):
+      run h_sync on the T7 to add them to existing assets; Set Project an
+      asset and check scenes\model|rig|lookDev\e131988 are made; Save Here a
+      model scene; publish it and check it lands in scenes\e131988.
+- [?] MetaHuman model publish (2026-10-28): the plain model publish drags
+      the original meshes in through the `*_pgcombined` face sets (Scout
+      model v001 has the model twice) and those sets must be kept. Needs its
+      own publish: how to detect it, what it keeps, where it goes next, name.
 - [ ] Scout v004 in a shot: can animators click-select controls inside
       the dagContainer group? Try it once with
       `selectPref -containerCentricSelection` on as well (review #9).
