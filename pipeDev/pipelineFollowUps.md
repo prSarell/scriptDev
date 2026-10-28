@@ -54,8 +54,7 @@ hand. One T7 session could cover most of it.
       scene (`scenes\anim\e131988\`), check Build starts on Animation and
       the picker offers Modeling / Rigging / Environment / Camera; switch
       to Modeling and check only models show, Shot greyed out; open a rig
-      scene and check it moves to Rigging. Do Layout/Animation need models
-      and Creature publishes?
+      scene and check it moves to Rigging.
 - [ ] **Lighting build** (spec §4 "Shot working folders"): Build a shot
       for rendering: newest Final caches, camera, full environment. Comes
       with Build by department; needs the open LookDev / lights decisions.

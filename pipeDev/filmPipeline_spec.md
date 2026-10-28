@@ -1328,9 +1328,10 @@ The tools are developed side by side:
         | Creature | everything |
         | Layout, Animation | Modeling, Rigging, Environment, Camera |
         | FX, Lighting | coming soon (greyed out); a scene in their folders starts on Layout |
-        Claude's call, to check: Layout/Animation also get models (props
-        and set dressing published as models would otherwise be stuck),
-        and don't get Creature publishes. The shot's list isn't filtered:
+        DECIDED 2026-10-28 (Claude's call, user: "this was a good call"):
+        Layout/Animation also get models (props and set dressing published
+        as models would otherwise be stuck), and don't get Creature
+        publishes. The shot's list isn't filtered:
         rows already on it stay whatever the department. Test:
         `buildDev/test_buildDepartment_mayapy.py` (22/22).
       - **Shaders on caches, automatic (WANTED 2026-10-28, not built):**
