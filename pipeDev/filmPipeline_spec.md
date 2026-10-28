@@ -1257,11 +1257,19 @@ The tools are developed side by side:
         overwrite a shot camera for example". So it's its own camera
         publish, in shot AND asset scenes, never replacing the shot
         camera (part of the "created in shot" pipe, §4d, on the shot
-        side). SUGGESTION (Claude), not agreed: a named publish beside the
-        shot camera's (`<shot or asset>_witness_<name>_v###`), several
-        allowed, Build lists them under Camera after the shot camera,
-        never used for the edit, review movie or render unless picked.
-        OPEN: naming, and whether its playblast goes to ShotGrid.
+        side). AGREED 2026-10-28 ("that looks right"), NOT NOW ("we dont
+        need to deal with witness cameras right now. Just know that they
+        are coming"): a named publish beside the shot camera's
+        (`<shot or asset>_<login>_witness_<name>_v###`, personal like
+        every publish), several allowed, Build lists them under Camera
+        after the shot camera, never used for the edit, review movie or
+        render unless picked. OPEN: whether its playblast goes to
+        ShotGrid. Build notes for later: Build's shot camera is a single
+        fixed `camera1` entry (`list_shot_cameras`, `CAMERA_RE` matches
+        only cam|camAnim), so witness cameras need their own listing,
+        names and pull folder; the camera publish code
+        (`publishTool_camera.export_camera`) can be reused with a
+        different code, group name and stamp department.
       - DECIDED 2026-10-28: a light rig publish is needed: "it should be
         possible to publish lights from animation, layout or fx" (today
         lights only travel inside an anim publish). Light rigs "publish to
