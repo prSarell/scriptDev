@@ -1277,9 +1277,9 @@ The tools are developed side by side:
         folder same as animation or rigging is currently setup", i.e. the
         shot's `scenes\lighting\` with a folder per person. Note: today
         anim publishes go in `scenes\<login>\` (only working files use
-        `scenes\anim\<login>\`, "Shot working folders" above), so OPEN:
-        `scenes\lighting\<login>\` for light rig publishes, or move all
-        shot publishes under their department folder? Also OPEN: light
+        `scenes\anim\<login>\`, "Shot working folders" above). DECIDED
+        2026-10-30: light rig publishes go in `scenes\lighting\<login>\`;
+        other shot publishes stay where they are. Also OPEN: light
         rigs for asset scenes (Modeling/LookDev) and whether Lighting
         publishes them too.
       - LEANING 2026-10-28 (user "not sure about this yet"): no separate
@@ -3092,7 +3092,9 @@ models** (the backpack's rules). Environments need different ones.
     collector, environments only); images outside an asset's
     `sourceimages` are warned about and copied anyway; one-frame `.abc`
     of landscape + buildings beside the publish, pulled by Build with it
-    (`SIDE_FILES`) but **not put in the scene** (OPEN). Follow-ups:
+    (`SIDE_FILES`) but **not put in the scene**. DECIDED 2026-10-30: the
+    `.abc` is only for export to other software (e.g. Unreal), never
+    used in shots. Follow-ups:
     `pipeDev/pipelineFollowUps.md`.
   - DECIDED + BUILT (user, 2026-10-22), **room for more than one
     building**: `building_SET` holds **one group called `buildings`**,

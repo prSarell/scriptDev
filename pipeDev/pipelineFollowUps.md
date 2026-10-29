@@ -48,8 +48,8 @@ hand. One T7 session could cover most of it.
       Animation gets caches (to compare), FX gets no rigs; witness camera =
       a review camera made in the shot (§4d); light rigs publish under the
       shot's `scenes\lighting\`; model textures come from the model's
-      shaders (optional). Open: `scenes\lighting\<login>\` vs all shot
-      publishes under their department folder.
+      shaders (optional). Decided 2026-10-30: light rigs publish to
+      `scenes\lighting\<login>\`; other shot publishes stay put.
 - [ ] **Build: Add to list / Build into** (built 2026-10-28): Set Project
       SEQ010_140, open an anim scene (`scenes\anim\e131988\`). Build into
       should read NWF_SHF | Shot | Animation | SEQ010 | SEQ010_140; Add to
@@ -164,10 +164,12 @@ hand. One T7 session could cover most of it.
       image plane all load from `E:\`; Build, Publish and the Project Tool
       each say "Scratch drive set to E:\". Then delete `E:\...\maya\publish\`
       and check Build/Repair pulls the shot's versions back from H.
-- [?] **Unpublished textures on another drive**: a wip asset scene carried
-      to a different scratch drive keeps full `D:\...\sourceimages\` paths,
-      so its textures go missing. Warn about it, fix paths to this drive on
-      open, or leave it to students?
+- [x] **Unpublished textures on another drive**: CLOSED 2026-10-30. Left
+      to the artist, like wip (item 0). Texturing happens off pipe
+      (Substance, Photoshop). To publish textures, load them onto the model
+      in Maya and publish from Maya; the publish finds them through the
+      shaders and copies them to H. A missing texture already stops the
+      publish and names the node.
 
 ## 2. Decisions waiting on you
 
@@ -179,10 +181,13 @@ hand. One T7 session could cover most of it.
 - [?] **Whole-scene rig publish** (review #6) puts *every* top-level node
       (stray lights, extra cameras, stand-ins) into `<asset>_rig_GRP`.
       Require a selection for rigs, list what was included, or keep as is?
-- [?] **Environment cache in shots** (spec §4c): Build pulls the
-      one-frame `.abc` with the environment but doesn't put it in the scene
-      (both at once would overlap). Should it replace the environment file
-      in shots (light stand-in), be referenced unloaded, or stay a file?
+- [x] **Environment cache in shots** (spec §4c): CLOSED 2026-10-30. The
+      one-frame `.abc` is only for export to other software (e.g. Unreal),
+      never used in shots.
+- [?] Follow-on: should Build stop copying that `.abc` into scratch
+      (`SIDE_FILES` in `buildTool_api.py`), since shots never use it?
+- [?] **MetaHuman model publish** and **rollback default**: to discuss
+      later (2026-10-30).
 - [?] **Four MetaHuman DNA defaults**: folder, refuse if missing, warn on
       mismatch, full copy per version. These were my suggestions and were
       never confirmed one by one.
