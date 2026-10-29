@@ -184,7 +184,7 @@ api.playblast_frames = lambda *a, **k: calls.append("playblast")
 api.check_script_nodes = lambda: None
 scout()
 try:
-    api.publish("x.ma", base, base, "rig")
+    api.publish("x.ma", base, base, "rig", objects=["scout_rig"])
     check("publish() refuses a rig with no control sets", False)
 except api.PublishError as e:
     check("publish() refuses a rig with no control sets", "body_controls_SET" in str(e))

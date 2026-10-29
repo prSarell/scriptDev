@@ -455,7 +455,7 @@ class PublishToolUI(QtWidgets.QDialog):
             "out what each one is. For the Environment, environment_SET decides what goes."
             if shot else
             "Add this asset with what's selected in Maya. With nothing selected, the "
-            "whole scene is published.")
+            "whole scene is published. Rigging: select the rig's top group.")
 
     def _set_frame_defaults(self, ctx):
         """ShotSub frames for a newly opened scene: a shot scene uses the
@@ -818,6 +818,7 @@ class PublishToolUI(QtWidgets.QDialog):
             # control sets (spec "Rig sets: controls and render geo").
             try:
                 import publishTool_textures as tex
+                api.check_rig_selection(objects)
                 api.check_cache_set(objects)
                 api.check_control_sets(objects)
                 tex.collect(objects)        # missing textures
@@ -850,6 +851,10 @@ class PublishToolUI(QtWidgets.QDialog):
                 continue
             if self._rows[r]["code"] == anim.ANIM_CODE:
                 self.status.show_message("An Animation row publishes what you select: select "
+                                         "it in Maya and use Set Objects from Selection.", ok=False)
+                continue
+            if self._rows[r]["code"] == api.RIG_CODE:
+                self.status.show_message("A Rigging row publishes the rig's top group: select "
                                          "it in Maya and use Set Objects from Selection.", ok=False)
                 continue
             self._rows[r]["objects"] = []

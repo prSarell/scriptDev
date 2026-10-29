@@ -732,7 +732,15 @@ The tools are developed side by side:
     layout** as its template. Pick an **Asset** + **Department**, **add it
     to a list**; each row is one publish with its own objects (empty =
     whole scene). **Add to List takes whatever is selected in Maya** as
-    that row's objects (nothing selected = whole scene). One **Publish** click publishes every row, one ShotGrid
+    that row's objects (nothing selected = whole scene). **Except
+    Rigging (DECIDED + BUILT 2026-10-30, review #6):** the rigger selects
+    the rig's top group, "with the expectation that only the contents of
+    the group [are] added to the publish. Anything outside that group
+    would be left behind. Shaders and textures linked to the rig would be
+    considered part of the group because they would be on the rigged
+    model". Nothing selected, more than one top group, or Whole Scene on a
+    Rigging row is refused (`publishTool_api.check_rig_selection`).
+    One **Publish** click publishes every row, one ShotGrid
     Version each, so several assets can come out of one scene.
   - Live departments (v0): Modeling, Rigging, Creature, LookDev (all
     publish an asset scene the same way). Previs, Anim, FX, Render are

@@ -758,6 +758,30 @@ def check_not_a_rig(objects):
             % ", ".join("%d %s" % (n, t) for t, n in sorted(found.items())))
 
 
+def check_rig_selection(objects):
+    """A Rigging publish takes the rig's top group, selected by the rigger,
+    and only what's inside it (user, 2026-10-30): anything outside the group
+    stays behind, and the shaders and textures come with the meshes inside
+    it. No whole-scene rig publish (review #6: stray lights, cameras and
+    stand-ins went into every shot). Raises PublishError if the objects
+    aren't exactly one group."""
+    how = ("\n\nSelect your rig's top group in the Outliner (e.g. scout_rig) and add "
+           "it again. Only what's inside that group is published; anything outside "
+           "it stays in your scene.")
+    if not objects:
+        raise PublishError("Nothing is selected for the rig." + how)
+    nodes = cmds.ls(objects, long=True) or []
+    not_transforms = [n.split("|")[-1] for n in nodes
+                      if not cmds.objectType(n, isAType="transform")]
+    if not_transforms:
+        raise PublishError("%s isn't a group." % ", ".join(not_transforms[:5]) + how)
+    tops = [n for n in nodes if n not in nested_in(nodes)]
+    if len(tops) != 1:
+        raise PublishError("%d separate groups are selected for the rig (%s). A rig "
+                           "publishes one top group."
+                           % (len(tops), ", ".join(t.split("|")[-1] for t in tops[:5])) + how)
+
+
 def _under(node, roots):
     """True if node is one of roots or below one of them."""
     path = (cmds.ls(node, long=True) or [""])[0]
@@ -2039,6 +2063,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     if code == RIG_CODE:
         # Checked before anything is made or uploaded.
         import publishTool_textures as tex
+        check_rig_selection(plan["objects"])
         plan["cache_set"] = check_cache_set(plan["objects"])
         plan["control_sets"] = check_control_sets(plan["objects"])
         plan["set_uuids"] = cmds.ls([plan["cache_set"]] + plan["control_sets"]["sets"], uuid=True)

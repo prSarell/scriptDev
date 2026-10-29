@@ -162,15 +162,49 @@ check("published DNA path = the publisher's real scratch path (DNA can't read $P
           S, FILM, "maya", "publish", "assets", "character", "scout", "sourceimages", "scout",
           "scout_scout_rig_v001", "dna", "head.dna")))
 
-# --- whole-scene rig publish; an existing node with the group's name steps aside
+# --- a rig publishes its selected top group only (user, 2026-10-30)
 rig_scene()
+cmds.pointLight(name="stray_light")
+cmds.camera(name="extra_cam")
+cmds.group(empty=True, name="other_rig")
+
+
+def selection_refused(objects):
+    try:
+        api.check_rig_selection(objects)
+    except api.PublishError as e:
+        return "top group" in str(e)
+    return False
+
+
+check("rig: nothing selected (whole scene) refused", selection_refused([]))
+check("rig: two top groups refused", selection_refused(["scout_rig", "other_rig"]))
+check("rig: a shape selected refused", selection_refused(["body_geoShape"]))
+check("rig: the top group accepted", not selection_refused(["scout_rig"]))
+check("rig: the top group plus something inside it accepted",
+      not selection_refused(["scout_rig", "body_geo"]))
+calls = []
+real_plan, real_sg = api.plan_publish, api.find_shotgrid_asset
+api.plan_publish = lambda *a, **k: {"dest": os.path.join(base, "never.ma"), "h_folder": base, "ext": ".ma"}
+api.find_shotgrid_asset = lambda *a: calls.append("shotgrid")
+try:
+    api.publish("x.ma", base, base, "rig")
+    check("publish(): whole-scene rig refused", False)
+except api.PublishError as e:
+    check("publish(): whole-scene rig refused, before ShotGrid", "top group" in str(e) and calls == [])
+api.plan_publish, api.find_shotgrid_asset = real_plan, real_sg
+
+# --- selection rig publish: an existing node with the group's name steps
+# aside, and stray nodes outside the group stay behind
 cmds.group(empty=True, name="scout_rig_GRP")
-plan2 = publish([])
-check("whole scene: published, and the scene's own scout_rig_GRP is back",
+plan2 = publish(["scout_rig"])
+check("selection: published, and the scene's own scout_rig_GRP is back",
       os.path.isfile(plan2["dest"]) and cmds.objExists("|scout_rig_GRP")
       and cmds.listRelatives("scout_rig", parent=True) is None)
 cmds.file(new=True, force=True); cmds.file(plan2["dest"], open=True, force=True)
-check("whole scene: rig under the group in the file", cmds.objExists("|scout_rig_GRP|scout_rig"))
+check("selection: rig under the group in the file", cmds.objExists("|scout_rig_GRP|scout_rig"))
+check("selection: stray light, camera and other rig left behind",
+      not cmds.ls("stray_light*") and not cmds.ls("extra_cam*") and not cmds.ls("other_rig"))
 
 # --- a failed export leaves the scene as it was and no files behind
 rig_scene()

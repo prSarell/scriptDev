@@ -178,9 +178,14 @@ hand. One T7 session could cover most of it.
       "Every shot" as the default (Enter) and re-updates A. Either make
       "Only this shot" the default, or remember rolled-back shots in the
       manifest and leave them unticked.
-- [?] **Whole-scene rig publish** (review #6) puts *every* top-level node
-      (stray lights, extra cameras, stand-ins) into `<asset>_rig_GRP`.
-      Require a selection for rigs, list what was included, or keep as is?
+- [x] **Whole-scene rig publish** (review #6): DECIDED + BUILT 2026-10-30.
+      The rigger selects the rig's top group and adds it; only what's inside
+      that group is published (its shaders and textures come with the meshes
+      in it), and anything outside stays behind. Nothing selected or two top
+      groups is refused (`check_rig_selection`), and so is Whole Scene on a
+      Rigging row. Hand test: add a Rigging row with nothing selected (it should
+      be refused), then with the rig's top group selected (published, with a
+      stray light left out).
 - [x] **Environment cache in shots** (spec §4c): CLOSED 2026-10-30. The
       one-frame `.abc` is only for export to other software (e.g. Unreal),
       never used in shots.

@@ -85,7 +85,7 @@ api.find_shotgrid_asset = lambda *a: calls.append("shotgrid")
 api.playblast_frames = lambda *a, **k: calls.append("playblast")
 rig_scene(with_set=False)
 try:
-    api.publish("x.ma", base, base, "rig")
+    api.publish("x.ma", base, base, "rig", objects=["scout_rig"])
     check("publish() refuses a rig with no cache_SET", False)
 except api.PublishError:
     check("publish() refuses a rig with no cache_SET", True)
