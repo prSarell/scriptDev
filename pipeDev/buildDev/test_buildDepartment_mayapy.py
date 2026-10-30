@@ -208,8 +208,8 @@ check("asset rig scene: Build into the asset, Rigging",
       (t.kind(), t.department(), t.group(), t.name())
       == (picker.ASSET, "rig", "character", "scout") and tab._target_asset)
 check("Rigging: Add to list still offers every department", codes(p) == ["model", "rig", "creature", "lookDev", "env"])
-check("asset work: no Keys from; button says Import into Asset",
-      tab.keys_combo.isHidden() and tab.build_btn.text() == "Import into Asset")
+check("asset work: no Keys from; the same Build button as a shot",
+      tab.keys_combo.isHidden() and tab.build_btn.text() == "Build")
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 shutil.rmtree(base, ignore_errors=True)

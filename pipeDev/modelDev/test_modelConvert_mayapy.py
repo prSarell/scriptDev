@@ -174,7 +174,7 @@ check("bagMat clash -> numbered, the model keeps its shader",
           "|props_grp|backPack_geo", shapes=True)[0], type="shadingEngine")[0]
           + ".surfaceShader")[0] != "bagMat")
 
-# --- an imported model (Build's Import into Asset: no namespace)
+# --- an imported model (as Build's old Import into Asset did: no namespace)
 open_new(asset_scene)
 cmds.file(model, i=True, defaultNamespace=True, preserveReferences=False)
 y = cmds.xform("backpack_model_GRP|props_grp|backPack_geo", query=True, worldSpace=True,

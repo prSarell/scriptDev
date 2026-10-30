@@ -1506,8 +1506,23 @@ The tools are developed side by side:
           - Not yet: LookDev publishes don't write a look (they use the
             plain publish path), so Lighting falls back to the rig's look
             for now; Lighting itself is still "coming soon" in Build.
+    - **REPLACED 2026-10-30: Build into an asset references, like a shot.**
+      The user: "the build button should function as normal and build a
+      reference. I want the convert modeling tool to handle making the
+      model asset editable. The build tool is complex enough as it is, we
+      don't want a context sensitive build button." One **Build** button;
+      an asset target is built exactly like a shot (pulled to scratch
+      `publish\`, referenced, recorded in the asset's manifest), with a
+      list per department on H in `<asset>\data\build\<dept>.json`. Keys
+      stay shot-only. Import into Asset is gone. The mpModel shelf's
+      **Convert to Model** (`pipeDev/modelDev/modelTool_convert.py`) makes
+      a referenced model or environment editable: imports it, removes the
+      pipe group and namespace, and copies its textures into the asset's
+      `sourceimages\<published file name>\` (what Import into Asset did,
+      `buildTool_api.own_files`). Test: `buildDev/test_assetBuild_mayapy.py`.
+      The 2026-10-28 rule below is kept for the record.
     - **Build into an asset scene = import, never reference (DECIDED +
-      BUILT 2026-10-28):** "if an artist pulls a published asset from the
+      BUILT 2026-10-28, REPLACED 2026-10-30, see above):** "if an artist pulls a published asset from the
       h drive it should not be referenced... a rule for all assets, so the
       referencing only really applies to the shot building." With an asset
       scene open, Build Shot becomes **Import into Asset**: any published

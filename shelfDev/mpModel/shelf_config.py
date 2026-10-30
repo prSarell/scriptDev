@@ -7,8 +7,8 @@ SHELF_NAME = "mpModel"
 
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
-RELOAD_ORDER = ("publishTool_api", "publishTool_textures", "publishTool_env",
-                "modelTool_convert")
+RELOAD_ORDER = ("publishTool_api", "publishTool_textures", "publishTool_env", "pipeEnv",
+                "buildTool_api", "modelTool_convert")
 
 
 def _command(module, call):

@@ -5,7 +5,12 @@ Turns a published model or environment brought in from the pipe back into
 a plain Maya model that can be worked on, saved and republished. Select
 the asset's top node (or anything inside it) and click:
 
-    1. a referenced publish is imported (an imported one is used as it is)
+    1. a referenced publish (Build references into assets as into shots)
+       is imported, and its textures are copied into this asset's own
+       sourceimages\\<published name>\\ with the shaders pointed there (as
+       Build's old Import into Asset did; user, 2026-10-30: Build always
+       references, Convert makes it editable). One already imported is
+       used as it is.
     2. the pipe group (<asset>_model_GRP / <asset>_env_GRP: stamp, lock,
        pipe icon) is removed; what was inside it goes to the world root,
        exactly where it was
@@ -26,17 +31,22 @@ Dev launch (Script Editor, Python tab):
 
     import sys, importlib
     for p in (r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\publishDev",
+              r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\buildDev",
               r"C:\\Users\\scout\\Documents\\maya\\scriptDev\\pipeDev\\modelDev"):
         if p not in sys.path: sys.path.insert(0, p)
-    import publishTool_api, publishTool_env, modelTool_convert
-    for m in (publishTool_api, publishTool_env, modelTool_convert): importlib.reload(m)
+    import publishTool_api, publishTool_env, pipeEnv, buildTool_api, modelTool_convert
+    for m in (publishTool_api, publishTool_env, pipeEnv, buildTool_api, modelTool_convert):
+        importlib.reload(m)
     modelTool_convert.run()
 """
+
+import os
 
 import maya.cmds as cmds
 
 import publishTool_api as api
 import publishTool_env as env
+import buildTool_api as build
 
 DEPT_ATTR = api.PIPE_ATTR_PREFIX + "department"
 ASSET_ATTR = api.PIPE_ATTR_PREFIX + "asset"
@@ -154,7 +164,15 @@ def convert(group):
     name = _short(group)
     if cmds.referenceQuery(group, isNodeReferenced=True):
         ref = cmds.referenceQuery(group, referenceNode=True)
+        pulled = os.path.expandvars(cmds.referenceQuery(ref, filename=True,
+                                                        withoutCopyNumber=True))
         cmds.file(cmds.referenceQuery(ref, filename=True), importReference=True)
+        # The asset's own copies of the publish's textures, as an editable
+        # model's should be (the pulled ones are read-only and shared).
+        place = api.pipe_place(cmds.file(query=True, sceneName=True))
+        nodes = _namespace_nodes(ns) if ns else []
+        if place and nodes:
+            build.own_files(nodes, pulled, place["folder"])
     group = (cmds.ls(uuid, long=True) or cmds.ls("|" + name.lstrip("|"), long=True))[0]
 
     # Leftovers of the publish: its locators (an environment republish makes

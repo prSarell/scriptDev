@@ -59,7 +59,7 @@ hand. One T7 session could cover most of it.
       goes back. Open a scene saved in another shot: refused too, with
       Set Project to the scene's. Set Project to another shot with the
       Project Tool: Build into follows. Open a rig scene: Asset | Rigging,
-      Import into Asset. Keys from: pick another shot, its keys listed.
+      the same Build button. Keys from: pick another shot, its keys listed.
 - [ ] **Shaders on caches** (built 2026-10-28, spec "Shaders on caches"):
       republish Scout's rig (it gets `_look.ma` / `_look.json` beside it)
       and a textured model; check the look files open with only shaders
@@ -93,10 +93,14 @@ hand. One T7 session could cover most of it.
       again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
 - [ ] **mpModel shelf, Convert to Model** (built 2026-10-30,
       `pipeDev/modelDev/modelTool_convert.py`, staff zip only): in an
-      asset scene, bring in the shed environment with Build (referenced) and
-      a model with Import into Asset; select each top node, Convert. Check:
-      imported, no pipe group, no namespace, nothing moved or frozen, sky
-      unlocked, `locators` gone, environment sets kept; save and republish.
+      asset scene, Build the shed environment and a textured model (both
+      referenced: Build into an asset references, like a shot, since
+      2026-10-30); select each top node, Convert. Check: imported, no pipe
+      group, no namespace, nothing moved or frozen, sky unlocked, `locators`
+      gone, environment sets kept, textures copied into the asset's
+      `sourceimages\<published name>\` and loading from there; save and
+      republish. Also: reopen the asset scene on another drive and check
+      Build's list for the asset comes back.
       Try it in a shot scene (refused) and with a `props_grp` already in the
       scene (refused). Open: should it work on rigs too (not now: models and
       environments only)?
@@ -131,10 +135,9 @@ hand. One T7 session could cover most of it.
       run h_sync on the T7 to add them to existing assets; Set Project an
       asset and check scenes\model|rig|lookDev\e131988 are made; Save Here a
       model scene; publish it and check it lands in scenes\e131988.
-- [ ] Import into Asset (2026-10-28): open a scene in scout\scenes\rig\,
-      Build: import the latest Scout model and a textured rig; check no
-      reference, textures load from scout\sourceimages\<publish name>\, DNA
-      works after reopening; import again and pick Skip.
+- [x] ~~Import into Asset (2026-10-28)~~: replaced 2026-10-30, Build into
+      an asset references like a shot; Convert to Model makes it editable
+      (see the mpModel item above).
 - [?] MetaHuman model publish (2026-10-28): the plain model publish drags
       the original meshes in through the `*_pgcombined` face sets (Scout
       model v001 has the model twice) and those sets must be kept. Needs its

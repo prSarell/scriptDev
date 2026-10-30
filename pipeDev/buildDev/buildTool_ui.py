@@ -7,9 +7,10 @@ Two tabs:
                 from the H drive and references it into the open scene.
                 Each asset's Keys dropdown puts a Layout/Animation
                 publish's keys back on it (from the picker's shot).
-                In an asset scene it becomes Import into Asset: the
-                picked publishes are imported, never referenced
-                (referencing is for shots), textures copied into the asset.
+                Building into an asset works the same way: referenced,
+                like a shot (user, 2026-10-30: one Build button, no
+                context). The mpModel shelf's Convert to Model makes a
+                referenced model editable.
   My Scratch  — what's on the scratch drive, how safe it is to remove,
                 and removal to the Recycle Bin.
 
@@ -147,8 +148,8 @@ class BuildShotTab(QtWidgets.QWidget):
         super(BuildShotTab, self).__init__(parent)
         self._get_roots = get_roots
         self._target_shot = None     # (film, seq, shot) being built into
-        # Or (film, asset_type, asset) when the open scene is an asset's:
-        # then the list is imported, never referenced (user, 2026-10-28).
+        # Or (film, asset_type, asset) when building into an asset: built
+        # the same way, referenced (user, 2026-10-30).
         self._target_asset = None
         self._published = []     # everything on the H drive for the shot's film
         self._other_films = {}   # film -> list_published, for the picker
@@ -229,7 +230,15 @@ class BuildShotTab(QtWidgets.QWidget):
         list_btns.addWidget(repair_btn)
         list_btns.addStretch(1)
 
-        build_btn = self.build_btn = QtWidgets.QPushButton("Build Shot")
+        # One button, the same for a shot or an asset (user, 2026-10-30: "we
+        # don't want a context sensitive build button").
+        build_btn = self.build_btn = QtWidgets.QPushButton("Build")
+        build_btn.setToolTip(
+            "References every ticked asset into the open scene (pulled from the H drive "
+            "into your scratch publish folder). New assets, and ones you pick another "
+            "version for, start ticked; ones already in the scene start unticked.\n"
+            "To work on a published model in an asset, Build it, then use Convert on "
+            "the mpModel shelf.")
         build_btn.setMinimumHeight(36)
         build_btn.clicked.connect(self._build_shot)
 
@@ -413,10 +422,23 @@ class BuildShotTab(QtWidgets.QWidget):
         return api.asset_folder(scratch_root, *self._target_asset)
 
     def _shot_dir(self):
+        """The shot's (or asset's) folder on scratch: Build references into
+        either the same way (user, 2026-10-30)."""
         scratch_root = self._get_roots()[1]
-        if not (self._target_shot and scratch_root):
+        if self._target_shot and scratch_root:
+            return api.shot_folder(scratch_root, *self._target_shot)
+        return self._asset_dir()
+
+    def _h_target_dir(self):
+        """The shot's or asset's folder on H: where its build lists live."""
+        h_root = self._get_roots()[0]
+        if not h_root:
             return None
-        return api.shot_folder(scratch_root, *self._target_shot)
+        if self._target_shot:
+            return api.shot_folder(h_root, *self._target_shot)
+        if self._target_asset:
+            return api.asset_folder(h_root, *self._target_asset)
+        return None
 
     def _items_for(self, film, code, kind):
         """Add to list's last two dropdowns: the assets with a publish for
@@ -463,39 +485,30 @@ class BuildShotTab(QtWidgets.QWidget):
             self.target_lbl.setText("")
             self.status.show_message(str(e), ok=False)
             return
-        self.build_btn.setText("Import into Asset" if self._target_asset else "Build Shot")
-        for widget in (self.keys_lbl, self.keys_combo):     # no keys in asset work
+        for widget in (self.keys_lbl, self.keys_combo):     # keys come from shots
             widget.setVisible(not self._target_asset)
-        self.build_btn.setToolTip(
-            "Imports every ticked asset into the open asset scene (pulled from the H "
-            "drive into your scratch publish folder). Nothing is referenced: in asset "
-            "work you own what you pull, and its textures are copied into this asset."
-            if self._target_asset else
-            "Builds every ticked asset into the open scene (pulled from the H drive "
-            "into your scratch publish folder). New assets, and ones you pick another "
-            "version for, start ticked; ones already in the scene start unticked.")
-        if self._target_asset:
-            self._load_asset()
-            return
-        if not self._target_shot:
+        if not (self._target_shot or self._target_asset):
             self.target_lbl.setText("")
             self.picker.refill()
             self.status.show_message(
                 "Pick the shot (or asset) to build into under Build into, or set it as "
                 "your Maya project with the Project tool.", ok=False)
             return
-        film, seq, shot = self._target_shot
+        film, group, name = self._target_shot or self._target_asset
         scene = cmds.file(query=True, sceneName=True)
-        self.target_lbl.setText("Building into shot <b>%s</b> (%s), in %s" % (
-            shot, film, os.path.basename(scene) if scene else "a new scene"))
+        self.target_lbl.setText("Building into %s <b>%s</b> (%s), in %s" % (
+            "shot" if self._target_shot else "asset", name, film,
+            os.path.basename(scene) if scene else "a new scene"))
         self._published = api.list_published(h_root, film)
-        # The shot's own camera, if one has been published (spec "Cameras").
-        self._published += api.list_shot_cameras(h_root, film, seq, shot)
-        # And its Final animation caches (one per item), for the departments
-        # that build them.
-        self._published += api.list_shot_caches(h_root, film, seq, shot)
+        if self._target_shot:
+            # The shot's own camera, if one has been published (spec
+            # "Cameras"), and its Final animation caches (one per item), for
+            # the departments that build them.
+            self._published += api.list_shot_cameras(h_root, film, group, name)
+            self._published += api.list_shot_caches(h_root, film, group, name)
         self.picker.refill()
-        self._fill_keys_shots()
+        if self._target_shot:
+            self._fill_keys_shots()
 
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
@@ -504,7 +517,7 @@ class BuildShotTab(QtWidgets.QWidget):
         # comes back on any machine, user 2026-10-23), or for a shot without
         # one yet what's in its assets folder on scratch, plus anything
         # published for the shot itself, e.g. its camera, ready to build.
-        saved = api.read_shot_list(h_root, film, seq, shot, self.department())
+        saved = api.read_build_list(self._h_target_dir(), self.department())
         wanted = set(saved) if saved is not None else set(manifest)
         self._rows = []
         # Building into a blank scene (nothing referenced yet): always start
@@ -561,33 +574,10 @@ class BuildShotTab(QtWidgets.QWidget):
             self.keys_combo.addItem(sh, (film, s, sh))
         self.keys_combo.blockSignals(False)
 
-    def _load_asset(self):
-        """An asset scene: the list starts empty (nothing to remember, as an
-        import can't be updated) and fills from the picker."""
-        h_root = self._get_roots()[0]
-        film, asset_type, asset = self._target_asset
-        scene = cmds.file(query=True, sceneName=True)
-        self.target_lbl.setText(
-            "Importing into asset <b>%s</b> (%s, %s), in %s.<br>Published assets are "
-            "imported, not referenced: referencing is for shots." % (
-                asset, asset_type, film, os.path.basename(scene) if scene else "a new scene"))
-        self._published = api.list_published(h_root, film)
-        self.picker.refill()
-        self._render_table()
-        self.status.show_message(
-            "Add what you need with the picker and +, then Import into Asset."
-            if self._published else "Nothing has been published for %s yet." % film,
-            ok=bool(self._published))
-
     def _row(self, p, chosen):
         """A list row. 'in_scene' is what the open scene already has (see
         api.scene_version); such a row starts at that version and is only
         built if the student picks another one ('start' remembers it)."""
-        if self._target_asset:
-            # Already imported: from the stamps, ticked all the same (the
-            # import asks first). No keys in asset work.
-            return dict(p, chosen=chosen, start=chosen, keys_chosen=None, keys_start=None,
-                        imported=api.imported_versions(p), checked=True)
         shot_dir = self._shot_dir()
         in_scene = api.scene_version(shot_dir, p) if shot_dir else None
         if in_scene in p["versions"]:
@@ -596,8 +586,8 @@ class BuildShotTab(QtWidgets.QWidget):
         # Keys: an asset already in the scene starts at the keys Build put
         # on it, or "keep" if Build didn't (keyed by hand: never wiped
         # unasked). A new one starts at this shot's latest keys.
-        if p.get("kind") in SHOT_ITEMS:
-            keys = None
+        if p.get("kind") in SHOT_ITEMS or not self._target_shot:
+            keys = None         # keys come from shots
         elif in_scene is not None:
             keys = api.keys_in_scene(p) or api.KEEP_KEYS
         else:
@@ -732,15 +722,13 @@ class BuildShotTab(QtWidgets.QWidget):
             row["checked"] = checked
         self.picker.set_current(*picked)
         self._render_table()
-        if self._target_asset:
-            self.status.show_message("Refreshed.")
-            return
         manifest = api.read_manifest(self._shot_dir()) if self._shot_dir() else {}
         newer = [r["asset"] for r in self._rows
                  if api.newer_available(r, manifest.get(self._key(r)))]
         self.status.show_message(
             "Refreshed. Newer versions available for: %s" % ", ".join(newer)
-            if newer else "Refreshed. Everything in this shot is on its latest version.")
+            if newer else "Refreshed. Everything in this %s is on its latest version."
+            % ("shot" if self._target_shot else "asset"))
 
     @staticmethod
     def _key(p):
@@ -765,15 +753,6 @@ class BuildShotTab(QtWidgets.QWidget):
             self.table.setCellWidget(row, 3, combo)
             self._keys_cell(row, p)
 
-            if self._target_asset:
-                imported = p.get("imported") or []
-                self.table.setItem(row, 5, _cell(", ".join(
-                    api.version_label(p, v, mark_latest=False) if v in p["versions"]
-                    else (v or "?") for v in imported) or "-"))
-                self.table.setItem(row, 6, _cell(
-                    "Already imported: importing asks first" if imported
-                    else "Ready to import", "#e0a060" if imported else "#9fc5ff"))
-                continue
             entry = manifest.get(self._key(p))
             if not entry:
                 self.table.setItem(row, 5, _cell("-"))
@@ -816,7 +795,7 @@ class BuildShotTab(QtWidgets.QWidget):
         """Picking another version ticks the row; picking back the one the
         scene has unticks it again."""
         p["chosen"] = vid
-        p["checked"] = bool(self._target_asset) or not self._left_as_is(p, self._shot_dir())
+        p["checked"] = not self._left_as_is(p, self._shot_dir())
         rows = [i for i, r in enumerate(self._rows) if r is p]
         if rows:
             item = self.table.item(rows[0], 0)
@@ -913,64 +892,19 @@ class BuildShotTab(QtWidgets.QWidget):
         """Save the list as the department's list for the shot on the H
         drive. Returns '' or a line saying why it couldn't be saved (never
         stops a build)."""
-        if not self._target_shot:
+        folder = self._h_target_dir()
+        if not folder:
             return ""
         # Caches are per scene, never the shot's (see _add_shot_caches).
         keys = [self._key(r) for r in self._rows if r.get("kind") != "cache"]
         try:
-            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (self.department(), keys)))
+            api.write_build_list(folder, self.department(), keys)
         except Exception as e:
-            return "\nThis shot's list couldn't be saved to the H drive: %s" % e
+            return "\nThis %s's list couldn't be saved to the H drive: %s" % (
+                "shot" if self._target_shot else "asset", e)
         return ""
 
     # -- actions ----------------------------------------------------------
-
-    def _import_into_asset(self):
-        """Import every ticked row into the open asset scene. One already
-        imported (by its stamp) asks first; nothing is ever deleted."""
-        asset_dir = self._asset_dir()
-        rows = [p for p in self._rows if p["checked"]]
-        if not rows:
-            self.status.show_message("Nothing ticked to import.", ok=False)
-            return
-        lines, warnings = [], []
-        for p in rows:
-            label = "%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"]))
-            vid = p.get("chosen", p["latest"])
-            already = api.imported_versions(p)
-            if already:
-                box = QtWidgets.QMessageBox(self)
-                box.setIcon(QtWidgets.QMessageBox.Question)
-                box.setWindowTitle("Already imported")
-                box.setText("%s is already in this scene (%s).\n\nImport %s as well? The one "
-                            "already here is left as it is: delete it yourself if you don't "
-                            "need it." % (label, ", ".join(
-                                api.version_label(p, v, mark_latest=False)
-                                if v in p["versions"] else (v or "?") for v in already),
-                                api.version_label(p, vid, mark_latest=False)))
-                again = box.addButton("Import Again", QtWidgets.QMessageBox.AcceptRole)
-                box.addButton("Skip", QtWidgets.QMessageBox.RejectRole)
-                box.setDefaultButton(again)
-                box.exec()
-                if box.clickedButton() != again:
-                    lines.append("%s: skipped, already in the scene" % label)
-                    continue
-            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            try:
-                done = api.import_into_asset(asset_dir, p, vid)
-            except Exception as e:
-                warnings.append("%s: %s" % (label, e))
-                continue
-            finally:
-                QtWidgets.QApplication.restoreOverrideCursor()
-            p["imported"] = api.imported_versions(p)
-            p["checked"] = False
-            lines.append("%s: %s" % (label, ", ".join(done)))
-        self._render_table()
-        text = "\n".join(lines)
-        if warnings:
-            text += ("\n\n" if text else "") + "\n".join(warnings)
-        self.status.show_message(text, ok=not warnings)
 
     def _build_shot(self):
         # Build Into isn't the project: refused (user, 2026-10-28).
@@ -993,19 +927,17 @@ class BuildShotTab(QtWidgets.QWidget):
                 % (pub.place_label(mismatch["scene"]), pub.place_label(mismatch["project"]),
                    pub.place_label(mismatch["project"])), ok=False)
             return
-        if self._target_asset:
-            self._import_into_asset()
-            return
         shot_dir = self._shot_dir()
         if not shot_dir:
-            self.status.show_message("Pick the shot to build into under Build into first.",
-                                     ok=False)
+            self.status.show_message("Pick the shot or asset to build into under Build "
+                                     "into first.", ok=False)
             return
         if not any(p["checked"] for p in self._rows):
             # Nothing to build (e.g. an asset re-added that's already in the
             # scene), but the list is still the shot's list from now on.
             failed = self._save_shot_list()
-            self.status.show_message("Nothing ticked to build. This shot's list is saved."
+            self.status.show_message("Nothing ticked to build. This %s's list is saved."
+                                     % ("shot" if self._target_shot else "asset")
                                      if not failed else failed.strip(), ok=not failed)
             return
 
@@ -1055,8 +987,8 @@ class BuildShotTab(QtWidgets.QWidget):
                     warnings.append("%s: %s" % (label, warning))
                 if old:
                     replaced.append(old)
-                    if p["code"] in api.LINKED_CODES:
-                        changed_rigs.append(p)
+                    if p["code"] in api.LINKED_CODES and self._target_shot:
+                        changed_rigs.append(p)      # other shots follow (spec §4a)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self._render_table()
@@ -1132,11 +1064,6 @@ class BuildShotTab(QtWidgets.QWidget):
                                      "versions (open in another program?).", ok=False)
 
     def _repair(self):
-        if self._target_asset:
-            self.status.show_message("Repair fixes a shot's references. An asset scene has "
-                                     "none: what Build brings into an asset is imported.",
-                                     ok=False)
-            return
         h_root, _ = self._get_roots()
         if not h_root or not os.path.isdir(h_root):
             self.status.show_message("Set the H drive first.", ok=False)

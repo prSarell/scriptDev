@@ -561,9 +561,15 @@ OLD_SHOT_LIST_NAME = "build_list.json"
 OLD_SHOT_LIST_DEPARTMENTS = ("layout", "anim")
 
 
+def build_list_path(folder, department):
+    """A department's build list for a shot or asset folder on H. Assets
+    have lists too since Build references into them like a shot (user,
+    2026-10-30)."""
+    return os.path.join(folder, *SHOT_LIST_FOLDER + ("%s.json" % department,))
+
+
 def shot_list_path(h_root, film, seq, shot, department):
-    return os.path.join(shot_folder(h_root, film, seq, shot), *SHOT_LIST_FOLDER
-                        + ("%s.json" % department,))
+    return build_list_path(shot_folder(h_root, film, seq, shot), department)
 
 
 def _read_list(path):
@@ -574,20 +580,23 @@ def _read_list(path):
         return None
 
 
-def read_shot_list(h_root, film, seq, shot, department):
-    """The department's saved list of manifest keys for the shot, or None if
-    it has none yet."""
-    keys = _read_list(shot_list_path(h_root, film, seq, shot, department))
+def read_build_list(folder, department):
+    """The department's saved list of manifest keys for a shot or asset
+    folder on H, or None if it has none yet."""
+    keys = _read_list(build_list_path(folder, department))
     if keys is None and department in OLD_SHOT_LIST_DEPARTMENTS:
-        keys = _read_list(os.path.join(shot_folder(h_root, film, seq, shot),
-                                       OLD_SHOT_LIST_NAME))
+        keys = _read_list(os.path.join(folder, OLD_SHOT_LIST_NAME))
     return keys
 
 
-def write_shot_list(h_root, film, seq, shot, department, keys):
-    """Save the department's list for the shot (manifest keys, in list
-    order) to the H drive."""
-    path = shot_list_path(h_root, film, seq, shot, department)
+def read_shot_list(h_root, film, seq, shot, department):
+    return read_build_list(shot_folder(h_root, film, seq, shot), department)
+
+
+def write_build_list(folder, department, keys):
+    """Save the department's list (manifest keys, in list order) for a shot
+    or asset folder on H."""
+    path = build_list_path(folder, department)
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
     if os.path.exists(path):
@@ -599,6 +608,10 @@ def write_shot_list(h_root, film, seq, shot, department, keys):
     with open(path, "w") as f:
         json.dump({"assets": list(keys), "department": department, "saved_by": login,
                    "saved": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
+
+
+def write_shot_list(h_root, film, seq, shot, department, keys):
+    write_build_list(shot_folder(h_root, film, seq, shot), department, keys)
 
 
 def texture_folder_of(path):
@@ -1926,20 +1939,6 @@ def _stamp(node, name):
     return cmds.getAttr(plug) if cmds.objExists(plug) else None
 
 
-def imported_versions(published):
-    """Version ids of this asset + department already in the open scene,
-    read from the stamps on their pipe groups (pipe_asset etc.)."""
-    found = []
-    for node in cmds.ls("*.pipe_asset", objectsOnly=True, recursive=True) or []:
-        if ((_stamp(node, "pipe_asset") or "").lower() != published["asset"].lower()
-                or _stamp(node, "pipe_department") != published["code"]):
-            continue
-        version = _stamp(node, "pipe_version")
-        found.append(version_id(_stamp(node, "pipe_artistId"), int(version))
-                     if version is not None else "")
-    return found
-
-
 def _set_string(plug, value):
     locked = cmds.getAttr(plug, lock=True)
     if locked:
@@ -1949,12 +1948,15 @@ def _set_string(plug, value):
         cmds.setAttr(plug, lock=True)
 
 
-def _own_files(nodes, pulled, asset_dir):
+def own_files(nodes, pulled, asset_dir):
     """Copy the pulled version's texture folder (textures, DNA) into
-    <asset>\\sourceimages\\<published file name>\\ and point the imported
+    <asset>\\sourceimages\\<published file name>\\ and point the given
     nodes at the copies: texture and image-plane nodes, and each rig
     group's pipe_dna list (so the DNA nodes follow it when the scene
-    opens, pipeEnv.fix_dna_paths). Returns the number of nodes repointed."""
+    opens, pipeEnv.fix_dna_paths). Returns the number of nodes repointed.
+    Used by the mpModel shelf's Convert to Model (modelTool_convert), which
+    makes a referenced publish the asset's own (user, 2026-10-30: Build
+    always references; Convert makes it editable)."""
     import publishTool_textures as tex
     folder = texture_folder_of(pulled)
     if not os.path.isdir(folder):
@@ -1996,33 +1998,6 @@ def _own_files(nodes, pulled, asset_dir):
                     repointed += 1
             _set_string("%s.%s" % (node, pipeEnv.DNA_STAMP), json.dumps(entries))
     return repointed
-
-
-def import_into_asset(asset_dir, published, vid):
-    """Pull one published version into the scratch publish folder and
-    import it into the open asset scene: no reference, no namespace, its
-    pipe group and stamps as published, its textures and DNA copied into
-    this asset. Returns the list of what was done."""
-    if published.get("kind") == "camera":
-        raise BuildError("A shot's camera only builds into its shot.")
-    if vid not in published["versions"]:
-        raise BuildError("%s of %s %s isn't on the H drive."
-                         % (vid, published["asset"], published["code"]))
-    maya_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.normpath(asset_dir))))
-    pulled, _ = copy_published(published["versions"][vid], maya_dir)
-    # The published file's $PIPE_SCRATCH paths, on this drive.
-    pipeEnv.set_from_path(asset_dir)
-    nodes = cmds.file(pulled, i=True, defaultNamespace=True, preserveReferences=False,
-                      returnNewNodes=True) or []
-    done = ["imported %s" % version_label(published, vid, mark_latest=False)]
-    if _own_files(nodes, pulled, asset_dir):
-        done.append("textures copied into this asset's sourceimages")
-    if pipeEnv.fix_dna_paths():
-        done.append("MetaHuman DNA pointed at this asset's copy")
-    newer = newer_maya_warning(pulled)
-    if newer:
-        done.append(newer)
-    return done
 
 
 def set_maya_project(shot_dir):
