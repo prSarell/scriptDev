@@ -42,9 +42,13 @@ pub = api.pub
 
 # Two pickers, two jobs (user, 2026-10-28: "the difference between build and
 # populate list mode"):
-# - Add to list, above the list: Film | Asset | what's published (Modeling,
-#   Rigging, ..., Environment) | Asset type | Asset, then - and +. Only what
-#   the Build Into department builds is offered.
+# - Add to list, above the list: Film | Asset or Shot | what's published |
+#   Asset type | Asset, then - and +. The same departments as Build Into,
+#   plus Environment, whatever department you're building as (user,
+#   2026-10-30: "the 'add to list' department dropdown should be the same
+#   as the ... dropdown in the Build into list"). Those with nothing Build
+#   can add yet are greyed out (coming soon): FX and Lighting publish
+#   nothing yet, and a shot's camera and caches come with the shot.
 # - Build Into, under the list: Film | Asset or Shot | the artist's
 #   department | Sequence or type | Shot or asset. Where the build goes
 #   ("I want these things in this place"); it starts on the Maya project and
@@ -54,17 +58,13 @@ TARGET_DEPARTMENTS = [(label, code, picker.ASSET if code in ASSET_SIDE else pick
                        bool(builds))
                       for label, code, builds in api.BUILD_FOR]
 SOURCE_DEPARTMENTS = (
-    [(label, code, picker.ASSET, True) for label, code in pub.DEPARTMENTS
-     if code in ASSET_SIDE] +
-    [(api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.ASSET, True)])
+    [(label, code, side, code in ASSET_SIDE) for label, code, side, _ in TARGET_DEPARTMENTS
+     if side == picker.ASSET] +
+    [(api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.ASSET, True)] +
+    [(label, code, side, False) for label, code, side, _ in TARGET_DEPARTMENTS
+     if side == picker.SHOT])
 # Published for a shot itself, not an asset: they only build into it.
 SHOT_ITEMS = ("camera", "cache")
-
-
-def source_departments(department):
-    """SOURCE_DEPARTMENTS, only what this department builds."""
-    wanted = api.builds_for(department)
-    return [d for d in SOURCE_DEPARTMENTS if d[1] in wanted]
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -166,8 +166,9 @@ class BuildShotTab(QtWidgets.QWidget):
         # Add to list (see SOURCE_DEPARTMENTS), then - and +.
         self.picker = picker.TargetPicker(SOURCE_DEPARTMENTS, self._items_for)
         self.picker.dept_combo.setToolTip("What's published: a model, a rig, an "
-                                          "environment... Only what the Build Into "
-                                          "department works with is listed.")
+                                          "environment... Every department is listed, "
+                                          "whatever you're building as. Greyed out: "
+                                          "nothing to add yet.")
         self.picker.add_clicked.connect(self._add_asset)
         self.picker.remove_clicked.connect(self._remove_rows)
 
@@ -177,8 +178,8 @@ class BuildShotTab(QtWidgets.QWidget):
         self.target_picker = picker.TargetPicker(TARGET_DEPARTMENTS, self._target_items)
         self.target_picker.kind_combo.setToolTip("Building into a shot or an asset.")
         self.target_picker.dept_combo.setToolTip(
-            "Your department: Build only offers what it works with (no rigs for "
-            "Lighting, ...). FX and Lighting come with caches and lights.")
+            "Your department: each department has its own list for a shot, and "
+            "Animation brings in the shot's caches. FX and Lighting come later.")
         self.target_picker.group_combo.setToolTip("Sequence, or asset type")
         self.target_picker.name_combo.setToolTip("Shot, or asset")
         for button in (self.target_picker.add_btn, self.target_picker.remove_btn):
@@ -261,7 +262,6 @@ class BuildShotTab(QtWidgets.QWidget):
             self._read_target()
         target = self._target_shot or self._target_asset
         self.picker.set_films(films, target[0] if target else None)
-        self.picker.set_departments(source_departments(self.department()))
         self._load_shot()
         self._show_mismatch()
 
@@ -323,10 +323,9 @@ class BuildShotTab(QtWidgets.QWidget):
         return self.target_picker.department()
 
     def _on_department_changed(self, *args):
-        """Another department: Add to list offers what it builds, and the
-        list is that department's list for the shot (with the shot's caches
-        if it builds them)."""
-        self.picker.set_departments(source_departments(self.department()))
+        """Another department: the list is that department's list for the
+        shot (with the shot's caches if it builds them). Add to list stays
+        as it is: it offers every department."""
         if self._target_shot and self._published:
             self._load_shot()
 

@@ -2,7 +2,7 @@
 # tab has two rows ("the difference between build and populate list mode"):
 # Add to list (what's published) and Build into (Film | Asset or Shot |
 # department | Sequence | Shot), which starts on the Maya project and never
-# changes it. The department decides what Add to list offers; it starts on
+# changes it. Add to list offers every department (2026-10-30); Build into starts on
 # the scene's (working folder, else file name). FX / Lighting coming soon.
 # Run: mayapy test_buildDepartment_mayapy.py
 import sys, os, shutil, tempfile
@@ -116,8 +116,14 @@ i = codes(t).index("lighting")
 check("Build into, Shot side: the shot departments, Lighting coming soon",
       codes(t) == ["layout", "anim", "fx", "lighting"]
       and not t.dept_combo.model().item(i).isEnabled() and "coming soon" in t.dept_combo.itemText(i))
-check("Add to list: what Animation builds (models, rigs, environments; no lookDev)",
-      codes(p) == ["model", "rig", "env"])
+check("Add to list: every asset department + Environment, whatever Build into says",
+      codes(p) == ["model", "rig", "creature", "lookDev", "env"])
+p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.SHOT))
+m = p.dept_combo.model()
+check("Add to list, Shot side: the shot departments, all greyed (nothing to add yet)",
+      codes(p) == ["layout", "anim", "fx", "lighting"]
+      and not any(m.item(i).isEnabled() for i in range(m.rowCount())))
+p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.ASSET))
 p.set_current(film=FILM, code="rig", group="character", name="scout")
 tab._add_asset()
 check("+ adds the picked publish", [(r["asset"], r["code"]) for r in tab._rows]
@@ -135,7 +141,7 @@ check("Build into, Asset side: the asset departments",
       codes(t) == ["model", "rig", "creature", "lookDev"])
 t.set_current(code="lookDev")
 tab._on_department_changed()
-check("LookDev: Add to list offers models and lookDev", codes(p) == ["model", "lookDev"])
+check("LookDev: Add to list still offers every department", codes(p) == ["model", "rig", "creature", "lookDev", "env"])
 t.set_current(film=FILM, code="anim", group=SEQ, name=SHOT)
 tab._on_target_changed()
 tab._on_department_changed()
@@ -201,7 +207,7 @@ tab.check_target()
 check("asset rig scene: Build into the asset, Rigging",
       (t.kind(), t.department(), t.group(), t.name())
       == (picker.ASSET, "rig", "character", "scout") and tab._target_asset)
-check("Rigging: Add to list offers models only", codes(p) == ["model"])
+check("Rigging: Add to list still offers every department", codes(p) == ["model", "rig", "creature", "lookDev", "env"])
 check("asset work: no Keys from; button says Import into Asset",
       tab.keys_combo.isHidden() and tab.build_btn.text() == "Import into Asset")
 

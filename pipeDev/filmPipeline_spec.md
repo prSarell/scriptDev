@@ -1340,6 +1340,17 @@ The tools are developed side by side:
         the drop down menus of the build tool is locked and approved until
         further notice". Don't change Build's dropdowns (Add to list, Build
         into, what each department offers) unless the user asks.
+        **CHANGED by the user, 2026-10-30 (after the lock): Add to list is
+        no longer filtered.** "The 'add to list' department dropdown should
+        be the same as the add to list dropdown in the Build into list."
+        Add to list now always offers every department Build into has, plus
+        Environment, whatever department you build as: Asset side Modeling,
+        Rigging, Creature, LookDev, Environment; Shot side Layout,
+        Animation, FX, Lighting, greyed out "coming soon" (FX and Lighting
+        publish nothing yet; a shot's camera and caches come with the shot).
+        The table above is now only what Build into's department means for
+        a shot's caches (Animation, Creature) and which list a shot keeps
+        (one per department). Build into is unchanged.
         DECIDED 2026-10-28 (Claude's call, user: "this was a good call"):
         Layout/Animation also get models (props and set dressing published
         as models would otherwise be stuck), and don't get Creature
