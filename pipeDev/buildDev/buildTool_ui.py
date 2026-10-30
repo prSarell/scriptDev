@@ -434,8 +434,14 @@ class BuildShotTab(QtWidgets.QWidget):
         h_root = self._get_roots()[0]
         if not (h_root and os.path.isdir(h_root)):
             return []
-        return [(p["asset_type"], p["asset"]) for p in self._published_in(film)
-                if api.department_of(p) == code and p.get("kind") not in SHOT_ITEMS]
+        found = []
+        for p in self._published_in(film):
+            item = (p["asset_type"], p["asset"])
+            # Once each, even with a Modeling and an old environment publish.
+            if (api.department_of(p) == code and p.get("kind") not in SHOT_ITEMS
+                    and item not in found):
+                found.append(item)
+        return found
 
     def _target_items(self, film, code, kind):
         """Build Into's last two dropdowns: the film's shots, or its assets
@@ -837,6 +843,7 @@ class BuildShotTab(QtWidgets.QWidget):
             return
         # Modeling can be two publishes of one asset: its Modeling and its
         # environment publishes from before the department list was locked.
+        # The one published most recently is the asset's Modeling.
         match = [p for p in self._published
                  if p.get("kind") not in SHOT_ITEMS
                  and (p["asset_type"], p["asset"], api.department_of(p)) == (group, name, code)]
@@ -845,15 +852,13 @@ class BuildShotTab(QtWidgets.QWidget):
                                      % (name or "this", api.DEPT_LABELS.get(code, code)),
                                      ok=False)
             return
-        listed = set(self._key(r) for r in self._rows)
-        new = [p for p in match if self._key(p) not in listed]
-        if not new:
+        p = max(match, key=lambda m: m["info"][m["latest"]]["time"])
+        if any(self._key(r) == self._key(p) for r in self._rows):
             self.status.show_message("%s %s is already in the list."
                                      % (name, api.DEPT_LABELS.get(code, code)), ok=False)
             return
-        for p in new:
-            self._removed.discard(self._key(p))
-            self._rows.append(self._row(p, p["latest"]))
+        self._removed.discard(self._key(p))
+        self._rows.append(self._row(p, p["latest"]))
         if self.filter_combo.currentData() not in (None, code):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()

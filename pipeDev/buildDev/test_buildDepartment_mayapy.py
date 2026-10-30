@@ -93,6 +93,18 @@ for args in (("character", "scout", "model"), ("character", "scout", "rig"),
              ("prop", "backpack", "model"), ("environment", "shed", "env"),
              ("character", "scout", "lookDev")):
     published(*args)
+# shed also has an older Modeling publish, as on the T7 (one asset on
+# ShotGrid, two kinds of publish): made "earlier" than its env publish.
+published("environment", "shed", "model")
+_old = api.list_published
+def _shed_model_older(*a, **k):
+    found = _old(*a, **k)
+    for pp in found:
+        if (pp["asset"], pp["code"]) == ("shed", "model"):
+            for info in pp["info"].values():
+                info["time"] -= 3600
+    return found
+api.list_published = _shed_model_older
 OTHER = "SEQ010_130"
 other_s = api.shot_folder(SC, FILM, SEQ, OTHER)
 os.makedirs(api.shot_folder(H, FILM, SEQ, OTHER))
@@ -130,6 +142,17 @@ check("+ adds the picked publish", [(r["asset"], r["code"]) for r in tab._rows]
 check("Add to list, Modeling: environment publishes listed under it (shed)",
       (p.set_current(code="model", group="environment") or True)
       and (p.group(), p.name()) == ("environment", "shed"))
+check("shed listed once, though it has a Modeling and an environment publish",
+      [n for g, n in p._items if g == "environment"] == ["shed"])
+before = len(tab._rows)
+tab._add_asset()
+check("+ adds one shed: its newest publish (the environment one)",
+      [(r["asset"], r["code"]) for r in tab._rows[before:]] == [("shed", "env")])
+tab._add_asset()
+check("+ again: shed is already in the list", len(tab._rows) == before + 1
+      and "already in the list" in tab.status._text)
+del tab._rows[before:]
+tab._render_table()
 check("Keys from: this shot", not tab.keys_combo.isHidden()
       and tab._keys_source() == (FILM, SEQ, SHOT))
 check("no banner: building into the scene's shot", tab.target_mismatch() is None
