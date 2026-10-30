@@ -1336,6 +1336,10 @@ The tools are developed side by side:
         | Creature | everything |
         | Layout, Animation | Modeling, Rigging, Environment, Camera |
         | FX, Lighting | coming soon (greyed out); a scene in their folders starts on Layout |
+        **LOCKED 2026-10-30.** The user: "this layout and functionality of
+        the drop down menus of the build tool is locked and approved until
+        further notice". Don't change Build's dropdowns (Add to list, Build
+        into, what each department offers) unless the user asks.
         DECIDED 2026-10-28 (Claude's call, user: "this was a good call"):
         Layout/Animation also get models (props and set dressing published
         as models would otherwise be stuck), and don't get Creature
