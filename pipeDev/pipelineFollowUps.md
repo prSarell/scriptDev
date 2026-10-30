@@ -285,7 +285,12 @@ hand. One T7 session could cover most of it.
       custom one-shot rig, and publishing animation to another shot.
       Open questions are listed in §4d; come back to it later.
 
-- [ ] **Build warning** when a rig's `pipe_plugins` aren't loaded.
+- [ ] **Build warning** when a rig's `pipe_plugins` aren't loaded. When
+      building it, make the stamp list only the plug-ins used inside the
+      selected rig group. Today it lists the whole scene's, so a stray
+      Arnold light would give a false "needs mtoa" warning. Nothing reads
+      the stamp until then, and it never affects Unreal or Houdini
+      (2026-10-30).
 - [ ] Scan a newer **Advanced Skeleton** rig and a **Rapid Rig** rig for
       their set names (`rig_rules.py`).
 - [ ] **Rig version record on H**: the scratch manifest gets wiped, and with
