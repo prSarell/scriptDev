@@ -2,7 +2,7 @@
 mpPipe Installer (staff testing)
 ================================
 Drag and drop this file onto the Maya viewport to install the film
-pipeline tools (Publish, Build, layout tools) and the mpPipe and mpLayout shelves.
+pipeline tools (Publish, Build, layout tools) and the mpPipe, mpLayout and mpModel shelves.
 
 Works from the unzipped mpPipe package (scripts/ and icons/ beside this
 file), or straight from the scriptDev repo (pipeDev/pipelineInstaller/),
@@ -154,7 +154,7 @@ def _sources(root):
     """(script files, icons folders, shelf configs, build label): from the
     unzipped package this file sits in, or from the repo's source folders
     when it's run from pipeDev/pipelineInstaller (same list as build_zip).
-    One shelf per config: mpPipe, then mpLayout (2026-10-23)."""
+    One shelf per config: mpPipe, then mpLayout (2026-10-23), then mpModel (2026-10-30)."""
     scripts_dir = os.path.join(root, "scripts")
     if os.path.isdir(scripts_dir):
         scripts = [os.path.join(scripts_dir, n) for n in sorted(os.listdir(scripts_dir))

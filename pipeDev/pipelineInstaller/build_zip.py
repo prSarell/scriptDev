@@ -47,11 +47,14 @@ SCRIPTS = [
     ("pipeDev/projectDev", "projectTool_api.py"),
     ("pipeDev/projectDev", "projectTool_ui.py"),
     ("pipeDev/layoutDev", "layoutTool_env.py"),
+    ("pipeDev/modelDev", "modelTool_convert.py"),
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
-# Every shelf the package installs (2026-10-23: mpLayout added). The first
+# Every shelf the package installs (2026-10-23: mpLayout added; 2026-10-30:
+# mpModel). The first
 # goes in the zip as shelf_config.py, the others as shelf_config_<shelf>.py.
-SHELF_DIRS = [SHELF_DIR, os.path.join(REPO, "shelfDev", "mpLayout")]
+SHELF_DIRS = [SHELF_DIR, os.path.join(REPO, "shelfDev", "mpLayout"),
+              os.path.join(REPO, "shelfDev", "mpModel")]
 TOP = "mpPipe"
 
 # Each build is also copied here, so the latest is ready to download on
@@ -68,7 +71,8 @@ def _git_hash():
         dirty = subprocess.check_output(["git", "-C", REPO, "status", "--porcelain",
                                          "pipeDev/publishDev", "pipeDev/buildDev",
                                          "pipeDev/pipelineInstaller", "shelfDev/mpPipe",
-                                         "pipeDev/layoutDev", "shelfDev/mpLayout"],
+                                         "pipeDev/layoutDev", "shelfDev/mpLayout",
+                                         "pipeDev/modelDev", "shelfDev/mpModel"],
                                         stderr=subprocess.DEVNULL)
         return out.decode().strip() + ("+local changes" if dirty.strip() else "")
     except (OSError, subprocess.CalledProcessError):

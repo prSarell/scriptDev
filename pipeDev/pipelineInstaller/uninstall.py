@@ -2,7 +2,7 @@
 mpPipe Uninstaller (staff testing)
 ==================================
 Drag and drop this file onto the Maya viewport to remove the files and
-the mpPipe and mpLayout shelves that install.py put in place.
+the mpPipe, mpLayout and mpModel shelves that install.py put in place.
 
 Also takes the mpPipe startup block (PIPE_SCRATCH) out of userSetup.py.
 Left alone: the drive settings (pipeline_config.json in Maya prefs),

@@ -91,6 +91,15 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the department lists: Build SEQ010_140 as Animation, switch
       Build into to Layout (a different list), back to Animation (yours
       again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
+- [ ] **mpModel shelf, Convert to Model** (built 2026-10-30,
+      `pipeDev/modelDev/modelTool_convert.py`, staff zip only): in an
+      asset scene, bring in the shed environment with Build (referenced) and
+      a model with Import into Asset; select each top node, Convert. Check:
+      imported, no pipe group, no namespace, nothing moved or frozen, sky
+      unlocked, `locators` gone, environment sets kept; save and republish.
+      Try it in a shot scene (refused) and with a `props_grp` already in the
+      scene (refused). Open: should it work on rigs too (not now: models and
+      environments only)?
 - [ ] **shotSub / Jiffy shot data in the project's data folder** (built
       2026-10-30, for every student + the pipe): `<project>\scenes\<rel>` ->
       `<project>\data\shotgrid\<rel>` (shotSub + Jiffy SG link, publish log)
