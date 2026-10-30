@@ -107,6 +107,25 @@ BUILD_FOR = [
 ]
 BUILD_FOR_LABELS = dict((code, label) for label, code, _ in BUILD_FOR)
 
+# THE PIPE'S DEPARTMENTS — LOCKED (user, 2026-10-30): "That is the list.
+# Please lock that list don't revert it or change it going forward without
+# explicit instruction from me ... that list goes here and here [Build's Add
+# to the list and Build into Department dropdowns]. That is a fixed design
+# feature." Environment is not a department: environments are modelled.
+DEPARTMENTS = [("Modeling", "model"), ("Rigging", "rig"), ("Creature", "creature"),
+               ("LookDev", "lookDev"), ("Layout", "layout"), ("Animation", "anim"),
+               ("FX", "fx"), ("Lighting", "lighting")]
+# Environment publishes made before the lock are stamped "env": they are
+# their asset's Modeling publishes (department_of).
+DEPT_LABELS.update((code, label) for label, code in DEPARTMENTS)
+DEPT_LABELS[ENV_CODE] = "Modeling"
+
+
+def department_of(published):
+    """The department a publish is listed under: an environment publish
+    (code env) is its asset's Modeling."""
+    return "model" if published["code"] == ENV_CODE else published["code"]
+
 
 def builds_for(department):
     """What a department's Build offers (codes, see BUILD_FOR); [] for one

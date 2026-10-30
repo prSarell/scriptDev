@@ -44,26 +44,16 @@ pub = api.pub
 # Two pickers, two jobs (user, 2026-10-28: "the difference between build and
 # populate list mode"):
 # - Add to list, above the list: Film | Asset or Shot | what's published |
-#   Asset type | Asset, then - and +. The same departments as Build Into,
-#   plus Environment, whatever department you're building as (user,
-#   2026-10-30: "the 'add to list' department dropdown should be the same
-#   as the ... dropdown in the Build into list"). Those with nothing Build
-#   can add yet are greyed out (coming soon): FX and Lighting publish
-#   nothing yet, and a shot's camera and caches come with the shot.
+#   Asset type | Asset, then - and +.
 # - Build Into, under the list: Film | Asset or Shot | the artist's
 #   department | Sequence or type | Shot or asset. Where the build goes
 #   ("I want these things in this place"); it starts on the Maya project and
 #   never changes it. The shot's own camera and caches come with the shot.
-ASSET_SIDE = ("model", "rig", "creature", "lookDev")
-TARGET_DEPARTMENTS = [(label, code, picker.ASSET if code in ASSET_SIDE else picker.SHOT,
-                       bool(builds))
-                      for label, code, builds in api.BUILD_FOR]
-SOURCE_DEPARTMENTS = (
-    [(label, code, side, code in ASSET_SIDE) for label, code, side, _ in TARGET_DEPARTMENTS
-     if side == picker.ASSET] +
-    [(api.DEPT_LABELS[pub.ENV_CODE], pub.ENV_CODE, picker.ASSET, True)] +
-    [(label, code, side, False) for label, code, side, _ in TARGET_DEPARTMENTS
-     if side == picker.SHOT])
+# Both Department dropdowns are the pipe's department list, exactly, whatever
+# Asset or Shot says: LOCKED, a fixed design feature (user, 2026-10-30; see
+# buildTool_api.DEPARTMENTS). Environment publishes are listed under Modeling.
+TARGET_DEPARTMENTS = [(label, code, picker.ANY, True) for label, code in api.DEPARTMENTS]
+SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
 # Published for a shot itself, not an asset: they only build into it.
 SHOT_ITEMS = ("camera", "cache")
 
@@ -301,10 +291,10 @@ class BuildShotTab(QtWidgets.QWidget):
         side = picker.SHOT if place and place["kind"] == "shot" else picker.ASSET
         code = api.department_of_scene(
             scene or os.path.join(place["folder"], "scenes", "untitled.ma")) if place else None
-        if not code or dict((d[1], d[2]) for d in TARGET_DEPARTMENTS).get(code) != side:
+        if not code:
             code = "anim" if side == picker.SHOT else "model"
         self.target_picker.set_films(films, film)
-        self.target_picker.set_current(film=film, code=code,
+        self.target_picker.set_current(film=film, code=code, kind=side,
                                        group=place["group"] if place else None,
                                        name=place["name"] if place else None)
         self._read_target()
@@ -391,10 +381,8 @@ class BuildShotTab(QtWidgets.QWidget):
         mismatch = self.target_mismatch()
         if mismatch:
             project = mismatch["project"]
-            code = self.department()
-            if dict((d[1], d[2]) for d in TARGET_DEPARTMENTS).get(code) != project["kind"]:
-                code = "anim" if project["kind"] == "shot" else "model"
-            self.target_picker.set_current(film=project["film"], code=code,
+            code = self.department() or ("anim" if project["kind"] == "shot" else "model")
+            self.target_picker.set_current(film=project["film"], code=code, kind=project["kind"],
                                            group=project["group"], name=project["name"])
             self._on_target_changed()
             return
@@ -447,7 +435,7 @@ class BuildShotTab(QtWidgets.QWidget):
         if not (h_root and os.path.isdir(h_root)):
             return []
         return [(p["asset_type"], p["asset"]) for p in self._published_in(film)
-                if p["code"] == code and p.get("kind") not in SHOT_ITEMS]
+                if api.department_of(p) == code and p.get("kind") not in SHOT_ITEMS]
 
     def _target_items(self, film, code, kind):
         """Build Into's last two dropdowns: the film's shots, or its assets
@@ -809,9 +797,9 @@ class BuildShotTab(QtWidgets.QWidget):
         current = self.filter_combo.currentData()
         codes = []
         for p in self._rows:
-            if p["code"] not in codes:
-                codes.append(p["code"])
-        order = api.DEPT_CODES + [api.CAMERA_CODE, api.CACHE_CODE]
+            if api.department_of(p) not in codes:
+                codes.append(api.department_of(p))
+        order = [c for _, c in api.DEPARTMENTS] + [api.CAMERA_CODE, api.CACHE_CODE]
         codes.sort(key=lambda c: order.index(c) if c in order else len(order))
         self.filter_combo.blockSignals(True)
         self.filter_combo.clear()
@@ -825,7 +813,7 @@ class BuildShotTab(QtWidgets.QWidget):
     def _apply_filter(self, *args):
         code = self.filter_combo.currentData()
         for row, p in enumerate(self._rows):
-            self.table.setRowHidden(row, bool(code) and p["code"] != code)
+            self.table.setRowHidden(row, bool(code) and api.department_of(p) != code)
 
     # -- list -------------------------------------------------------------
 
@@ -847,21 +835,25 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("%s doesn't build anything yet."
                                      % self.target_picker.dept_combo.currentText(), ok=False)
             return
+        # Modeling can be two publishes of one asset: its Modeling and its
+        # environment publishes from before the department list was locked.
         match = [p for p in self._published
                  if p.get("kind") not in SHOT_ITEMS
-                 and (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
+                 and (p["asset_type"], p["asset"], api.department_of(p)) == (group, name, code)]
         if not match:
             self.status.show_message("Nothing has been published for %s %s yet."
                                      % (name or "this", api.DEPT_LABELS.get(code, code)),
                                      ok=False)
             return
-        p = match[0]
-        if any(self._key(r) == self._key(p) for r in self._rows):
+        listed = set(self._key(r) for r in self._rows)
+        new = [p for p in match if self._key(p) not in listed]
+        if not new:
             self.status.show_message("%s %s is already in the list."
-                                     % (p["asset"], api.DEPT_LABELS.get(code, code)), ok=False)
+                                     % (name, api.DEPT_LABELS.get(code, code)), ok=False)
             return
-        self._removed.discard(self._key(p))
-        self._rows.append(self._row(p, p["latest"]))
+        for p in new:
+            self._removed.discard(self._key(p))
+            self._rows.append(self._row(p, p["latest"]))
         if self.filter_combo.currentData() not in (None, code):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()

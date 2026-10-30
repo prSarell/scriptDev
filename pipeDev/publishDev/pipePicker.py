@@ -15,6 +15,9 @@ off it. Each tool does the adding and removing itself.
 from PySide6 import QtWidgets, QtCore, QtGui
 
 ASSET, SHOT = "asset", "shot"
+# A department listed whatever Asset or Shot says (Build's fixed department
+# list, user 2026-10-30); the last two dropdowns follow Asset or Shot.
+ANY = "any"
 KIND_LABELS = ((ASSET, "Asset"), (SHOT, "Shot"))
 # What the last two dropdowns hold, by kind (their tooltips).
 GROUP_LABELS = {ASSET: ("Asset type", "Asset"), SHOT: ("Sequence", "Shot")}
@@ -123,16 +126,18 @@ class TargetPicker(QtWidgets.QWidget):
         _set_items(self.film_combo, [(f, f, True) for f in films], film or self.film())
         self.refill()
 
-    def set_current(self, film=None, code=None, group=None, name=None):
+    def set_current(self, film=None, code=None, group=None, name=None, kind=None):
         """Pick these (any left out stay as they are), e.g. what the open
-        scene is. A department also picks its side, Asset or Shot."""
-        for combo, data in ((self.film_combo, film), (self.kind_combo, self._kinds.get(code))):
+        scene is. A department also picks its side, Asset or Shot, unless
+        it's listed on both (ANY): then kind says."""
+        side = kind or self._kinds.get(code)
+        for combo, data in ((self.film_combo, film), (self.kind_combo, side)):
             index = combo.findData(data) if data else -1
             if index >= 0:
                 combo.blockSignals(True)
                 combo.setCurrentIndex(index)
                 combo.blockSignals(False)
-        if code in self._kinds:
+        if code in self._kinds or kind:
             self._fill_departments(code=code)
         self.refill(group, name)
 
@@ -144,6 +149,8 @@ class TargetPicker(QtWidgets.QWidget):
     def _fill_kinds(self):
         """Asset and Shot, a side with nothing listed under it greyed out."""
         sides = set(self._kinds.values())
+        if ANY in sides:
+            sides |= set(kind for kind, _ in KIND_LABELS)
         _set_items(self.kind_combo, [(label, kind, kind in sides) for kind, label in KIND_LABELS],
                    self.kind() if self.kind() in sides else None)
 
@@ -165,7 +172,7 @@ class TargetPicker(QtWidgets.QWidget):
         kind = self.kind()
         _set_items(self.dept_combo, [(label if live else "%s (coming soon)" % label, c, live)
                                      for label, c, k, live in (d[:4] for d in self._departments)
-                                     if k == kind],
+                                     if k in (kind, ANY)],
                    code or self.department())
         if refill:
             self.refill()
@@ -174,6 +181,8 @@ class TargetPicker(QtWidgets.QWidget):
         """Re-read what fits the film, side and department."""
         film, code = self.film(), self.department()
         lists = self._lists.get(code, self.kind())
+        if lists == ANY:
+            lists = self.kind()
         group_label, name_label = GROUP_LABELS[lists]
         self.group_combo.setToolTip(group_label)
         self.name_combo.setToolTip(name_label)

@@ -112,37 +112,36 @@ t, p = tab.target_picker, tab.picker
 check("Build into: the Maya project's shot, for Animation (the scene's folder)",
       (t.film(), t.kind(), t.department(), t.group(), t.name())
       == (FILM, picker.SHOT, "anim", SEQ, SHOT) and tab._target_shot == (FILM, SEQ, SHOT))
-i = codes(t).index("lighting")
-check("Build into, Shot side: the shot departments, Lighting coming soon",
-      codes(t) == ["layout", "anim", "fx", "lighting"]
-      and not t.dept_combo.model().item(i).isEnabled() and "coming soon" in t.dept_combo.itemText(i))
-check("Add to list: every asset department + Environment, whatever Build into says",
-      codes(p) == ["model", "rig", "creature", "lookDev", "env"])
+# Both Department dropdowns: the pipe's department list, LOCKED (user,
+# 2026-10-30), whatever Asset or Shot says. No Environment.
+LOCKED = ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"]
+def all_enabled(pk):
+    m = pk.dept_combo.model()
+    return all(m.item(i).isEnabled() for i in range(m.rowCount()))
+check("Build into, Shot side: the locked department list", codes(t) == LOCKED and all_enabled(t))
+check("Add to list: the locked department list", codes(p) == LOCKED and all_enabled(p))
 p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.SHOT))
-m = p.dept_combo.model()
-check("Add to list, Shot side: the shot departments, all greyed (nothing to add yet)",
-      codes(p) == ["layout", "anim", "fx", "lighting"]
-      and not any(m.item(i).isEnabled() for i in range(m.rowCount())))
+check("Add to list, Shot side: the same list", codes(p) == LOCKED)
 p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.ASSET))
 p.set_current(film=FILM, code="rig", group="character", name="scout")
 tab._add_asset()
 check("+ adds the picked publish", [(r["asset"], r["code"]) for r in tab._rows]
       == [("scout", "rig")])
-check("Add to list, Environment: lists the environments",
-      (p.set_current(code="env") or True) and (p.group(), p.name()) == ("environment", "shed"))
+check("Add to list, Modeling: environment publishes listed under it (shed)",
+      (p.set_current(code="model", group="environment") or True)
+      and (p.group(), p.name()) == ("environment", "shed"))
 check("Keys from: this shot", not tab.keys_combo.isHidden()
       and tab._keys_source() == (FILM, SEQ, SHOT))
 check("no banner: building into the scene's shot", tab.target_mismatch() is None
       and tab.project_banner.isHidden())
 
-# Lighting isn't pickable yet; LookDev (Asset side) builds models and lookDev.
+# Asset side: the same list.
 t.kind_combo.setCurrentIndex(t.kind_combo.findData(picker.ASSET))
-check("Build into, Asset side: the asset departments",
-      codes(t) == ["model", "rig", "creature", "lookDev"])
+check("Build into, Asset side: the same locked list", codes(t) == LOCKED)
 t.set_current(code="lookDev")
 tab._on_department_changed()
-check("LookDev: Add to list still offers every department", codes(p) == ["model", "rig", "creature", "lookDev", "env"])
-t.set_current(film=FILM, code="anim", group=SEQ, name=SHOT)
+check("LookDev: Add to list still the locked list", codes(p) == LOCKED)
+t.set_current(film=FILM, code="anim", group=SEQ, name=SHOT, kind=picker.SHOT)
 tab._on_target_changed()
 tab._on_department_changed()
 
@@ -207,7 +206,7 @@ tab.check_target()
 check("asset rig scene: Build into the asset, Rigging",
       (t.kind(), t.department(), t.group(), t.name())
       == (picker.ASSET, "rig", "character", "scout") and tab._target_asset)
-check("Rigging: Add to list still offers every department", codes(p) == ["model", "rig", "creature", "lookDev", "env"])
+check("Rigging: Add to list still the locked list", codes(p) == LOCKED)
 check("asset work: no Keys from; the same Build button as a shot",
       tab.keys_combo.isHidden() and tab.build_btn.text() == "Build")
 

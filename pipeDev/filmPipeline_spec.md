@@ -1336,6 +1336,22 @@ The tools are developed side by side:
         | Creature | everything |
         | Layout, Animation | Modeling, Rigging, Environment, Camera |
         | FX, Lighting | coming soon (greyed out); a scene in their folders starts on Layout |
+        **THE DEPARTMENT LIST — LOCKED 2026-10-30, a fixed design
+        feature.** Modeling, Rigging, Creature, LookDev, Layout, Animation,
+        FX, Lighting. The user: "That is the list. Please lock that list
+        don't revert it or change it going forward without explicit
+        instruction from me ... that list goes here and here [Build's Add to
+        the list and Build into Department dropdowns]." **Environment is not
+        a department** (environments are modelled; it's an asset type). Both
+        dropdowns show exactly this list, in this order, whether Asset or
+        Shot is picked (`buildTool_api.DEPARTMENTS`, `pipePicker.ANY`).
+        Environment publishes made before this (stamped `env`: fieldA, shed)
+        are listed under Modeling (`buildTool_api.department_of`). Not yet
+        changed: the Publish tool still has Environment in its own list
+        (`publishTool_api.DEPARTMENTS`) and still stamps environment
+        publishes `env`; that waits for the user's instruction.
+        Supersedes the table above and the notes below about what each
+        dropdown lists.
         **LOCKED 2026-10-30.** The user: "this layout and functionality of
         the drop down menus of the build tool is locked and approved until
         further notice". Don't change Build's dropdowns (Add to list, Build

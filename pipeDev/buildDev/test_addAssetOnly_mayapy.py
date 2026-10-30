@@ -98,9 +98,9 @@ t = tab.target_picker
 check("Build into: the Maya project's shot, Shot side, Animation",
       (t.film(), t.kind(), t.department(), t.group(), t.name())
       == (FILM, "shot", "anim", "EAP_010", "EAP_010_010")
-      and dept_codes(t) == ["layout", "anim", "fx", "lighting"])
-check("Add to list: every asset department + Environment, by what's published",
-      dept_codes(p) == ["model", "rig", "creature", "lookDev", "env"] and p.group_combo.toolTip() == "Asset type")
+      and dept_codes(t) == ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"])
+check("Add to list: the locked department list",
+      dept_codes(p) == ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"] and p.group_combo.toolTip() == "Asset type")
 p.set_current(film=FILM, code="rig")
 check("picker: Rigging lists no assets (nothing published for it)", p.name() is None)
 p.set_current(code="model", group="environment", name="scoutsHouse")
