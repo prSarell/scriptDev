@@ -94,10 +94,7 @@ ENV_CODE = pub.ENV_CODE
 # "cam" for the shot camera, "env" for environments, "cache" for the shot's
 # animation caches; None = coming soon).
 BUILD_FOR = [
-    # Environments too (user, 2026-10-30): a published environment is
-    # brought into an asset scene and turned back into a plain model with
-    # the mpModel shelf's Convert to Model, to be worked on and republished.
-    ("Modeling", "model", ["model", ENV_CODE]),
+    ("Modeling", "model", ["model"]),
     ("Rigging", "rig", ["model"]),
     ("Creature", "creature", ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE,
                               CACHE_CODE]),
