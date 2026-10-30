@@ -1272,6 +1272,19 @@ class _InlineNotesEdit(QtWidgets.QPlainTextEdit):
     note, full history stays in ShotGrid itself."""
 
 
+def _shotgrid_data_folder(scene_folder):
+    """Where shotgrid_link.json goes for a scene folder: the project's data
+    folder, not beside the scenes (user, 2026-10-30) — <project>/scenes/<rel>
+    -> <project>/data/shotgrid/<rel>, matching shotSub.py's
+    get_shot_data_folder(). A folder outside any scenes/ keeps it in place."""
+    parts = os.path.normpath(scene_folder).split(os.sep)
+    lower = [p.lower() for p in parts]
+    if "scenes" not in lower:
+        return scene_folder
+    i = len(lower) - 1 - lower[::-1].index("scenes")
+    return os.sep.join(parts[:i] + ["data", "shotgrid"] + parts[i + 1:])
+
+
 # ---------------------------------------------------------------------------
 # Item (Shot/Asset) folder-link dialog — one-time setup, per row.
 # Browses/collects a local folder to link, then hands it up the signal
@@ -4273,8 +4286,9 @@ class JiffySG(QtWidgets.QWidget):
             "linked_at": _datetime.now().isoformat(timespec="seconds"),
             "linked_by": current_login(),
         }
-        os.makedirs(folder_path, exist_ok=True)
-        with open(os.path.join(folder_path, "shotgrid_link.json"), "w") as f:
+        folder = _shotgrid_data_folder(folder_path)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "shotgrid_link.json"), "w") as f:
             json.dump(data, f, indent=2)
 
     def _on_artists_loaded(self, names):

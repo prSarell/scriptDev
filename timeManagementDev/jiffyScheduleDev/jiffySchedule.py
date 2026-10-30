@@ -121,7 +121,9 @@ def _prod_week(target, w1_start, hol_start=None, hol_end=None):
 def _capture_viewport(item_name):
     try:
         root = cmds.workspace(query=True, rootDirectory=True)
-        thumb_dir = os.path.join(root, "jiffyShotData", "thumbnails")
+        # In the project's data folder (user, 2026-10-30). Thumbnails saved
+        # before that keep their old paths in the schedule and still load.
+        thumb_dir = os.path.join(root, "data", "jiffyShotData", "thumbnails")
         os.makedirs(thumb_dir, exist_ok=True)
         safe  = item_name.replace(" ", "_").replace("/", "_")
         fname = f"{safe}_{int(time.time())}.jpg"

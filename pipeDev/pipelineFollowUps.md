@@ -91,6 +91,18 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the department lists: Build SEQ010_140 as Animation, switch
       Build into to Layout (a different list), back to Animation (yours
       again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
+- [ ] **shotSub / Jiffy shot data in the project's data folder** (built
+      2026-10-30, for every student + the pipe): `<project>\scenes\<rel>` ->
+      `<project>\data\shotgrid\<rel>` (shotSub + Jiffy SG link, publish log)
+      and `<project>\data\jiffyShotData\<rel>` (JiffyPomo tasks, summary;
+      Jiffy Schedule thumbnails in `data\jiffyShotData\thumbnails`). Show
+      data (prompts, notes) stays in `~\jiffyData`. Old files are copied
+      across on first read. Not yet in mpToolSet / studio4AnimToolset:
+      resync shotSub.py, jiffyUtils.py, jiffySettingsTab.py,
+      jiffySchedule.py when releasing (shotSub also carries the 2026-10-28
+      burn-in change). Hand test: open a linked shot, publish in shotSub,
+      check the link survived and `data\shotgrid\...` appeared; open
+      JiffyPomo in a shot with old tasks.
 - [ ] Hand test the shot list: build a shot on one drive, open a scene in
       that shot on another drive (T7 / D:), check the list comes back with
       the latest keys; "-" an asset, reopen, check it stays off.

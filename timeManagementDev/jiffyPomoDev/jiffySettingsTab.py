@@ -4,7 +4,7 @@ from PySide6 import QtWidgets
 import os
 import maya.cmds as cmds
 
-from jiffyUtils import DEFAULT_NOTES_FILE, DEFAULT_PROMPTS_FILE
+from jiffyUtils import DEFAULT_NOTES_FILE, DEFAULT_PROMPTS_FILE, shot_data_file
 
 
 class SettingsTab(QtWidgets.QWidget):
@@ -83,17 +83,13 @@ class SettingsTab(QtWidgets.QWidget):
         scene_path = cmds.file(query=True, sceneName=True)
         if not scene_path or scene_path == "":
             return os.path.join(os.path.expanduser("~"), "jiffypomo_tasks.json")
-        scene_dir = os.path.dirname(scene_path)
-        shot_folder = os.path.join(scene_dir, "jiffyShotData")
-        return os.path.join(shot_folder, "jiffypomo_tasks.json")
+        return shot_data_file(os.path.dirname(scene_path), "jiffypomo_tasks.json")
 
     def get_default_summary_file(self):
         scene_path = cmds.file(query=True, sceneName=True)
         if not scene_path or scene_path == "":
             return os.path.join(os.path.expanduser("~"), "jiffypomo_summary.json")
-        scene_dir = os.path.dirname(scene_path)
-        shot_folder = os.path.join(scene_dir, "jiffyShotData")
-        return os.path.join(shot_folder, "jiffypomo_summary.json")
+        return shot_data_file(os.path.dirname(scene_path), "jiffypomo_summary.json")
 
     def get_default_notes_file(self):
         return DEFAULT_NOTES_FILE

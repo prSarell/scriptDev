@@ -37,8 +37,8 @@
 #   get_scene_relative_folder_from_scenes()/get_scene_folder_path()), not
 #   from a per-shot workspace.
 # - "Link to ShotGrid" writes a local shotgrid_link.json marker into the
-#   current scene's own scenes/<sequence>/<shot> subfolder (see
-#   get_link_file_path()), storing an explicit ShotGrid Project id + Shot
+#   project's data/shotgrid/<sequence>/<shot> folder, mirroring the scene's
+#   scenes/<sequence>/<shot> subfolder (see get_shot_data_folder()), storing an explicit ShotGrid Project id + Shot
 #   id (picked from existing ShotGrid Projects/Shots -- shotSub never
 #   creates a Shot itself; Shots are created directly in ShotGrid's web UI
 #   by the lecturer/TD).
@@ -393,12 +393,12 @@ class ShotSub(object):
     def get_scene_folder_path(self):
         """Absolute path to the current scene's own subfolder inside the
         project's scenes/ directory -- e.g. <project_root>/scenes/
-        sequence001/shot001. This is also where Jiffy SG's per-Shot/Asset
-        "Settings" link writes shotgrid_link.json (see jiffySG.py's
-        _link_item_folder) -- shotSub resolving its link/publish-log paths
-        the same way is what lets the two tools agree on "which shot is
-        this" structurally, from where the scene file actually is, rather
-        than either one guessing from names."""
+        sequence001/shot001. The link and publish log go in its mirror in
+        the project's data folder (get_shot_data_folder()); Jiffy SG's
+        per-Shot/Asset "Settings" link maps the folder the same way, which
+        is what lets the two tools agree on "which shot is this"
+        structurally, from where the scene file actually is, rather than
+        either one guessing from names."""
         relative_folder = self.get_scene_relative_folder_from_scenes()
         scenes_root = self.get_scenes_root()
         return os.path.join(scenes_root, relative_folder) if relative_folder else scenes_root
@@ -615,13 +615,38 @@ class ShotSub(object):
     # --------------------------------------------------------
     LINK_FILENAME = "shotgrid_link.json"
     PUBLISH_LOG_FILENAME = "shotgrid_publish_log.json"
+    SHOT_DATA_FOLDER = "shotgrid"
+
+    def get_shot_data_folder(self):
+        """Where the link and publish log live: the project's data folder,
+        mirroring scenes/ (user, 2026-10-30) -- <project>/scenes/<rel> ->
+        <project>/data/shotgrid/<rel>. Still one folder per shot when one
+        Maya project covers the whole film (<rel> = sequence001/shot001),
+        and per department + artist on the pipe (<rel> = anim/<login>).
+        Jiffy SG's per-row link writes to the same place (jiffySG.py's
+        _shotgrid_data_folder)."""
+        relative_folder = self.get_scene_relative_folder_from_scenes()
+        folder = os.path.join(self.get_project_root(), "data", self.SHOT_DATA_FOLDER)
+        return os.path.join(folder, relative_folder) if relative_folder else folder
+
+    def _shot_data_file(self, name):
+        """The path of a link/log file, creating its folder. One left in the
+        scene's own scenes/ subfolder by an earlier shotSub (or Jiffy SG) is
+        copied across the first time, so existing links keep working."""
+        folder = self.get_shot_data_folder()
+        path = os.path.join(folder, name)
+        if not os.path.exists(path):
+            old = os.path.join(self.get_scene_folder_path(), name)
+            if not os.path.isdir(folder):
+                os.makedirs(folder)
+            if os.path.isfile(old):
+                shutil.copy2(old, path)
+        return path
 
     def get_link_file_path(self):
-        # Lives in the current scene's own scenes/ subfolder, not the bare
-        # project root -- one Maya project now covers the whole film, so a
-        # single project-root marker file could only ever represent one
-        # shot. See get_scene_folder_path()'s docstring.
-        return os.path.join(self.get_scene_folder_path(), self.LINK_FILENAME)
+        # Per shot, not one per project -- one Maya project can cover the
+        # whole film. See get_shot_data_folder().
+        return self._shot_data_file(self.LINK_FILENAME)
 
     def read_shotgrid_link(self):
         """Returns the current scene's shotgrid_link.json as a dict, or
@@ -684,12 +709,11 @@ class ShotSub(object):
         return data
 
     def get_publish_log_path(self):
-        # Same reasoning as get_link_file_path(): rooted at the current
-        # scene's own scenes/ subfolder, not project root -- a single
-        # project-root log would collide version names (e.g. "v001") across
+        # Same reasoning as get_link_file_path(): per shot -- a single
+        # project-wide log would collide version names (e.g. "v001") across
         # every shot in the film, mislabeling other shots' versions as
         # published/pruneable.
-        return os.path.join(self.get_scene_folder_path(), self.PUBLISH_LOG_FILENAME)
+        return self._shot_data_file(self.PUBLISH_LOG_FILENAME)
 
     def read_publish_log(self):
         try:
