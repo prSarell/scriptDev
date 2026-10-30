@@ -1101,7 +1101,10 @@ class PublishToolUI(QtWidgets.QDialog):
         # Re-check the open scene whenever the window is brought forward.
         if event.type() == QtCore.QEvent.ActivationChange and self.isActiveWindow():
             self.refresh()
-        super(PublishToolUI, self).changeEvent(event)
+        # QDialog directly, not super(PublishToolUI, ...): a window left open
+        # through a reinstall is an instance of the old class, and the
+        # reloaded module's PublishToolUI isn't its type (2026-10-30).
+        QtWidgets.QDialog.changeEvent(self, event)
 
 
 # ---------------------------------------------------------------------------

@@ -1293,7 +1293,9 @@ class BuildToolUI(QtWidgets.QDialog):
         # the window was in the background, follow it.
         if event.type() == QtCore.QEvent.ActivationChange and self.isActiveWindow():
             self.build_tab.check_target()
-        super(BuildToolUI, self).changeEvent(event)
+        # QDialog directly: a window left open through a reinstall is an
+        # instance of the old class (see publishTool_ui's changeEvent).
+        QtWidgets.QDialog.changeEvent(self, event)
 
 
 # ---------------------------------------------------------------------------
