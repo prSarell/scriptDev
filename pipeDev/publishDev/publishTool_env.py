@@ -311,6 +311,7 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                 made.append(cmds.ls(group, uuid=True)[0])
                 group = cmds.ls(group, long=True)[0]
                 holders, copies = {}, {}
+                twins = []      # (original, copy) for api._CopiesDriveShaders
                 for role, _ in ROLE_SETS:
                     holders[role] = cmds.ls(_plain_group(role, group), long=True)[0]
                     copies[role] = []
@@ -324,6 +325,7 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                         # World space kept: parent keeps the world placement.
                         copy = cmds.parent(copy, holders[role])[0]
                         copies[role].append(cmds.ls(cmds.ls(copy, long=True)[0], uuid=True)[0])
+                        twins.append((uuid, copies[role][-1]))
                 # Landscape: cleaned up like a model; the geometry stays put.
                 land = cmds.ls(copies[LANDSCAPE], long=True)
                 if land:
@@ -389,7 +391,7 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                     api.finish_pipe_group(group)
                     cmds.select(group, replace=True)
                     cmds.select(cmds.ls(made[1:]), add=True, noExpand=True)
-                    with api._WithoutUnknownData():
+                    with api._CopiesDriveShaders(twins), api._WithoutUnknownData():
                         cmds.file(plan["dest"], exportSelected=True, type=file_type,
                                   constructionHistory=True, channels=True, constraints=True,
                                   expressions=True, shader=True, preserveReferences=True,

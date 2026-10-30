@@ -666,6 +666,53 @@ class _WithoutUnknownData(_LeftOutForExport):
         super(_WithoutUnknownData, self).__init__(unknown_nodes)
 
 
+# Texture placements that sit in the hierarchy (DAG nodes) and drive shaders.
+PLACEMENT_TYPES = ("place3dTexture",)
+
+
+class _CopiesDriveShaders(object):
+    """Model and environment publishes export copies, but the copies share
+    the originals' shaders, and those stay connected to the ORIGINAL
+    placement nodes (a place3dTexture under the ground). Exporting the
+    shader then takes the original along, with its parents: fieldA's
+    environment|pipeTmp_landscape|snowLand_snowPlace landed outside the
+    pipe group (user, 2026-10-30). While inside, each copied placement
+    drives what its original drove; on the way out the originals are
+    connected back, so the working scene ends exactly as it was.
+    pairs: [(original root uuid, copy root uuid)]."""
+
+    def __init__(self, pairs):
+        self.pairs = pairs
+        self.swapped = []       # (original plug, copy plug, destination plug)
+
+    def __enter__(self):
+        for orig_uuid, copy_uuid in self.pairs:
+            orig, copy = cmds.ls(orig_uuid, long=True), cmds.ls(copy_uuid, long=True)
+            if not (orig and copy):
+                continue
+            orig, copy = orig[0], copy[0]
+            for node in cmds.listRelatives(orig, allDescendents=True, fullPath=True,
+                                           type=PLACEMENT_TYPES) or []:
+                twin = copy + node[len(orig):]
+                if not cmds.objExists(twin):
+                    continue        # left out of the copy (hidden, empty)
+                links = cmds.listConnections(node, source=False, destination=True,
+                                             plugs=True, connections=True) or []
+                for src, dst in zip(links[::2], links[1::2]):
+                    if dst.split(".")[0].startswith(copy + "|"):
+                        continue
+                    attr = src.split(".", 1)[1]
+                    cmds.connectAttr("%s.%s" % (twin, attr), dst, force=True)
+                    self.swapped.append((src, "%s.%s" % (twin, attr), dst))
+        return self
+
+    def __exit__(self, *exc):
+        for src, _, dst in reversed(self.swapped):
+            if cmds.objExists(src.split(".")[0]) and cmds.objExists(dst.split(".")[0]):
+                cmds.connectAttr(src, dst, force=True)
+        return False
+
+
 def copy_to_h_drive(scene_path, plan):
     """Copy the saved scene file to plan['dest'] and make it read-only."""
     if not os.path.isfile(scene_path):
@@ -1549,7 +1596,7 @@ def _export_model(objects, plan, info):
                 roots = [u for u in roots if cmds.ls(u, long=True)[0] not in hidden_roots]
                 left_out = [r.split("|")[-1] for r in hidden_roots]
                 hidden = dict((u, hidden_inside(cmds.ls(u, long=True)[0])) for u in roots)
-                copies = []
+                copies, twins = [], []      # twins: (original, copy) for _CopiesDriveShaders
                 for uuid in roots:
                     root = cmds.ls(uuid, long=True)[0]
                     short = root.split("|")[-1]
@@ -1566,6 +1613,7 @@ def _export_model(objects, plan, info):
                             cmds.delete(copy + suffix)
                             left_out.append(suffix.split("|")[-1])
                     copies.append(cmds.ls(copy, uuid=True)[0])
+                    twins.append((uuid, copies[-1]))
                 empties = _remove_empty_groups(cmds.ls(copies, long=True))
                 copies = [u for u in copies if cmds.ls(u)]
                 if not copies:
@@ -1600,21 +1648,23 @@ def _export_model(objects, plan, info):
                 # caches"): the copies share the originals' shaders, so only
                 # what's assigned inside the group counts.
                 import publishTool_look as look
-                looks = look.export_look(plan, [cmds.ls(group, long=True)[0]])
-                _stamp(group, info + ([("look", os.path.basename(looks[0]))] if looks else []))
-                finish_pipe_group(group)
-                cmds.select(group, replace=True)
-                # Unknown plug-in data (old editor bookmarks, Redshift...)
-                # never belongs to a model and stops a .ma being written.
-                try:
-                    with _WithoutUnknownData() as unknown:
-                        cmds.file(plan["dest"], exportSelected=True, type=file_type,
-                                  constructionHistory=True, channels=True, constraints=True,
-                                  expressions=True, shader=True, preserveReferences=True,
-                                  force=True)
-                except Exception:
-                    look.remove(looks)      # no publish: no look left behind
-                    raise
+                with _CopiesDriveShaders(twins):
+                    looks = look.export_look(plan, [cmds.ls(group, long=True)[0]])
+                    _stamp(group, info + ([("look", os.path.basename(looks[0]))]
+                                          if looks else []))
+                    finish_pipe_group(group)
+                    cmds.select(group, replace=True)
+                    # Unknown plug-in data (old editor bookmarks, Redshift...)
+                    # never belongs to a model and stops a .ma being written.
+                    try:
+                        with _WithoutUnknownData() as unknown:
+                            cmds.file(plan["dest"], exportSelected=True, type=file_type,
+                                      constructionHistory=True, channels=True,
+                                      constraints=True, expressions=True, shader=True,
+                                      preserveReferences=True, force=True)
+                    except Exception:
+                        look.remove(looks)      # no publish: no look left behind
+                        raise
                 plan["left_out"]["unknown"] = len(unknown.removed)
                 plan["left_out"]["requires"] = drop_unknown_requires(plan["dest"])
             finally:

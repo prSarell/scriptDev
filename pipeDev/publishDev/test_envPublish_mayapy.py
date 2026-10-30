@@ -67,6 +67,18 @@ def layout_scene(pieces_moved=False):
     ground = cmds.polyPlane(name="ground")[0]
     cmds.parent(ground, land)
     cmds.setAttr(ground + ".translate", 0, -169, -41792); cmds.setAttr(ground + ".scale", 800, 800, 800)
+    # A projected texture whose placement sits under the ground, like
+    # fieldA's snowLand_snowPlace (2026-10-30: the original came out with
+    # its parents, outside the pipe group).
+    place = cmds.parent(cmds.shadingNode("place3dTexture", asUtility=True,
+                                         name="snowLand_snowPlace"), ground)[0]
+    proj = cmds.shadingNode("projection", asTexture=True, name="snowProj")
+    cmds.connectAttr(place + ".worldInverseMatrix[0]", proj + ".placementMatrix")
+    mat = cmds.shadingNode("lambert", asShader=True, name="snowMat")
+    cmds.connectAttr(proj + ".outColor", mat + ".color")
+    sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="snowMatSG")
+    cmds.connectAttr(mat + ".outColor", sg + ".surfaceShader")
+    cmds.sets(ground, edit=True, forceElement=sg)
     buildings = cmds.group(empty=True, name="buildings", parent=top)
     shed = cmds.group(empty=True, name="shed", parent=buildings)
     box = cmds.polyCube(name="pCube1")[0]
@@ -120,6 +132,9 @@ before = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environmen
           cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
           sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
 plan = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+check("working scene: the projection still placed by the original snowLand_snowPlace",
+      cmds.listConnections("snowProj.placementMatrix")
+      == ["snowLand_snowPlace"] and cmds.ls("environment|landscape|ground|snowLand_snowPlace"))
 after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|buildings|shed.translate"),
          cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
          sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
@@ -144,6 +159,14 @@ check("top is the stamped pipe group (Modeling), locked", cmds.nodeType(G) == "d
       and cmds.getAttr(G + ".pipe_department") == "model" and cmds.getAttr(G + ".tx", lock=True))
 check("laid out by role", sorted(cmds.listRelatives(G, children=True)) ==
       ["buildings", "landscape", "locators", "sky"])
+check("nothing outside the pipe group (no original environment came along)",
+      [a for a in cmds.ls(assemblies=True) if a not in ("persp", "top", "front", "side")]
+      == [G] and not cmds.ls("pipeTmp_*", recursive=True))
+place = cmds.ls("snowLand_snowPlace", long=True)
+check("one texture placement, inside the pipe group, driving the projection",
+      len(place) == 1 and place[0].startswith("|" + G + "|landscape|ground|")
+      and cmds.listConnections("snowProj.placementMatrix", fullNodeName=True)
+      and cmds.ls(cmds.listConnections("snowProj.placementMatrix")[0], long=True) == place)
 g = G + "|landscape|ground"
 bb = cmds.exactWorldBoundingBox(g)
 check("landscape frozen and history gone, but still where it was",
