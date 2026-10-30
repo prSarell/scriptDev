@@ -1662,8 +1662,15 @@ def _export_model(objects, plan, info):
                                       constructionHistory=True, channels=True,
                                       constraints=True, expressions=True, shader=True,
                                       preserveReferences=True, force=True)
+                        # ABC / USD / FBX / OBJ for other software, from the
+                        # same copy (publishTool_outputs).
+                        import publishTool_outputs as outputs
+                        outputs.write(plan, [cmds.ls(group, long=True)[0]])
                     except Exception:
                         look.remove(looks)      # no publish: no look left behind
+                        if os.path.exists(plan["dest"]):
+                            os.chmod(plan["dest"], stat.S_IWRITE | stat.S_IREAD)
+                            os.remove(plan["dest"])
                         raise
                 plan["left_out"]["unknown"] = len(unknown.removed)
                 plan["left_out"]["requires"] = drop_unknown_requires(plan["dest"])
@@ -2116,12 +2123,14 @@ def find_rv():
 
 
 def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
-            objects=None, target=None, review=None):
+            objects=None, target=None, review=None, outputs=None):
     """Playblast -> watch the movie -> H drive -> ShotGrid Version on the Asset.
 
     objects: publish only these (exported); empty/None = the whole scene
     file. target: (asset_type, asset) to publish to a different asset than
-    the scene's own folder. review: see review_before_publish.
+    the scene's own folder. review: see review_before_publish. outputs:
+    formats for other software (publishTool_outputs.FORMAT_KEYS), Modeling
+    publishes only (environments included).
 
     Anything that can fail cleanly (ShotGrid lookup, playblast) happens
     before the H-drive write. Returns the plan dict plus 'sg_asset',
@@ -2145,6 +2154,10 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     else:
         plan = plan_publish(scene_path, h_root, scratch_root, code, target=target)
     plan["objects"] = list(objects or [])
+    import publishTool_outputs as out
+    plan["outputs"] = [k for k in (outputs or []) if k in out.FORMAT_KEYS] \
+        if code in (MODEL_CODE, ENV_CODE) else []
+    out.check(plan["outputs"])      # an exporter that won't load stops it here
     face_fill = (None, [])
     textures, dna = [], []
     if code == MODEL_CODE:
@@ -2234,6 +2247,18 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     if plan.get("look"):
         note += "\nLook (for animation caches): %d shading group(s), %s" % (
             plan["look"]["shading_groups"], os.path.basename(plan["look"]["file"]))
+    if plan.get("outputs_written"):
+        note += "\nFor other software: %s, in %s" % (
+            ", ".join(os.path.basename(p) for p in plan["outputs_written"]),
+            out.folder_of(plan["dest"]))
+    if code in (MODEL_CODE, ENV_CODE):
+        # The asset remembers its formats for next time (user, 2026-10-30).
+        try:
+            out.remember(h_root, plan["film"], plan["asset_type"], plan["asset"],
+                         plan["outputs"])
+        except Exception as e:
+            plan.setdefault("warnings", []).append(
+                "Couldn't save this asset's output formats for next time: %s" % e)
     if notes.strip():
         # The student's own words first, the file details underneath.
         note = notes.strip() + "\n\n---\n" + note

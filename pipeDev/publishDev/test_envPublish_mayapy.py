@@ -272,6 +272,25 @@ check("... the published landscape-only layout passes the check again",
 scene = layout_scene()
 cmds.sets(clear="landscape_SET"); cmds.sets(clear="building_SET"); cmds.sets(clear="sky_SET")
 check("all three empty: refused", refused("nothing to publish"))
+
+# -- Output files for other software (2026-10-30): an environment is a
+#    Modeling publish, so it can tick them too ---------------------------------
+import publishTool_outputs as outputs
+scene = layout_scene()
+plan4 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2,
+                    outputs=["fbx", "usd"])
+folder = outputs.folder_of(plan4["dest"])
+stem = os.path.splitext(os.path.basename(plan4["dest"]))[0]
+check("environment + FBX/USD ticked: both in its exports folder, its .abc cache still beside",
+      os.path.isfile(os.path.join(folder, stem + ".fbx"))
+      and os.path.isfile(os.path.join(folder, stem + ".usdz"))
+      and os.path.isfile(env.cache_path(plan4)))
+check("the asset remembers FBX and USD",
+      outputs.remembered(H, FILM, "environment", "scoutsHouseLandscape") == ["usd", "fbx"])
+cmds.file(new=True, force=True); cmds.file(plan4["dest"], open=True, force=True)
+check("... and the published .ma is still clean (nothing outside the group)",
+      [a for a in cmds.ls(assemblies=True) if a not in ("persp", "top", "front", "side")]
+      == ["scoutsHouseLandscape_model_GRP"])
 print("%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, files in os.walk(base):
     for f in files:

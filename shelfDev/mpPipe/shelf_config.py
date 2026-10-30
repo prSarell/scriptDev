@@ -12,7 +12,7 @@ SHELF_NAME = "mpPipe"
 # (2026-10-22: a shed environment publish failed that way).
 RELOAD_ORDER = (
     "rig_rules", "pipeStudioLibrary", "pipePicker",
-    "publishTool_api", "publishTool_textures", "publishTool_env",
+    "publishTool_api", "publishTool_textures", "publishTool_outputs", "publishTool_env",
     "publishTool_camera", "publishTool_anim",
     "pipeEnv", "buildTool_api", "projectTool_api",
     "publishTool_ui", "buildTool_ui", "projectTool_ui",

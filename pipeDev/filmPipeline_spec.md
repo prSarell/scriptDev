@@ -2814,6 +2814,18 @@ The tools are developed side by side:
       software specific except for Unreal or Houdini (which requires a
       scale consideration). So the check boxes might look like Alembic FBX
       Obj Unreal Houdini for example."
+      - **BUILT 2026-10-30 for Modeling publishes** (any modelled asset,
+        environments included; user: "any modeled asset", "always
+        remembers", "yes textures"): tick-box columns **ABC, USD, FBX, OBJ**
+        after "Publishes as" in the publish list (the user's sketch), on every
+        Modeling publish, not only Final. Made from the published copy into
+        `<published name>_exports\` beside the `.ma`, carrying textures: FBX
+        embedded, USD as `.usdz` (UsdPreviewSurface, textures packed), OBJ
+        with a `textures\` copy (OBJ only carries Lambert/Blinn/Phong), ABC
+        geometry only. Each asset remembers its ticks on H
+        (`<asset>\data\publish\outputs.json`). A failed export fails the
+        publish. `publishDev/publishTool_outputs.py`, test
+        `test_outputs_mayapy.py`. Unreal/Houdini presets below still OPEN.
       - Generic formats: **Alembic**, **FBX** (e.g. for Blender), **OBJ**.
       - Presets: **Unreal** (an FBX with Unreal's axis set-up) and
         **Houdini** (exports with Houdini's scale).

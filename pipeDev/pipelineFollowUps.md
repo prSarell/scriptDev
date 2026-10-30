@@ -91,6 +91,12 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the department lists: Build SEQ010_140 as Animation, switch
       Build into to Layout (a different list), back to Animation (yours
       again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
+- [ ] **Output formats** (built 2026-10-30, spec "Students choose what a
+      final publish makes"): publish a textured model with ABC, USD, FBX,
+      OBJ ticked; check `<published name>_exports\` beside the `.ma`; open
+      the FBX and USDZ in Blender/Unreal and check the textures show; publish
+      the asset again and check the ticks came back. Next: the Unreal and
+      Houdini presets (axis / scale), as settings.
 - [ ] **Republish fieldA** (2026-10-30) with the new Publish: Asset →
       Modeling → environment → fieldA. Check H gets
       `fieldA_<login>_model_v001.ma` (not `_env_`) and Build in SEQ010_160

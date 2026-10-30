@@ -400,6 +400,11 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                     roots = [holders[r] for r in (LANDSCAPE, BUILDINGS) if copies[r]]
                     if roots:
                         write_cache(roots, cache_path(plan))
+                    # ABC / USD / FBX / OBJ for other software, from the same
+                    # copy (publishTool_outputs).
+                    import publishTool_outputs as outputs
+                    with api._CopiesDriveShaders(twins):
+                        outputs.write(plan, [group])
                 plan["environment"] = dict(
                     (role, [cmds.ls(u)[0].split("|")[-1] for u in copies[role]])
                     for role, _ in ROLE_SETS)

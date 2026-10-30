@@ -37,6 +37,7 @@ import publishTool_api as api
 import publishTool_camera as cam
 import publishTool_anim as anim
 import publishTool_env as env
+import publishTool_outputs as outputs
 import pipeStudioLibrary as slib
 import pipePicker as picker
 
@@ -211,6 +212,26 @@ def _cell(text, colour=None):
     return item
 
 
+# The publish list's columns: ..., Publishes as, then a tick per format for
+# other software (user, 2026-10-30), Modeling rows only.
+OUTPUT_COLUMN = 5
+
+
+def _output_cell(row, key):
+    """A format's tick for a Modeling row (environments included), else -."""
+    if row["code"] not in (api.MODEL_CODE, env.ENV_CODE):
+        item = _cell("-", "#666666")
+        item.setFlags(QtCore.Qt.ItemIsEnabled)      # nothing to tick
+        return item
+    item = QtWidgets.QTableWidgetItem("")
+    item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsUserCheckable)
+    item.setCheckState(QtCore.Qt.Checked if key in row.get("outputs", [])
+                       else QtCore.Qt.Unchecked)
+    item.setToolTip("Also publish %s, for other software. This asset remembers it."
+                    % outputs.LABELS[key])
+    return item
+
+
 def _check_cell(text, checked):
     """A row's first cell: its name with the tick that says it's published."""
     item = _cell(text)
@@ -276,9 +297,10 @@ class PublishToolUI(QtWidgets.QDialog):
         self.picker.remove_clicked.connect(self._remove_rows)
 
         # The publish list. Only ticked rows are published.
-        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table = QtWidgets.QTableWidget(0, OUTPUT_COLUMN + len(outputs.FORMATS))
         self.table.setHorizontalHeaderLabels(
-            ["Asset / Shot", "Type", "Department", "Objects", "Publishes as"])
+            ["Asset / Shot", "Type", "Department", "Objects", "Publishes as"]
+            + [label for label, _ in outputs.FORMATS])
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -532,6 +554,8 @@ class PublishToolUI(QtWidgets.QDialog):
                 except api.PublishError:
                     pass        # shown as "can't publish" in the last column
             self.table.setItem(r, 0, _check_cell(row["asset"], row["checked"]))
+            for i, key in enumerate(outputs.FORMAT_KEYS):
+                self.table.setItem(r, OUTPUT_COLUMN + i, _output_cell(row, key))
             self.table.setItem(r, 1, _cell(type_label))
             dept = DEPT_LABELS[row["code"]]
             if row["code"] == anim.ANIM_CODE:
@@ -582,10 +606,20 @@ class PublishToolUI(QtWidgets.QDialog):
         self.publish_btn.setEnabled(ticked and not problems and bool(ctx))
 
     def _on_item_changed(self, item):
-        """A row's tick: only ticked rows are published."""
-        if item.column() != 0 or item.row() >= len(self._rows):
+        """A row's tick: only ticked rows are published. A format's tick:
+        also publish that format."""
+        if item.row() >= len(self._rows):
             return
-        self._rows[item.row()]["checked"] = item.checkState() == QtCore.Qt.Checked
+        row = self._rows[item.row()]
+        if item.column() >= OUTPUT_COLUMN:
+            key = outputs.FORMAT_KEYS[item.column() - OUTPUT_COLUMN]
+            wanted = set(row.get("outputs", []))
+            (wanted.add if item.checkState() == QtCore.Qt.Checked else wanted.discard)(key)
+            row["outputs"] = [k for k in outputs.FORMAT_KEYS if k in wanted]
+            return
+        if item.column() != 0:
+            return
+        row["checked"] = item.checkState() == QtCore.Qt.Checked
         # Re-render after this signal: the item can't be replaced inside it.
         QtCore.QTimer.singleShot(0, self._render_table)
 
@@ -647,7 +681,8 @@ class PublishToolUI(QtWidgets.QDialog):
             return
         self._rows.append({"asset_type": env.ENV_TYPE, "asset": asset, "code": env.ENV_CODE,
                            "objects": [], "uuids": [], "type_label": env.ENV_TYPE,
-                           "checked": True})
+                           "checked": True,
+                           "outputs": self._remembered_outputs(env.ENV_TYPE, asset)})
         self._render_table()
         self.status.show_message("Added the environment, to %s." % asset)
 
@@ -790,11 +825,21 @@ class PublishToolUI(QtWidgets.QDialog):
         self._rows.append({"asset_type": group, "asset": name,
                            "code": code, "objects": list(selection),
                            "uuids": cmds.ls(selection, uuid=True) if selection else [],
-                           "checked": True})
+                           "checked": True,
+                           "outputs": self._remembered_outputs(group, name)
+                           if code in (api.MODEL_CODE, env.ENV_CODE) else []})
         self._render_table()
         self.status.show_message(
             "Added %s %s: %s" % (name, label,
                                  ", ".join(selection) if selection else "whole scene"))
+
+    def _remembered_outputs(self, asset_type, asset):
+        """The formats this asset was last published with (on the H drive)."""
+        h_root = self._roots()[0]
+        if not (h_root and os.path.isdir(h_root)):
+            return []
+        return outputs.remembered(api.resolve_root(h_root), self.picker.film(),
+                                  asset_type, asset)
 
     @staticmethod
     def _looks_like_environment():
@@ -1022,7 +1067,7 @@ class PublishToolUI(QtWidgets.QDialog):
                                            frame_count=frames, notes=notes,
                                            objects=row["objects"],
                                            target=(row["asset_type"], row["asset"]),
-                                           review=review)
+                                           review=review, outputs=row.get("outputs"))
                 except api.PublishCancelled:
                     lines.append("%s: cancelled after watching the movie, nothing published."
                                  % label)
