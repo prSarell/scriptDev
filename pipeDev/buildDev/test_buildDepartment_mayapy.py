@@ -61,7 +61,7 @@ check("outside the pipe -> None", d(os.path.join(base, "loose.ma")) is None)
 
 # --- what each department builds
 check("Lighting / FX coming soon", api.builds_for("lighting") == [] and api.builds_for("fx") == [])
-check("Modeling: models only", api.builds_for("model") == ["model"])
+check("Modeling: models and environments (to convert)", api.builds_for("model") == ["model", "env"])
 check("Animation: no lookDev", "lookDev" not in api.builds_for("anim")
       and "rig" in api.builds_for("anim") and "cam" in api.builds_for("anim"))
 
