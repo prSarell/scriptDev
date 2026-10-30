@@ -93,8 +93,13 @@ hand. One T7 session could cover most of it.
       untextured one. Check the textures land in
       `<asset>\sourceimages\e131988\<published name>\` on H, then Build the
       model into a shot on another drive and check they show.
-- [ ] Publish failure popup (2026-10-28): make a publish fail in Maya and
-      check the red PUBLISH FAILED window reads well on Maya's dark theme.
+- [x] Publish failure popup (2026-10-28): the red PUBLISH FAILED window
+      checked by hand 2026-10-30 (RV not signed in).
+- [ ] Publish popup additions (2026-10-30): with RV renamed or missing,
+      publish and check you get the amber "PUBLISHED, BUT CHECK THIS" window
+      for the movie warning. Unexpected (non-pipe) errors now end with
+      "send it to your teacher"; you'll only see that when something
+      genuinely breaks.
 - [ ] Model/rig/lookDev folders (2026-10-28, spec "Asset working folders"):
       run h_sync on the T7 to add them to existing assets; Set Project an
       asset and check scenes\model|rig|lookDev\e131988 are made; Save Here a

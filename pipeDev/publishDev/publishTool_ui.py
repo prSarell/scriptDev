@@ -152,31 +152,44 @@ class ReviewDialog(QtWidgets.QDialog):
         self.activateWindow()
 
 
+# Under a failure that isn't one of the pipe's own checks (a Maya or Python
+# error), which students can't act on (user, 2026-10-30).
+UNEXPECTED_ERROR_HINT = ("This isn't a problem the pipe knows about. Copy this message "
+                         "(you can select the text) and send it to your teacher.")
+
+
 class FailedDialog(QtWidgets.QDialog):
     """Big red popup when a publish fails, so it can't be missed in the
     status line (user, 2026-10-28). Styled after multiTool's Learn Me
     Something tip: bold centred heading, one button. The details are
-    selectable so they can be copied into a support message."""
+    selectable so they can be copied into a support message.
 
-    def __init__(self, failures, parent=None):
+    warnings: publishes that worked but need a look (no movie on ShotGrid,
+    user 2026-10-30). Only warnings = an amber "published, but" popup."""
+
+    def __init__(self, failures, parent=None, warnings=()):
         super(FailedDialog, self).__init__(parent)
-        self.setWindowTitle("Publish failed")
+        failed = bool(failures)
+        heading_text, colour, details_colour = (
+            ("PUBLISH FAILED", "#e05050", "#ff8a80") if failed else
+            ("PUBLISHED, BUT CHECK THIS", "#e0a030", "#ffd180"))
+        self.setWindowTitle("Publish failed" if failed else "Published, with a problem")
         self.setWindowFlags(QtCore.Qt.Dialog | QtCore.Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(420)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(14)
 
-        heading = QtWidgets.QLabel("PUBLISH FAILED")
+        heading = QtWidgets.QLabel(heading_text)
         font = QtGui.QFont()
         font.setPointSize(18)
         font.setBold(True)
         heading.setFont(font)
         heading.setAlignment(QtCore.Qt.AlignCenter)
-        heading.setStyleSheet("color: #e05050;")
+        heading.setStyleSheet("color: %s;" % colour)
         layout.addWidget(heading)
 
-        details = QtWidgets.QLabel("\n\n".join(failures))
+        details = QtWidgets.QLabel("\n\n".join(list(failures) + list(warnings)))
         details.setWordWrap(True)
         details.setTextInteractionFlags(
             QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard)
@@ -184,7 +197,7 @@ class FailedDialog(QtWidgets.QDialog):
         font.setPointSize(11)
         font.setBold(True)
         details.setFont(font)
-        details.setStyleSheet("color: #ff8a80;")
+        details.setStyleSheet("color: %s;" % details_colour)
         layout.addWidget(details)
 
         btn = QtWidgets.QPushButton("Got it!")
@@ -935,6 +948,7 @@ class PublishToolUI(QtWidgets.QDialog):
         notes = self.notes_edit.toPlainText().strip()
         lines, ok, published, cancelled = [], True, False, False
         failures = []   # for the FailedDialog
+        warnings = []   # published, but needs a look (FailedDialog, amber)
         _, ctx = self._scene_context()
         in_shot = bool(ctx) and ctx["kind"] == "shot"
         # Only the ticked rows. All the Animation items for one stage go out
@@ -1003,7 +1017,9 @@ class PublishToolUI(QtWidgets.QDialog):
                     continue
                 except Exception as e:
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
-                    failures.append("%s — nothing published:\n%s" % (label, e))
+                    failures.append("%s — nothing published:\n%s" % (label, e)
+                                    + ("" if isinstance(e, api.PublishError) else
+                                       "\n\n" + UNEXPECTED_ERROR_HINT))
                     ok = False
                     continue
                 published = True
@@ -1024,6 +1040,8 @@ class PublishToolUI(QtWidgets.QDialog):
                     lines.append("  " + warning)
                 if plan["movie_warning"]:
                     lines.append("  " + plan["movie_warning"])
+                    warnings.append("%s — %s is published, but:\n%s"
+                                    % (label, version, plan["movie_warning"]))
                     ok = False
             if published:
                 line = self._back_up_studio_library(scene)
@@ -1037,8 +1055,8 @@ class PublishToolUI(QtWidgets.QDialog):
             self.notes_edit.clear()
         self._render_table()
         self.status.show_message("\n".join(lines), ok=ok)
-        if failures:
-            FailedDialog(failures, parent=self).exec()
+        if failures or warnings:
+            FailedDialog(failures, parent=self, warnings=warnings).exec()
 
     def _review(self, label):
         """The publish's review step: watch the movie in RV, then Publish or
