@@ -73,9 +73,10 @@ p = w.picker
 model = p.dept_combo.model()
 check("Environment isn't an asset department",
       "env" not in [model.item(i).data(ui.QtCore.Qt.UserRole) for i in range(model.rowCount())])
-check("environment asset + environment_SET: an Environment row, nothing asked",
+check("environment asset + environment_SET: an environment publish, nothing asked",
       codes == ["env"] and not asked)
-check("... the list says Environment", w.table.item(0, 2).text() == "Environment")
+check("... the list says Modeling (an environment's publish is its Modeling)",
+      w.table.item(0, 2).text() == "Modeling")
 scene_with(False)
 w, codes = add_as_model()
 check("environment asset, no environment_SET: a Modeling row", not asked and codes == ["model"])
@@ -83,16 +84,17 @@ scene_with(True, prop_rel, "crate_001.ma")
 w, codes = add_as_model("prop", "crate")
 check("a prop with an environment_SET: still Modeling", not asked and codes == ["model"])
 
-# A shot's layout scene: Environment is picked on the Shot side, beside Layout.
+# A shot's layout scene publishes its environment: Modeling, Asset,
+# environment, the asset (user, 2026-10-30: Environment isn't a department).
 shot_rel = ["NWF_SHF", "maya", "sequences", "SEQ010", "SEQ010_140"]
 os.makedirs(os.path.join(H, *shot_rel, "scenes"))
 os.makedirs(os.path.join(SC, *shot_rel, "scenes"))
 scene_with(True, shot_rel, "layout_001.ma")
 w = ui.PublishToolUI(PARENT)
 w.refresh()
-w.picker.set_current(code="env")
-check("shot scene: Environment lists the environment assets",
-      w.picker.kind() == "shot" and (w.picker.group(), w.picker.name()) == ("environment", "shed"))
+w.picker.set_current(code="model", group="environment", name="shed", kind="asset")
+check("shot scene: Modeling, Asset, environment lists the environment assets",
+      w.picker.kind() == "asset" and (w.picker.group(), w.picker.name()) == ("environment", "shed"))
 w._add_row()
 check("... and + adds the environment row to that asset",
       [(r["code"], r["asset"]) for r in w._rows] == [("env", "shed")])
@@ -102,7 +104,7 @@ os.makedirs(os.path.join(H, "NWF_SHF", "maya", "assets", "environment", "fieldA"
 w.refresh()
 names = [w.picker.name_combo.itemData(i) for i in range(w.picker.name_combo.count())]
 check("new environment asset on H appears without reopening the window",
-      "fieldA" in names and w.picker.name() == "shed" and w.picker.department() == "env")
+      "fieldA" in names and w.picker.name() == "shed" and w.picker.department() == "model")
 
 # A scene saved outside the pipe, publishing to an asset that's on H but not
 # yet on scratch (fieldA, 2026-10-26): + offers to make the asset on scratch
@@ -164,7 +166,7 @@ check("fieldB made on scratch like Set Project (workspace.mel, sourceimages, sce
 check("scene saved there as fieldB_001.ma, the old file left as it was",
       os.path.normcase(cmds.file(query=True, sceneName=True)) == os.path.normcase(dest.replace("\\", "/"))
       and os.path.isfile(dest) and os.path.getmtime(outside) == saved_before)
-check("... and added as an Environment row for fieldB (it has an environment_SET)",
+check("... and added as an environment publish for fieldB (it has an environment_SET)",
       [(r["code"], r["asset"]) for r in w._rows] == [("env", "fieldB")])
 # "-" with nothing highlighted (2026-10-26: ATKS stayed in the list).
 w.table.clearSelection()
@@ -172,7 +174,7 @@ w.picker.set_current(code="model", group="environment", name="fieldA")
 w._remove_rows()
 check("- with nothing highlighted and another asset picked: row kept, status says why",
       len(w._rows) == 1 and "Highlight the rows" in w.status._text)
-w.picker.set_current(code="env", group="environment", name="fieldB")
+w.picker.set_current(code="model", group="environment", name="fieldB")
 w._remove_rows()
 check("- with nothing highlighted: takes off the row the picker shows", not w._rows)
 w.picker.set_current(code="model", group="environment", name="fieldB")

@@ -60,27 +60,30 @@ check("shot scene: picker starts on Animation for this shot",
 def dept_list():
     model = p.dept_combo.model()
     return [(model.item(i).text(), model.item(i).isEnabled()) for i in range(model.rowCount())]
-check("Shot: Department lists Layout/Environment/Animation, Lighting/FX coming soon",
-      dept_list() == [("Layout", True), ("Environment", True), ("Animation", True),
-                      ("Lighting (coming soon)", False), ("FX (coming soon)", False)])
-p.set_current(code="env")
-check("Environment (Shot side) lists environment assets",
-      p.kind() == "shot" and p.group_combo.toolTip() == "Asset type"
-      and p.name_combo.toolTip() == "Asset")
+# The pipe's department list, LOCKED (user, 2026-10-30), whatever Asset or
+# Shot says. No Environment; FX and Lighting can't publish yet.
+LOCKED = [("Modeling", True), ("Rigging", True), ("Creature", True), ("LookDev", True),
+          ("Layout", True), ("Animation", True), ("FX (coming soon)", False),
+          ("Lighting (coming soon)", False)]
+check("Shot: Department is the locked list", dept_list() == LOCKED)
 p.kind_combo.setCurrentIndex(p.kind_combo.findData("asset"))
-check("picking Asset lists the asset departments (no Environment)",
-      dept_list() == [("Modeling", True), ("Rigging", True),
-                      ("Creature", True), ("LookDev", True)] and p.department() == "model")
+check("picking Asset: the same list, Animation kept",
+      dept_list() == LOCKED and p.department() == "anim"
+      and p.group_combo.toolTip() == "Asset type" and p.name_combo.toolTip() == "Asset")
+w._add_row()
+check("Animation with Asset picked: + says pick Shot", not w._rows
+      and "pick Shot" in w.status._text)
 p.kind_combo.setCurrentIndex(p.kind_combo.findData("shot"))
-check("back to Shot: first live shot department", p.department() == "layout")
 p.set_current(code="model")
-check("an asset department switches the picker to Asset", p.kind() == "asset"
-      and p.kind_combo.currentText() == "Asset" and p.name_combo.toolTip() == "Asset")
 cmds.select("ball", replace=True)
 w._add_row()
-check("... and + refuses it in a shot scene", not w._rows
+check("Modeling with Shot picked: + says pick Asset", not w._rows
+      and "pick Asset" in w.status._text)
+p.set_current(code="model", group="prop", kind="asset")
+w._add_row()
+check("a prop's Modeling in a shot scene is refused", not w._rows
       and "published from an asset's scene" in w.status._text)
-p.set_current(code=anim.ANIM_CODE, group="EAP_010", name="EAP_010_010")
+p.set_current(code=anim.ANIM_CODE, group="EAP_010", name="EAP_010_010", kind="shot")
 
 # One click, a mixed selection (geo inside the backpack, the ball, the camera).
 cmds.select(["backpack:backPack_geo", "ball", "camera1"], replace=True)
@@ -147,12 +150,12 @@ w.refresh()
 check("asset scene: picker on Rigging (from the file name), prop, backpack",
       (p.department(), p.kind(), p.group(), p.name()) == ("rig", "asset", "prop", "backpack")
       and w.objects_btn.isVisibleTo(w))
-p.set_current(code=anim.ANIM_CODE)
+p.set_current(code=anim.ANIM_CODE, group="EAP_010", name="EAP_010_010", kind="shot")
 w._rows[:] = []
 w._add_row()
 check("a shot department from an asset scene is refused", not w._rows
       and "open one of its scenes first" in w.status._text)
-p.set_current(code="model", group="prop", name="backpack")
+p.set_current(code="model", group="prop", name="backpack", kind="asset")
 cmds.polyCube(name="box")
 cmds.select("box", replace=True)
 w._add_row()

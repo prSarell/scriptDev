@@ -41,26 +41,24 @@ import pipeStudioLibrary as slib
 import pipePicker as picker
 
 
-# Departments that publish from an asset scene. Environment isn't one of
-# them (user, 2026-10-26: it's a kind of asset, not a department): from an
-# asset scene, an environment asset with an environment_SET publishes as an
-# environment by itself; from a shot scene it's picked beside Layout.
+# Departments that publish from an asset scene. Environment isn't one (user,
+# 2026-10-30: not a department): an environment asset with an
+# environment_SET publishes as its Modeling, from its own scene or from a
+# shot's layout scene (Modeling, then the environment asset).
 LIVE_DEPARTMENTS = ("model", "rig", "creature", "lookDev")
 # What a shot scene can publish: its camera (spec §3i "Cameras") and its
 # animation (spec §4 "Shot (animation) publish v0").
 SHOT_DEPARTMENTS = [(cam.CAM_LABEL, cam.CAM_CODE), (anim.ANIM_LABEL, anim.ANIM_CODE)]
 DEPT_LABELS = dict((c, l) for l, c in api.DEPARTMENTS + SHOT_DEPARTMENTS)
-# The picker's Department dropdown (user, 2026-10-22): the asset
-# departments, then the stages a shot publishes for (Layout / Animation;
-# Lighting and FX later), which set the approval needed and where things go.
-# Environment sits after Layout: a shot's layout scene publishes its
-# environment_SET to the environment asset picked in the last two dropdowns.
-PICKER_DEPARTMENTS = (
-    [(label, code, picker.ASSET, True) for label, code in api.DEPARTMENTS
-     if code in LIVE_DEPARTMENTS] +
-    [(label, code, picker.SHOT, live) for label, code, live in anim.PUBLISH_FOR])
-PICKER_DEPARTMENTS.insert(len(LIVE_DEPARTMENTS) + 1,
-                          (env.ENV_LABEL, env.ENV_CODE, picker.SHOT, True, picker.ASSET))
+DEPT_LABELS[env.ENV_CODE] = env.ENV_LABEL       # an environment row is Modeling
+# Shot departments: they publish a shot (Layout, Animation; FX and Lighting
+# later), which sets the approval needed and where things go.
+SHOT_PUBLISH = dict((code, live) for _, code, live in anim.PUBLISH_FOR)
+# The picker's Department dropdown: the pipe's department list, exactly,
+# whatever Asset or Shot says (LOCKED, user 2026-10-30, api.DEPARTMENTS).
+# FX and Lighting can't publish yet: listed, greyed out.
+PICKER_DEPARTMENTS = [(label, code, picker.ANY, SHOT_PUBLISH.get(code, True))
+                      for label, code in api.DEPARTMENTS]
 # ShotSub frames for an environment published from a shot scene.
 ENV_SHOT_FRAMES = 2
 
@@ -420,18 +418,19 @@ class PublishToolUI(QtWidgets.QDialog):
             self.picker.set_films(films, film)
             if ctx and ctx["kind"] == "shot":
                 self.picker.set_current(code=anim.ANIM_CODE, group=ctx["seq"],
-                                        name=ctx["shot"])
+                                        name=ctx["shot"], kind=picker.SHOT)
             elif place:
                 self.picker.set_current(
                     code=anim.ANIM_CODE if place["kind"] == "shot" else LIVE_DEPARTMENTS[0],
-                    group=place["group"], name=place["name"])
+                    group=place["group"], name=place["name"], kind=place["kind"])
             elif ctx:
                 # Start on the department the file name says (scout_rig_v002
                 # -> Rigging), so a rig isn't published as a model by default.
                 words = re.split(r"[_.]", os.path.basename(scene).lower())
                 code = next((c for c in LIVE_DEPARTMENTS if c.lower() in words),
                             LIVE_DEPARTMENTS[0])
-                self.picker.set_current(code=code, group=ctx["asset_type"], name=ctx["asset"])
+                self.picker.set_current(code=code, group=ctx["asset_type"], name=ctx["asset"],
+                                        kind=picker.ASSET)
             self._set_frame_defaults(ctx)
             self._set_shot_mode(bool(ctx) and ctx["kind"] == "shot")
         else:
@@ -455,8 +454,6 @@ class PublishToolUI(QtWidgets.QDialog):
                 shots.append((ctx["seq"], ctx["shot"]))
             return shots
         assets = api.list_h_assets(h_root, film)
-        if code == env.ENV_CODE:
-            assets = [a for a in assets if a[0] == env.ENV_TYPE]
         return assets
 
     def _set_shot_mode(self, shot):
@@ -663,7 +660,7 @@ class PublishToolUI(QtWidgets.QDialog):
         nowhere to save it and publish from). True once it's saved there."""
         film, code = self.picker.film(), self.picker.department()
         group, name = self.picker.group(), self.picker.name()
-        if (self.picker.kind() == picker.SHOT and code != env.ENV_CODE) or not (film and name):
+        if self.picker.kind() == picker.SHOT or code in SHOT_PUBLISH or not (film and name):
             self.status.show_message("Save your scene in an asset's or a shot's scenes "
                                      "folder first, or pick the asset to publish to.", ok=False)
             return False
@@ -734,11 +731,25 @@ class PublishToolUI(QtWidgets.QDialog):
         code, label = self.picker.department(), self.picker.dept_combo.currentText()
         group, name = self.picker.group(), self.picker.name()
         in_shot = ctx["kind"] == "shot"
-        shot_dept = self.picker.kind() == picker.SHOT and code != env.ENV_CODE
-        if in_shot and not shot_dept and code != env.ENV_CODE:
+        shot_dept = code in SHOT_PUBLISH
+        # The department list is the same on both sides (locked): Asset or
+        # Shot has to match what the department publishes.
+        if shot_dept and self.picker.kind() != picker.SHOT:
+            self.status.show_message("%s publishes a shot: pick Shot, then the shot."
+                                     % label, ok=False)
+            return
+        if not shot_dept and self.picker.kind() != picker.ASSET:
+            self.status.show_message("%s publishes an asset: pick Asset, then the asset."
+                                     % label, ok=False)
+            return
+        # A shot's layout scene can publish its environment: Modeling, an
+        # environment asset (spec §4c).
+        env_from_shot = in_shot and code == api.MODEL_CODE and group == env.ENV_TYPE
+        if in_shot and not shot_dept and not env_from_shot:
             self.status.show_message(
-                "%s is published from an asset's scene. A shot scene publishes Layout, "
-                "Animation or its Environment." % label, ok=False)
+                "%s is published from an asset's scene. A shot scene publishes Layout or "
+                "Animation, or its environment as Modeling of an environment asset."
+                % label, ok=False)
             return
         if not name:
             self.status.show_message("There's nothing to pick for %s in %s yet."
@@ -756,7 +767,7 @@ class PublishToolUI(QtWidgets.QDialog):
             self.status.show_message("This scene is in %s, so it publishes to %s's assets."
                                      % (ctx["film"], ctx["film"]), ok=False)
             return
-        if in_shot:
+        if env_from_shot:
             return self._add_environment(name)
         if (code == api.MODEL_CODE and group == env.ENV_TYPE
                 and self._looks_like_environment()):
@@ -764,7 +775,7 @@ class PublishToolUI(QtWidgets.QDialog):
             # publish (user, 2026-10-26; 2026-10-23 a shed environment went
             # out as Modeling twice and left its image planes behind). No
             # environment_SET: a plain Modeling publish.
-            code, label = env.ENV_CODE, env.ENV_LABEL
+            code = env.ENV_CODE         # published as Modeling, by publishTool_env
         if any((r["asset_type"], r["asset"], r["code"]) == (group, name, code)
                for r in self._rows):
             self.status.show_message("%s %s is already in the list." % (name, label), ok=False)
@@ -881,8 +892,10 @@ class PublishToolUI(QtWidgets.QDialog):
         rows = self._selected_rows()
         if not rows:
             picked = (self.picker.group(), self.picker.name(), self.picker.department())
+            # An environment row is its asset's Modeling.
             rows = [i for i, r in enumerate(self._rows)
-                    if (r["asset_type"], r["asset"], r["code"]) == picked]
+                    if (r["asset_type"], r["asset"], api.MODEL_CODE
+                        if r["code"] == env.ENV_CODE else r["code"]) == picked]
         if not rows:
             self.status.show_message("Highlight the rows to take off the list, then press -.",
                                      ok=False)

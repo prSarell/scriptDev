@@ -11,7 +11,7 @@ the asset's top node (or anything inside it) and click:
        Build's old Import into Asset did; user, 2026-10-30: Build always
        references, Convert makes it editable). One already imported is
        used as it is.
-    2. the pipe group (<asset>_model_GRP / <asset>_env_GRP: stamp, lock,
+    2. the pipe group (<asset>_model_GRP: stamp, lock,
        pipe icon) is removed; what was inside it goes to the world root,
        exactly where it was
     3. the namespace comes off everything that came in with it
@@ -50,7 +50,15 @@ import buildTool_api as build
 
 DEPT_ATTR = api.PIPE_ATTR_PREFIX + "department"
 ASSET_ATTR = api.PIPE_ATTR_PREFIX + "asset"
-CONVERTS = {api.MODEL_CODE: "model", env.ENV_CODE: "environment"}
+# Modeling publishes; env is the stamp on environment publishes made before
+# 2026-10-30, when they became Modeling publishes.
+CONVERTS = {api.MODEL_CODE: "model", env.ENV_CODE: "model"}
+# An environment publish records its locators on the pipe group.
+LOCATORS_STAMP = api.PIPE_ATTR_PREFIX + "locators"
+
+
+def _is_environment(group):
+    return cmds.attributeQuery(LOCATORS_STAMP, node=group, exists=True)
 # Sets the publish looks up by name: never let Maya number these.
 NAMED_SETS = (env.ENVIRONMENT_SET,) + tuple(name for _, name in env.ROLE_SETS)
 
@@ -140,7 +148,7 @@ def check_group(group):
     clashes = []
     for child in _children(group):
         name = _bare(child)
-        if dept == env.ENV_CODE and name == env.LOCATOR_GROUP:
+        if _is_environment(group) and name == env.LOCATOR_GROUP:
             continue
         if cmds.ls("|" + name):
             clashes.append(name)
@@ -177,8 +185,9 @@ def convert(group):
 
     # Leftovers of the publish: its locators (an environment republish makes
     # new ones) and its locks.
+    environment = _is_environment(group)
     for child in _children(group):
-        if dept == env.ENV_CODE and _bare(child) == env.LOCATOR_GROUP:
+        if environment and _bare(child) == env.LOCATOR_GROUP:
             cmds.delete(child)
     inside = cmds.listRelatives(group, allDescendents=True, fullPath=True, type="transform") or []
     for node in inside:
@@ -214,7 +223,7 @@ def convert_selected(selection=None):
                         long=True) or []
     if not selection:
         raise ConvertError("Select the top node of the published model or environment "
-                           "(e.g. shed_env_GRP), then convert.")
+                           "(e.g. shed_model_GRP), then convert.")
     groups, outside = [], []
     for node in selection:
         group = pipe_group_of(node)
@@ -241,7 +250,7 @@ def run():
     except ConvertError as e:
         cmds.confirmDialog(title="Convert to Model", message=str(e), button=["OK"])
         return
-    lines = ["%s %s" % (asset, CONVERTS[dept]) for asset, dept, _, _ in done]
+    lines = [asset for asset, _, _, _ in done]
     cmds.inViewMessage(amg="Converted to a plain model: <hl>%s</hl>. Save it, work on it, "
                            "publish it." % ", ".join(lines), pos="midCenter", fade=True)
     print("Convert to Model: %s is a plain Maya model now (no pipe group, no namespace)."

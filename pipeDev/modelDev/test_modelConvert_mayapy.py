@@ -72,10 +72,10 @@ api.export_model_to_h_drive(["props_grp"], {
     "asset_type": "prop", "code": "model", "version": 4, "login": "scout",
     "sg_asset": {"id": 1577}}, asset_scene)
 
-# --- an environment publish as it lands (built by hand): shed_env_GRP >
+# --- an environment publish as it lands (built by hand): shed_model_GRP >
 # landscape / buildings > shed / sky (locked) / locators > shed_LOC, + sets
 cmds.file(new=True, force=True)
-group = api.make_pipe_group("shed_env_GRP")
+group = api.make_pipe_group("shed_model_GRP")
 land = cmds.group(empty=True, name="landscape", parent=group)
 cmds.parent(cmds.polyPlane(name="ground")[0], land)
 buildings = cmds.group(empty=True, name="buildings", parent=group)
@@ -92,7 +92,8 @@ role_sets = [cmds.sets(land, name="landscape_SET"), cmds.sets(buildings, name="b
              cmds.sets(sky, name="sky_SET")]
 env_set = cmds.sets(role_sets, name=env.ENVIRONMENT_SET)
 api._stamp(group, [("sgAssetId", 99), ("asset", "shed"), ("assetType", "environment"),
-                   ("department", "env"), ("version", 3), ("artistId", "e131988")])
+                   ("department", "model"), ("version", 3), ("artistId", "e131988"),
+                   ("locators", '["shed_LOC"]')])
 api.finish_pipe_group(group)
 env_dir = os.path.join(H, "assets", "environment", "shed", "scenes", "e131988")
 os.makedirs(env_dir)
@@ -120,16 +121,16 @@ cmds.delete(rig)
 # --- a referenced environment, as Build brings it in, next to a referenced model
 cmds.file(env_file, reference=True, namespace="shed_env")
 cmds.file(model, reference=True, namespace="backpack")
-shed_before = cmds.xform("shed_env:shed_env_GRP|shed_env:buildings|shed_env:shed",
+shed_before = cmds.xform("shed_env:shed_model_GRP|shed_env:buildings|shed_env:shed",
                          query=True, worldSpace=True, matrix=True)
-done = convert.convert_selected(["shed_env:shed_env_GRP|shed_env:buildings"])
+done = convert.convert_selected(["shed_env:shed_model_GRP|shed_env:buildings"])
 check("selecting something inside the group converts its asset",
-      [(a, d) for a, d, _, _ in done] == [("shed", "env")])
+      [(a, d) for a, d, _, _ in done] == [("shed", "model")])
 check("its history node clashing with the student's cube (polyCube1) was just numbered",
       [w for w, _ in done[0][3]] == ["polyCube1"] and cmds.ls("myOwnCube"))
 check("reference imported", not [r for r in cmds.ls(type="reference")
                                  if "shed_env" in r and "sharedReferenceNode" not in r])
-check("pipe group gone", not cmds.ls("*shed_env_GRP*", recursive=True))
+check("pipe group gone", not cmds.ls("*shed_model_GRP*", recursive=True))
 check("landscape, buildings, sky at the world root, no namespace",
       all(cmds.ls("|" + n) for n in ("landscape", "buildings", "sky")))
 check("no shed_env namespace left", not cmds.namespace(exists=":shed_env"))
@@ -161,7 +162,7 @@ open_new(asset_scene)
 cmds.file(env_file, reference=True, namespace="shed_env")
 cmds.sets(empty=True, name=env.ENVIRONMENT_SET)
 check("environment_SET already in the scene -> refused",
-      refused(env.ENVIRONMENT_SET, ["shed_env:shed_env_GRP"]))
+      refused(env.ENVIRONMENT_SET, ["shed_env:shed_model_GRP"]))
 
 # --- a shader with a name already used is just numbered, still connected
 open_new(asset_scene)

@@ -93,8 +93,8 @@ for args in (("character", "scout", "model"), ("character", "scout", "rig"),
              ("prop", "backpack", "model"), ("environment", "shed", "env"),
              ("character", "scout", "lookDev")):
     published(*args)
-# shed also has an older Modeling publish, as on the T7 (one asset on
-# ShotGrid, two kinds of publish): made "earlier" than its env publish.
+# shed also has a Modeling publish, as on the T7: its old env publish isn't
+# listed (user, 2026-10-30: "we don't need to see the old bad publishes").
 published("environment", "shed", "model")
 _old = api.list_published
 def _shed_model_older(*a, **k):
@@ -146,8 +146,9 @@ check("shed listed once, though it has a Modeling and an environment publish",
       [n for g, n in p._items if g == "environment"] == ["shed"])
 before = len(tab._rows)
 tab._add_asset()
-check("+ adds one shed: its newest publish (the environment one)",
-      [(r["asset"], r["code"]) for r in tab._rows[before:]] == [("shed", "env")])
+check("+ adds shed's Modeling publish; the old env one isn't listed",
+      [(r["asset"], r["code"]) for r in tab._rows[before:]] == [("shed", "model")]
+      and not [pp for pp in tab._published if pp["code"] == "env"])
 tab._add_asset()
 check("+ again: shed is already in the list", len(tab._rows) == before + 1
       and "already in the list" in tab.status._text)

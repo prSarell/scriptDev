@@ -21,7 +21,7 @@ are, sets say what they are:
 
 The published file (copies only; the working scene is never changed):
 
-    <asset>_env_GRP                  pipe group, stamped, locked at the origin
+    <asset>_model_GRP                pipe group, stamped, locked at the origin
       landscape / buildings / sky    the copies, by role
       locators                       <group>_LOC per building
     + environment_SET and its role sets, holding the copies (building_SET
@@ -40,7 +40,10 @@ import publishTool_api as api
 from publishTool_api import PublishError
 
 ENV_CODE = api.ENV_CODE
-ENV_LABEL = "Environment"
+# An environment asset's publish is its Modeling publish (user, 2026-10-30:
+# "Environment is not a department"): named and stamped model, numbered with
+# the asset's other Modeling publishes. ENV_CODE only routes it here.
+ENV_LABEL = "Modeling"
 ENV_TYPE = "environment"
 ENVIRONMENT_SET = "environment_SET"
 LANDSCAPE, BUILDINGS, SKY = "landscape", "buildings", "sky"
@@ -234,15 +237,15 @@ def plan_environment(scene_path, h_root, scratch_root, target):
         raise PublishError("No folder for environment '%s' on the H drive." % asset)
     login = api.who()
     h_folder = api.personal_folder(h_root, asset_rel, login)
-    versions = api.published_versions(h_folder, asset, login, ENV_CODE)
+    versions = api.published_versions(h_folder, asset, login, api.MODEL_CODE)
     version = (versions[-1] + 1) if versions else 1
-    name = api.published_name(asset, login, ENV_CODE, version, ext)
+    name = api.published_name(asset, login, api.MODEL_CODE, version, ext)
     return {"root": root, "film": film, "asset_type": ENV_TYPE, "asset": asset,
             "rel_folder": asset_rel + ["scenes"], "ext": ext,
             "asset_project": os.path.join(root, *rel[:5]),     # where the scene is, on scratch
             "source_asset": tuple(rel[3:5]) if in_asset else None,
             "is_source_asset": in_asset and tuple(rel[3:5]) == tuple(target),
-            "login": login, "code": ENV_CODE, "h_folder": h_folder, "version": version,
+            "login": login, "code": api.MODEL_CODE, "h_folder": h_folder, "version": version,
             "dest": os.path.join(h_folder, name)}
 
 
@@ -292,7 +295,7 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
     if not os.path.isdir(plan["h_folder"]):
         os.makedirs(plan["h_folder"])
     file_type = "mayaAscii" if plan["ext"] == ".ma" else "mayaBinary"
-    group_name = api.pipe_group_name(plan["asset"], ENV_CODE)
+    group_name = api.pipe_group_name(plan["asset"], api.MODEL_CODE)
     selection = cmds.ls(selection=True)
     moved, made = [], []        # (uuid, short name) renamed aside; nodes to delete after
     roles = dict((role, cmds.ls(found[role], uuid=True)) for role, _ in ROLE_SETS)

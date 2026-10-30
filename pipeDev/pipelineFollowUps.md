@@ -91,6 +91,15 @@ hand. One T7 session could cover most of it.
 - [ ] Hand test the department lists: Build SEQ010_140 as Animation, switch
       Build into to Layout (a different list), back to Animation (yours
       again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
+- [ ] **Republish fieldA** (2026-10-30) with the new Publish: Asset →
+      Modeling → environment → fieldA. Check H gets
+      `fieldA_<login>_model_v001.ma` (not `_env_`) and Build in SEQ010_160
+      lists it under Modeling. Its `_env_` publishes (and shed's) stay on H,
+      not listed by Build.
+- [ ] Stale test: `projectDev/test_projectMatch_mayapy.py` "Build: red
+      banner shown" / "Build: asks first" fail (also on 2026-10-30's
+      starting code): they expect Build to ask, but since 2026-10-28 Build
+      refuses. Update the test to the refusal.
 - [ ] **mpModel shelf, Convert to Model** (built 2026-10-30,
       `pipeDev/modelDev/modelTool_convert.py`, staff zip only): in an
       asset scene, Build the shed environment and a textured model (both

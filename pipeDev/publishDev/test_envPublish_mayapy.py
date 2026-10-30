@@ -123,8 +123,10 @@ plan = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
 after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment|buildings|shed.translate"),
          cmds.getAttr("ground.translate"), len(cmds.listHistory("ground")),
          sorted(cmds.ls(type="objectSet")), cmds.getAttr("imagePlaneskyShape.imageName"))
-check("published from the shot's layout scene to the environment asset",
-      os.path.basename(plan["dest"]) == "scoutsHouseLandscape_scout_env_v001.ma"
+# An environment asset's publish is its Modeling publish (user, 2026-10-30).
+check("published from the shot's layout scene to the environment asset, as Modeling",
+      os.path.basename(plan["dest"]) == "scoutsHouseLandscape_scout_model_v001.ma"
+      and plan["code"] == "model"
       and os.sep + os.path.join("environment", "scoutsHouseLandscape", "scenes", "scout") in plan["dest"])
 check("read-only on H", not os.access(plan["dest"], os.W_OK))
 check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
@@ -137,9 +139,9 @@ check("building names are free: no warning for oldBarn (no such asset on H)",
       not any("oldBarn" in w for w in plan.get("warnings", [])))
 
 cmds.file(new=True, force=True); cmds.file(plan["dest"], open=True, force=True)
-G = "scoutsHouseLandscape_env_GRP"
-check("top is the stamped pipe group, locked", cmds.nodeType(G) == "dagContainer"
-      and cmds.getAttr(G + ".pipe_department") == "env" and cmds.getAttr(G + ".tx", lock=True))
+G = "scoutsHouseLandscape_model_GRP"
+check("top is the stamped pipe group (Modeling), locked", cmds.nodeType(G) == "dagContainer"
+      and cmds.getAttr(G + ".pipe_department") == "model" and cmds.getAttr(G + ".tx", lock=True))
 check("laid out by role", sorted(cmds.listRelatives(G, children=True)) ==
       ["buildings", "landscape", "locators", "sky"])
 g = G + "|landscape|ground"
@@ -170,9 +172,9 @@ check("... so the published layout passes the same check (can be published again
 imn = cmds.getAttr(cmds.listRelatives(k, shapes=True, fullPath=True)[0] + ".imageName")
 check("sky image points at the publish's copy through $PIPE_SCRATCH",
       imn.startswith("$PIPE_SCRATCH/NWF_SHF/maya/publish/assets/environment/scoutsHouseLandscape/"
-                     "sourceimages/scout/scoutsHouseLandscape_scout_env_v001/"))
+                     "sourceimages/scout/scoutsHouseLandscape_scout_model_v001/"))
 tex_dir = os.path.join(H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape",
-                       "sourceimages", "scout", "scoutsHouseLandscape_scout_env_v001")
+                       "sourceimages", "scout", "scoutsHouseLandscape_scout_model_v001")
 check("sky image copied to H for this version", os.path.isfile(os.path.join(tex_dir, "sky_blue_wispy_001.png")))
 check("stamp lists buildings and locators",
       sorted(json.loads(cmds.getAttr(G + ".pipe_locators"))) == ["oldBarn_LOC", "shed_LOC"]
@@ -185,9 +187,9 @@ check("the cache holds the landscape and buildings, not the sky",
       cmds.objExists("ground") and cmds.objExists("pCube1") and not cmds.ls(type="imagePlane"))
 
 # -- Build: pulled with its cache; a real house snapped to the locator ----------
-published = [p for p in build.list_published(H, FILM) if p["code"] == env.ENV_CODE]
-check("Build lists the environment publish", len(published) == 1
-      and published[0]["asset"] == "scoutsHouseLandscape")
+published = [p for p in build.list_buildable(H, FILM) if p["asset"] == "scoutsHouseLandscape"]
+check("Build lists the environment publish, as Modeling", len(published) == 1
+      and published[0]["code"] == "model")
 maya_dir = os.path.join(SC, FILM, "maya")
 dest, _ = build.copy_published(plan["dest"], maya_dir)
 check("pulled with its cache and its sky image",

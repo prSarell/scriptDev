@@ -39,15 +39,21 @@ import maya.cmds as cmds
 # and as the department subfolder in a shot (§3i). Order = tab order.
 # ---------------------------------------------------------------------------
 
+# THE PIPE'S DEPARTMENTS — LOCKED (user, 2026-10-30): "That is the list.
+# Please lock that list don't revert it or change it going forward without
+# explicit instruction from me." A fixed design feature: Build's two
+# Department dropdowns and Publish's show exactly this, in this order.
+# Environment is not a department: environments are modelled, and an
+# environment asset's publish is its Modeling publish (publishTool_env).
 DEPARTMENTS = [
     ("Modeling", "model"),
-    ("Environment", "env"),     # spec §4c: publishTool_env
-    ("Rigging",  "rig"),
-    ("Anim",     "anim"),
+    ("Rigging", "rig"),
     ("Creature", "creature"),
-    ("LookDev",  "lookDev"),
-    ("FX",       "fx"),
-    ("Lighting", "lighting"),   # was Render; Previs dropped (user, 2026-10-28)
+    ("LookDev", "lookDev"),
+    ("Layout", "layout"),
+    ("Animation", "anim"),
+    ("FX", "fx"),
+    ("Lighting", "lighting"),
 ]
 
 # Film folders are named <FILM>_<TYPE>, TYPE a three-letter code (§3f).
@@ -744,6 +750,10 @@ def check_namespace_clashes():
 CACHE_SET = "cache_SET"
 RIG_CODE = "rig"
 MODEL_CODE = "model"
+# Not a department (see DEPARTMENTS): how Publish routes an environment
+# asset's Modeling publish (sets, locators, .abc) to publishTool_env. The
+# file, its stamp and ShotGrid say Modeling (model). Publishes stamped env
+# were made before 2026-10-30; Build doesn't list them.
 ENV_CODE = "env"
 GEOMETRY_TYPES = ("mesh", "nurbsSurface", "subdiv")
 # A Model publish freezes transforms and deletes history, which would wreck

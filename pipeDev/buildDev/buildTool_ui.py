@@ -51,7 +51,7 @@ pub = api.pub
 #   never changes it. The shot's own camera and caches come with the shot.
 # Both Department dropdowns are the pipe's department list, exactly, whatever
 # Asset or Shot says: LOCKED, a fixed design feature (user, 2026-10-30; see
-# buildTool_api.DEPARTMENTS). Environment publishes are listed under Modeling.
+# buildTool_api.DEPARTMENTS). Old publishes stamped env aren't listed.
 TARGET_DEPARTMENTS = [(label, code, picker.ANY, True) for label, code in api.DEPARTMENTS]
 SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
 # Published for a shot itself, not an asset: they only build into it.
@@ -438,7 +438,7 @@ class BuildShotTab(QtWidgets.QWidget):
         for p in self._published_in(film):
             item = (p["asset_type"], p["asset"])
             # Once each, even with a Modeling and an old environment publish.
-            if (api.department_of(p) == code and p.get("kind") not in SHOT_ITEMS
+            if (p["code"] == code and p.get("kind") not in SHOT_ITEMS
                     and item not in found):
                 found.append(item)
         return found
@@ -463,7 +463,7 @@ class BuildShotTab(QtWidgets.QWidget):
         if target and film == target[0]:
             return self._published
         if film not in self._other_films:
-            self._other_films[film] = api.list_published(self._get_roots()[0], film)
+            self._other_films[film] = api.list_buildable(self._get_roots()[0], film)
         return self._other_films[film]
 
     def _load_shot(self, *args):
@@ -493,7 +493,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self.target_lbl.setText("Building into %s <b>%s</b> (%s), in %s" % (
             "shot" if self._target_shot else "asset", name, film,
             os.path.basename(scene) if scene else "a new scene"))
-        self._published = api.list_published(h_root, film)
+        self._published = api.list_buildable(h_root, film)
         if self._target_shot:
             # The shot's own camera, if one has been published (spec
             # "Cameras"), and its Final animation caches (one per item), for
@@ -803,8 +803,8 @@ class BuildShotTab(QtWidgets.QWidget):
         current = self.filter_combo.currentData()
         codes = []
         for p in self._rows:
-            if api.department_of(p) not in codes:
-                codes.append(api.department_of(p))
+            if p["code"] not in codes:
+                codes.append(p["code"])
         order = [c for _, c in api.DEPARTMENTS] + [api.CAMERA_CODE, api.CACHE_CODE]
         codes.sort(key=lambda c: order.index(c) if c in order else len(order))
         self.filter_combo.blockSignals(True)
@@ -819,7 +819,7 @@ class BuildShotTab(QtWidgets.QWidget):
     def _apply_filter(self, *args):
         code = self.filter_combo.currentData()
         for row, p in enumerate(self._rows):
-            self.table.setRowHidden(row, bool(code) and api.department_of(p) != code)
+            self.table.setRowHidden(row, bool(code) and p["code"] != code)
 
     # -- list -------------------------------------------------------------
 
@@ -841,18 +841,15 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("%s doesn't build anything yet."
                                      % self.target_picker.dept_combo.currentText(), ok=False)
             return
-        # Modeling can be two publishes of one asset: its Modeling and its
-        # environment publishes from before the department list was locked.
-        # The one published most recently is the asset's Modeling.
         match = [p for p in self._published
                  if p.get("kind") not in SHOT_ITEMS
-                 and (p["asset_type"], p["asset"], api.department_of(p)) == (group, name, code)]
+                 and (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
         if not match:
             self.status.show_message("Nothing has been published for %s %s yet."
                                      % (name or "this", api.DEPT_LABELS.get(code, code)),
                                      ok=False)
             return
-        p = max(match, key=lambda m: m["info"][m["latest"]]["time"])
+        p = match[0]
         if any(self._key(r) == self._key(p) for r in self._rows):
             self.status.show_message("%s %s is already in the list."
                                      % (name, api.DEPT_LABELS.get(code, code)), ok=False)

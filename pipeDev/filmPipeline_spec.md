@@ -1345,11 +1345,19 @@ The tools are developed side by side:
         a department** (environments are modelled; it's an asset type). Both
         dropdowns show exactly this list, in this order, whether Asset or
         Shot is picked (`buildTool_api.DEPARTMENTS`, `pipePicker.ANY`).
-        Environment publishes made before this (stamped `env`: fieldA, shed)
-        are listed under Modeling (`buildTool_api.department_of`). Not yet
-        changed: the Publish tool still has Environment in its own list
-        (`publishTool_api.DEPARTMENTS`) and still stamps environment
-        publishes `env`; that waits for the user's instruction.
+        **Publish follows it too (user, 2026-10-30: "make publish match the
+        locked list we don't need to see the old bad publishes"):** the one
+        copy of the list is `publishTool_api.DEPARTMENTS`; Publish's
+        Department dropdown is the same list (FX and Lighting greyed, they
+        can't publish yet). An environment asset's publish is its **Modeling
+        publish**: `<asset>_<login>_model_v###.ma`, `<asset>_model_GRP`,
+        stamped `model`, numbered with the asset's other Modeling publishes,
+        still with its sets, `_LOC` locators and `.abc` (`publishTool_env`;
+        `ENV_CODE` only routes it there). From a shot's layout scene: Asset,
+        Modeling, environment, the asset. Publishes stamped `env` before
+        this (fieldA v001, shed's six) are **not listed by Build**
+        (`buildTool_api.list_buildable`); they stay on H. fieldA needs
+        republishing to show again.
         Supersedes the table above and the notes below about what each
         dropdown lists.
         **LOCKED 2026-10-30.** The user: "this layout and functionality of
