@@ -232,7 +232,7 @@ check("fresh scene: cache in the list, unticked", len(rows) == 1 and not rows[0]
       and rows[0]["in_scene"] is None)
 tab._save_shot_list()
 check("an unbuilt cache isn't saved to the shot's list",
-      not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT) or []))
+      not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT, "anim") or []))
 check("Layout doesn't build caches", api.CACHE_CODE not in api.builds_for("layout"))
 tab.target_picker.set_current(code="layout")
 cmds.file(new=True, force=True)

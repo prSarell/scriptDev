@@ -2688,8 +2688,18 @@ The tools are developed side by side:
                  tool to a shot that list will populate". Before this, the
                  list came only from the shot's manifest on scratch, so a new
                  machine started empty.
-                 - **One list per shot**, shared by everyone building it:
-                   `H\<film>\maya\sequences\<seq>\<shot>\build_list.json`.
+                 - **One list per shot per department (2026-10-30)**,
+                   shared by everyone in that department building the shot:
+                   `H\<film>\maya\sequences\<seq>\<shot>\data\build\<department>.json`
+                   (anim.json, layout.json, lighting.json). The user:
+                   "everyone on the same shot should see the same list";
+                   per department so Lighting's list never carries
+                   Animation's picks. Two people in the same department on
+                   the same shot share one file (rare; fine).
+                 - The first version (2026-10-23) was one list per shot,
+                   `<shot>\build_list.json`. Build reads it as the starting
+                   list for Layout and Animation if they have none yet, and
+                   never writes it again.
                  - It stores **just which assets** (asset type, asset,
                    department). On a new drive each comes back at its latest
                    version, and each rig's Keys at the shot's latest keys.

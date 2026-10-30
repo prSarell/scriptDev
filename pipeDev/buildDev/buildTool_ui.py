@@ -324,11 +324,11 @@ class BuildShotTab(QtWidgets.QWidget):
 
     def _on_department_changed(self, *args):
         """Another department: Add to list offers what it builds, and the
-        shot's caches join the list if it builds them."""
+        list is that department's list for the shot (with the shot's caches
+        if it builds them)."""
         self.picker.set_departments(source_departments(self.department()))
         if self._target_shot and self._published:
-            self._add_shot_caches()
-            self._render_table()
+            self._load_shot()
 
     def _target_place(self):
         target = self._target_shot or self._target_asset
@@ -501,11 +501,11 @@ class BuildShotTab(QtWidgets.QWidget):
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
         # The list always starts with everything that belongs to this shot:
-        # the shot's list saved on the H drive (so it comes back on any
-        # machine, user 2026-10-23), or for a shot without one yet what's in
-        # its assets folder on scratch, plus anything published for the shot
-        # itself, e.g. its camera, ready to build.
-        saved = api.read_shot_list(h_root, film, seq, shot)
+        # the department's list for the shot saved on the H drive (so it
+        # comes back on any machine, user 2026-10-23), or for a shot without
+        # one yet what's in its assets folder on scratch, plus anything
+        # published for the shot itself, e.g. its camera, ready to build.
+        saved = api.read_shot_list(h_root, film, seq, shot, self.department())
         wanted = set(saved) if saved is not None else set(manifest)
         self._rows = []
         # Building into a blank scene (nothing referenced yet): always start
@@ -911,14 +911,15 @@ class BuildShotTab(QtWidgets.QWidget):
                                  ok=not failed)
 
     def _save_shot_list(self):
-        """Save the list as the shot's list on the H drive. Returns '' or a
-        line saying why it couldn't be saved (never stops a build)."""
+        """Save the list as the department's list for the shot on the H
+        drive. Returns '' or a line saying why it couldn't be saved (never
+        stops a build)."""
         if not self._target_shot:
             return ""
         # Caches are per scene, never the shot's (see _add_shot_caches).
         keys = [self._key(r) for r in self._rows if r.get("kind") != "cache"]
         try:
-            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (keys,)))
+            api.write_shot_list(self._get_roots()[0], *(self._target_shot + (self.department(), keys)))
         except Exception as e:
             return "\nThis shot's list couldn't be saved to the H drive: %s" % e
         return ""

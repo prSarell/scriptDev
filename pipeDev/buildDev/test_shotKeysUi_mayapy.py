@@ -156,7 +156,7 @@ tab._build_shot()
 check("hand keys untouched", tx_at_10() == 7.0)
 
 # The shot's list is saved on the H drive (user, 2026-10-23).
-saved = api.read_shot_list(H, FILM, SEQ, SHOT)
+saved = api.read_shot_list(H, FILM, SEQ, SHOT, "anim")
 check("shot's list saved on the H drive", saved == [api.manifest_key("character", "scout", "rig")])
 
 # Another machine: a new scratch drive with nothing on it. The list comes
@@ -178,7 +178,7 @@ check("new drive: built with the latest keys", tx_at_10() == 5.0)
 # "-" takes it off the shot's list for good.
 tab2.table.selectRow(0)
 tab2._remove_rows()
-check("'-' removes it from the saved list", api.read_shot_list(H, FILM, SEQ, SHOT) == [])
+check("'-' removes it from the saved list", api.read_shot_list(H, FILM, SEQ, SHOT, "anim") == [])
 tab2.refresh()
 check("...and it doesn't come back", not [r for r in tab2._rows if r["asset"] == "scout"])
 check("still in the scene ('-' is list only)", cmds.ls("scout_rig:ctrl"))

@@ -547,30 +547,47 @@ def manifest_key(asset_type, asset, code):
     return "%s/%s/%s" % (asset_type, asset, code)
 
 
-# The shot's build list on the H drive (user, 2026-10-23): one list per
-# shot, shared by everyone building it, so the list comes back on any
-# machine or scratch drive. Just which assets (manifest keys): versions start
-# at the latest and keys at the shot's latest keys. Saved on Build Shot and
-# when "-" takes an asset off.
-SHOT_LIST_NAME = "build_list.json"
+# The shot's build lists on the H drive (user, 2026-10-23): shared by
+# everyone building the shot, so a list comes back on any machine or scratch
+# drive. One per department (user, 2026-10-30: "everyone on the same shot
+# should see the same list"), so Lighting's list never carries Animation's
+# picks, in the shot's data folder: <shot>\data\build\<department>.json.
+# Just which assets (manifest keys): versions start at the latest and keys at
+# the shot's latest keys. Saved on Build Shot and when "-" takes an asset off.
+SHOT_LIST_FOLDER = ("data", "build")
+# The one list per shot from before 2026-10-30. Read (never written) as the
+# starting list for the departments that used it.
+OLD_SHOT_LIST_NAME = "build_list.json"
+OLD_SHOT_LIST_DEPARTMENTS = ("layout", "anim")
 
 
-def shot_list_path(h_root, film, seq, shot):
-    return os.path.join(shot_folder(h_root, film, seq, shot), SHOT_LIST_NAME)
+def shot_list_path(h_root, film, seq, shot, department):
+    return os.path.join(shot_folder(h_root, film, seq, shot), *SHOT_LIST_FOLDER
+                        + ("%s.json" % department,))
 
 
-def read_shot_list(h_root, film, seq, shot):
-    """The shot's saved list of manifest keys, or None if it has none yet."""
+def _read_list(path):
     try:
-        with open(shot_list_path(h_root, film, seq, shot), "r") as f:
+        with open(path, "r") as f:
             return list(json.load(f).get("assets", []))
     except (IOError, OSError, ValueError, AttributeError):
         return None
 
 
-def write_shot_list(h_root, film, seq, shot, keys):
-    """Save the shot's list (manifest keys, in list order) to the H drive."""
-    path = shot_list_path(h_root, film, seq, shot)
+def read_shot_list(h_root, film, seq, shot, department):
+    """The department's saved list of manifest keys for the shot, or None if
+    it has none yet."""
+    keys = _read_list(shot_list_path(h_root, film, seq, shot, department))
+    if keys is None and department in OLD_SHOT_LIST_DEPARTMENTS:
+        keys = _read_list(os.path.join(shot_folder(h_root, film, seq, shot),
+                                       OLD_SHOT_LIST_NAME))
+    return keys
+
+
+def write_shot_list(h_root, film, seq, shot, department, keys):
+    """Save the department's list for the shot (manifest keys, in list
+    order) to the H drive."""
+    path = shot_list_path(h_root, film, seq, shot, department)
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
     if os.path.exists(path):
@@ -580,7 +597,7 @@ def write_shot_list(h_root, film, seq, shot, keys):
     except BuildError:
         login = ""
     with open(path, "w") as f:
-        json.dump({"assets": list(keys), "saved_by": login,
+        json.dump({"assets": list(keys), "department": department, "saved_by": login,
                    "saved": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
 
 

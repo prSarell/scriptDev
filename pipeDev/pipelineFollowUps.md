@@ -85,6 +85,12 @@ hand. One T7 session could cover most of it.
       shot's list is saved on H (`build_list.json` in the shot folder) on
       Build Shot and on "-", one list per shot, and fills Build on any drive
       (spec §4 item 7, "The shot's build list on H").
+      2026-10-30: now **one list per shot per department**,
+      `<shot>\data\build\<department>.json` on H; the old `build_list.json`
+      is read as Layout/Animation's starting list, never written again.
+- [ ] Hand test the department lists: Build SEQ010_140 as Animation, switch
+      Build into to Layout (a different list), back to Animation (yours
+      again); look in `G:\H\NWF_SHF\maya\sequences\SEQ010\SEQ010_140\data\build\`.
 - [ ] Hand test the shot list: build a shot on one drive, open a scene in
       that shot on another drive (T7 / D:), check the list comes back with
       the latest keys; "-" an asset, reopen, check it stays off.

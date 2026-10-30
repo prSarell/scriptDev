@@ -101,7 +101,7 @@ for folder in (shot_s, other_s):
         os.makedirs(folder)
     open(os.path.join(folder, "workspace.mel"), "w").write("")
 # The other shot already has a saved list: Scout's rig.
-api.write_shot_list(H, FILM, SEQ, OTHER, [api.manifest_key("character", "scout", "rig")])
+api.write_shot_list(H, FILM, SEQ, OTHER, "anim", [api.manifest_key("character", "scout", "rig")])
 
 parent = QtWidgets.QWidget()
 open_new(scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
