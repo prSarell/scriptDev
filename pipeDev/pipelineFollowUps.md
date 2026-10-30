@@ -207,13 +207,15 @@ hand. One T7 session could cover most of it.
 - [x] Shapes in `cache_SET` made shots cache the whole rig (#2), fixed.
 - [x] A group and a mesh inside it in `cache_SET` broke the Alembic (#3),
       now refused at rig publish.
-- [ ] **Namespace clash on publish** (#7): stripping namespaces can make
-      Maya silently rename a node (`head_geo` → `head_geo1`). If that hits
-      a DNA node the face fails with no error. Refuse clashes instead.
-- [ ] **MetaHuman face controls in a selection publish** (#8): if
-      `headGui_grp` isn't under the selection, the auto-added face controls
-      point at nodes that aren't exported, so `face_controls_SET` comes out
-      short without a warning.
+- [x] **Namespace clash on publish** (#7): FIXED 2026-10-30. Stripping
+      namespaces could make Maya silently rename a node (`head_rl4` →
+      `head_rl5`). Publish now refuses before ShotGrid or the playblast,
+      lists each clash, and leaves the scene as it was
+      (`check_namespace_clashes`, `test_namespaceClash_mayapy.py`).
+- [x] **MetaHuman face controls in a selection publish** (#8): FIXED
+      2026-10-30. If `headGui_grp` isn't inside the published group, the
+      Rigging row is refused (when added and at Publish) and the message
+      names `headGui_grp`, instead of `face_controls_SET` coming out short.
 - [ ] **macOS** (#10): the T7 is NTFS, which a Mac can only read, so the
       desktop tool can't write to the stand-in H from a Mac. On macOS,
       Build's "latest" uses modified time, so a copied publish can sort

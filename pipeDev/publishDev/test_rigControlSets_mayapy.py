@@ -133,6 +133,18 @@ check("controls outside the published objects -> refused",
 cmds.sets([outside], remove="rig1_controllers_grp")
 check("publishing the rig root -> accepted", api.check_control_sets(["scout_rig"])["face"] == "face_controls_SET")
 
+# --- review #8: the face controls Publish adds itself must be inside the
+# published group, or face_controls_SET comes out short
+scout(); pipe_sets(face=[])
+cmds.parent("headRig_grp", world=True)
+check("MetaHuman face board outside the published group -> refused, names headGui_grp",
+      refused("aren't inside the group", objects=["scout_rig"])
+      and refused(MH["face_gui_group"], objects=["scout_rig"]))
+cmds.parent("headRig_grp", "scout_rig")
+check("face board back inside -> accepted",
+      len(api.check_control_sets(["scout_rig"])["metahuman_missing"]) == 6)
+scout(); pipe_sets(face=["FacialControls"])
+
 # --- export: sets travel with the rig; MetaHuman controls added in the file only;
 # Publish makes RMIT_publishSet holding the pipe's sets
 r = api.check_control_sets(["scout_rig"])

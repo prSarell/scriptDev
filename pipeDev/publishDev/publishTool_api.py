@@ -694,18 +694,33 @@ class _NoNamespaces(object):
     taken off (backpack:backPack_geo -> backPack_geo), so what gets
     exported has clean names. On the way out every name is put back, found
     by node UUID, so the working scene ends exactly as it was. Nothing is
-    deleted or merged. self.namespaces: the namespaces that were removed."""
+    deleted or merged. self.namespaces: the namespaces that were removed.
+
+    If a name is already taken, Maya quietly renames instead (head_rl4 ->
+    head_rl5), which can cut a MetaHuman DNA node off with no error
+    (review #7), so a clash puts every name back and refuses."""
 
     def __enter__(self):
         self.renamed = []
         self.namespaces = set()
+        clashes = []
         # Work by UUID: renaming one node can change another's path.
         for uuid in cmds.ls(namespaced_nodes(), uuid=True):
             node = cmds.ls(uuid, long=True)[0]
             short = node.split("|")[-1]
             self.namespaces.add(short.rsplit(":", 1)[0].lstrip(":"))
-            cmds.rename(node, ":" + short.rsplit(":", 1)[1], ignoreShape=True)
+            wanted = short.rsplit(":", 1)[1]
+            got = cmds.rename(node, ":" + wanted, ignoreShape=True)
             self.renamed.append((uuid, short))
+            if got.split("|")[-1].lstrip(":") != wanted:
+                clashes.append((short.lstrip(":"), wanted))
+        if clashes:
+            self.__exit__()
+            raise PublishError(
+                "Taking the namespaces off would give these the same name as something "
+                "else in the scene, so Maya would rename them and connections could break:\n  %s"
+                "\n\nRename one of each pair (or delete the one you don't need), then publish "
+                "again." % "\n  ".join("%s -> %s (taken)" % c for c in clashes[:10]))
         return self
 
     def __exit__(self, *exc):
@@ -714,6 +729,13 @@ class _NoNamespaces(object):
             if node:
                 cmds.rename(node[0], ":" + short.lstrip(":"), ignoreShape=True)
         return False
+
+
+def check_namespace_clashes():
+    """Refuse up front (before ShotGrid, playblast or H) a scene whose
+    namespaces can't come off cleanly: a dry run of _NoNamespaces."""
+    with _NoNamespaces():
+        pass
 
 
 # Every rig publish must contain this set, made by hand by the rigger: it
@@ -1005,6 +1027,17 @@ def check_control_sets(objects):
                     "%s holds controls that aren't in this publish: %s\n"
                     "Publish the whole rig (or include them), or take them out of the set."
                     % (s, ", ".join(_short(c) for c in outside[:5])))
+        # The MetaHuman face controls Publish adds itself must be exported
+        # too, or face_controls_SET comes out short (review #8).
+        outside = [c for c in metahuman or [] if not _under(c, objects)]
+        if outside:
+            import rig_rules
+            raise PublishError(
+                "The MetaHuman face controls (%d, e.g. %s) aren't inside the group "
+                "being published, so the face would publish without them.\n"
+                "Put %s inside the rig's top group, or select a group that holds it."
+                % (len(outside), ", ".join(_short(c) for c in outside[:3]),
+                   rig_rules.METAHUMAN["face_gui_group"]))
     sets = set_tree(body) + (set_tree(face) if face else [])
     return {"body": body, "face": face,
             "metahuman_missing": missing,
@@ -2036,6 +2069,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     after the H-drive write succeeded)."""
     h_root = resolve_root(h_root)
     check_script_nodes()
+    check_namespace_clashes()
     environment = None
     if code == ENV_CODE:
         # From a shot's layout scene or an asset scene, to an environment
