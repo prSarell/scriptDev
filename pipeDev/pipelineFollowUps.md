@@ -8,6 +8,62 @@ Status: **[ ]** to do · **[?]** needs your decision · **[x]** done
 
 ---
 
+## PICK UP HERE: left 2026-11-03
+
+Stage 2 started: tidy up and add features, with contributors joining. Read
+`pipelineReview_stage2.md` (the review, plus your answers so far).
+
+**GitHub: protect the repo before anyone joins**
+- [ ] Review and merge the PR for branch `setup/contributors`:
+      github.com/prSarell/scriptDev/pull/new/setup/contributors
+      (CODEOWNERS, CONTRIBUTING, issue forms, PR check, `PIPE_RULES.md`,
+      `run_tests.py`, `handTests.md`, the review). Tag `stage1` = the
+      pipe before this, a permanent restore point.
+- [ ] Settings → Rules → Rulesets: on `main`, require a PR with 1 approval
+      and review from Code Owners; block force pushes and deletion; add
+      yourself to the bypass list.
+- [ ] Settings → Environments: create `student-release` with you as
+      required reviewer. Move the 3 `SHOTGRID_*` secrets into it, then
+      **delete the repository-level copies**.
+- [ ] Settings → Collaborators: invite the contributors with the **Write**
+      role (needs their GitHub usernames).
+- [ ] Tell Claude who codes, who tests, and who does both, so it can make one
+      issue per hand-test section for testers to pick up.
+
+**ShotGrid: new site `dsc-sod-animation.shotgrid.autodesk.com`**
+- [ ] Log in. Is anything already migrated, or is it empty?
+- [ ] Ask Autodesk support whether they can migrate or clone the old site's
+      (`nfw`) data. If not, Claude scripts it through the API: dry run first,
+      then one project, keeping an old → new ID table.
+- [?] Move everything (class projects too) or only NWF? Does the new site
+      replace the old one, or will both run for a while?
+- [ ] Admin → Scripts: make a new script (e.g. `mpPipe`) with limited
+      permissions, and a **new key** (the old key is inside the public
+      mpToolSet zip). Put the key in your local `shotSub_config.json` and
+      the GitHub `student-release` secrets. Never in chat or the repo.
+- [ ] Then Claude updates `pipeline.json` (project ID) and the connection,
+      checks names still match H, reruns `asset_tasks.py`, and you run
+      hand tests S1–S4.
+- [ ] shotSub link files (and probably Jiffy's) store the old project and
+      shot IDs: relink by hand, or Claude writes a script to rewrite them
+      from the ID table.
+
+**SharePoint and server**
+- [ ] When SharePoint is set up: send Claude the path to the synced H
+      folder, then run `handTests.md` section K there, and again on the
+      server.
+
+**Hand tests**
+- [ ] Work through `handTests.md` A–J on the T7 (report each result in a
+      GitHub issue, or tell Claude the ID and what you saw).
+
+**Claude to check**
+- [ ] The first full run of `mayapy pipeDev/run_tests.py` was started
+      2026-11-03 and hadn't finished when we stopped. Rerun it and look at
+      the summary (`test_projectMatch_mayapy.py` is known stale).
+
+---
+
 ## 0. [x] How wip moves between machines — CLOSED 2026-10-23
 
 Decided: unpublished work is the students' job; the pipe doesn't manage it.
