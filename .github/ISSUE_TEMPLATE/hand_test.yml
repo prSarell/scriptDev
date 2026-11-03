@@ -1,0 +1,43 @@
+name: Hand test result
+description: Report a hand test from pipeDev/handTests.md (pass or fail).
+title: "[Hand test] "
+labels: ["hand-test"]
+body:
+  - type: input
+    id: test_id
+    attributes:
+      label: Test ID
+      description: From pipeDev/handTests.md, e.g. C3
+      placeholder: C3
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options: ["Pass", "Fail", "Couldn't run it"]
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Where was H?
+      options: ["T7 stand-in", "SharePoint", "Server", "Other (say below)"]
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Machine and Maya version
+      placeholder: "RMIT lab, Maya 2025.3, pipe zip from branch pipe/xyz"
+  - type: textarea
+    id: saw
+    attributes:
+      label: What you saw
+      description: For a fail, what you did and what happened instead. Screenshots welcome.
+  - type: textarea
+    id: log
+    attributes:
+      label: Script Editor output
+      description: Copy the Script Editor's history after the test.
+      render: text

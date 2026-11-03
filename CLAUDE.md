@@ -94,6 +94,16 @@ Both `mpToolSet/` and `studio4AnimToolset/` are automatically zipped and publish
   - Release tag: `studio4anim-latest` (does not affect the repo's overall "latest release", which stays pinned to mpToolSet)
   - Student download URL: `github.com/prSarell/scriptDev/releases/tag/studio4anim-latest`
 
+## Contributors and git workflow
+
+Several people now contribute (code, testing or both), mostly through Claude Code. See `.github/CONTRIBUTING.md`.
+
+- **Never push to `main`.** It is protected. Work on a branch (`pipe/<name>`, `test/<name>`, `docs/<name>`) and open a pull request; the project lead (repo owner) reviews and merges.
+- **Pipe work:** read `pipeDev/PIPE_RULES.md` first. It holds the locked items (departments, Build's dropdowns) and the design rules. Ask the project lead before changing anything it marks locked.
+- **Storage targets:** the pipe's H location may be the T7 stand-in, a SharePoint library (OneDrive sync) or a server (UNC path). Never assume drive letters, hardlinks, read-only flags or file creation times behave the same on all three.
+- **Before opening a PR:** run `mayapy pipeDev/run_tests.py` and report the result in the PR.
+- **Student releases:** anything merged under `mpToolSet/` or `studio4AnimToolset/` publishes to students, after the project lead approves the `student-release` run. Say so in the PR if a change touches them.
+
 ## Running / Testing Scripts
 
 Scripts cannot be unit-tested outside Maya without mocking. To test:

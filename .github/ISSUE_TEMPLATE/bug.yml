@@ -1,0 +1,34 @@
+name: Bug or problem
+description: Something in the pipe or a tool doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      placeholder: "Build / Publish / Project Tool / h_sync / shotSub / ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      placeholder: "1. Set Project to SEQ010_140\n2. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Where was H?
+      options: ["T7 stand-in", "SharePoint", "Server", "Not relevant"]
+  - type: textarea
+    id: log
+    attributes:
+      label: Script Editor output
+      render: text

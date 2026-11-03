@@ -6,3 +6,6 @@ dist/
 jiffySG_config.json
 shotSub_config.json
 shotSub_student.json
+
+# Pipe desktop tools (ShotGrid credentials)
+mpPipe_desktop.json

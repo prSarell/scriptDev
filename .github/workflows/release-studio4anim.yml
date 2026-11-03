@@ -8,6 +8,7 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: student-release   # secrets live here; the project lead approves each run
     permissions:
       contents: write
 

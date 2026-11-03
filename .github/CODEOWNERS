@@ -1,0 +1,17 @@
+# Changes to these paths need the project lead's review before they can be
+# merged (enforced by the "Require review from Code Owners" rule on main).
+
+# Student releases: a merge here publishes to students.
+/mpToolSet/            @prSarell
+/studio4AnimToolset/   @prSarell
+
+# Workflows and repo settings (they can read the ShotGrid secrets).
+/.github/              @prSarell
+
+# Rules every contributor and Claude session follows.
+/CLAUDE.md             @prSarell
+/pipeDev/PIPE_RULES.md @prSarell
+
+# Locked lists (departments, Build's dropdowns) live in these.
+/pipeDev/publishDev/publishTool_api.py @prSarell
+/pipeDev/buildDev/buildTool_api.py     @prSarell

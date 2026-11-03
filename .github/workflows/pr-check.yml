@@ -1,0 +1,35 @@
+name: PR check
+
+# Maya can't run on GitHub's machines, so the mayapy tests stay local
+# (mayapy pipeDev/run_tests.py). This catches the commonest breakage:
+# a Python file that won't even load.
+on:
+  pull_request:
+    paths: ["**.py"]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"      # Maya 2025 / 2026
+      - name: Every Python file compiles
+        run: |
+          python - <<'PY'
+          import subprocess, sys
+          files = subprocess.check_output(["git", "ls-files", "*.py"], text=True).split()
+          bad = []
+          for f in files:
+              try:
+                  compile(open(f, "rb").read(), f, "exec")
+              except SyntaxError as e:
+                  bad.append("%s:%s: %s" % (f, e.lineno, e.msg))
+          print("%d files checked" % len(files))
+          print("\n".join(bad))
+          sys.exit(1 if bad else 0)
+          PY
