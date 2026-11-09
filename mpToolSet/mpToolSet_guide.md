@@ -244,7 +244,7 @@ Copies a BOSS Ocean at the current frame into a plain, static mesh — handy for
 Turns a mesh into an Arnold volume cloud.
 
 - Create a sphere and scale/flatten it — it's the container the clouds live in
-- Scene scale matters a lot: a big container (100+ units across) gives much better clouds
+- Scale it **before** clicking Cloud: density and step size are worked out from the container's size when the tool runs, so the cloud looks the same at any scene scale (including real-world cm scale). If you resize the container afterwards, delete the cloud setup and click Cloud again
 - Select it and click Cloud — the cloud placement node is selected afterwards
 - Scale the placement node to change puff size; lower Density on the cloudVolume shader for wispier clouds
 - Volumes are slow to render — test with a small render region
