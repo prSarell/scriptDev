@@ -569,8 +569,12 @@ def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
         cmds.connectAttr(prefix + '_GlobalScale000_MDN.outputX',
                          prefix + '_SquashStretch000_MDN.input2X')
 
+        # The master CTL scales itself, not its offset group: All000_GRP's
+        # pivot is frozen at the build position, so scaling the group pushed
+        # a translated COG (and the whole rig with it) away from where the
+        # animator had put it. The CTL's own scale pivots on the CTL.
         scale_targets = (
-            [prefix + '_All000_GRP', prefix + '_All001_GRP', prefix + '_All002_GRP',
+            [prefix + '_All000_CTL', prefix + '_All001_GRP', prefix + '_All002_GRP',
              prefix + '_Mid000_FOL', prefix + '_Geo000_FK', prefix + '_Geo001_FK',
              prefix + '_Geo002_FK', prefix + '_CTL000_GRP', prefix + '_CTL002_GRP'] +
             [prefix + '_Joint_' + str(i).zfill(3) + '_FOL' for i in range(pointNumber)]
@@ -817,13 +821,17 @@ def addTip(prefix, tip_crv):
     for i in range(1, len(new_skl_names)):
         cmds.parent(new_skl_names[i], new_skl_names[i - 1])
 
-    # Constrain each new SKL to its matching tip CTL
+    # Constrain each new SKL to its matching tip CTL. Scale is wired the same
+    # way as the spine SKLs: segmentScaleCompensate cancels the parent SKL's
+    # scale, so without this the tip joints stay at 1 under globalScale.
     for i, ctl in enumerate(ctl_names):
         skl = new_skl_names[i]
         pc = cmds.parentConstraint(ctl, skl)[0]
         cmds.delete(pc)
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
+        for axis in ['scaleX', 'scaleY', 'scaleZ']:
+            cmds.connectAttr(cog_ctl + '.globalScale', skl + '.' + axis)
 
     # ── If FK rig already exists, wire Tip_001_GRP into the FK_IK blend ───
     _wireTipToFKRig(prefix)
@@ -988,13 +996,15 @@ def addTail(prefix, tail_crv):
     for i in range(1, len(new_skl_names)):
         cmds.parent(new_skl_names[i], new_skl_names[i - 1])
 
-    # Constrain each new SKL to its matching tail CTL
+    # Constrain each new SKL to its matching tail CTL; scale wired as in addTip.
     for i, ctl in enumerate(ctl_names):
         skl = new_skl_names[i]
         pc = cmds.parentConstraint(ctl, skl)[0]
         cmds.delete(pc)
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
+        for axis in ['scaleX', 'scaleY', 'scaleZ']:
+            cmds.connectAttr(cog_ctl + '.globalScale', skl + '.' + axis)
 
     # ── If FK rig already exists, wire Tail_001_GRP into the FK_IK blend ──
     _wireTailToFKRig(prefix)
