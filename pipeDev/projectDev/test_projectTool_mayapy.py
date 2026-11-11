@@ -62,7 +62,9 @@ check("clean scratch: every H-drive folder is on scratch", h_dirs <= s_dirs)
 check("... with every workspace.mel", len(s_ws) == 4)
 check("... and no files from the H drive (no publishes copied)", not os.path.exists(os.path.join(
     SC, "NWF_SHF", "maya", "assets", "prop", "backpack", "scenes", "anna", "backpack_anna_model_v001.ma")))
-check("... plus my own scenes folder", os.path.isdir(os.path.join(path, "scenes", "scout")))
+check("... plus my own department folders, not scenes\\scout (2026-11-11)",
+      os.path.isdir(os.path.join(path, "scenes", "anim", "scout"))
+      and not os.path.exists(os.path.join(path, "scenes", "scout")))
 check("... and the Maya project is set", os.path.normcase(api.current_project())
       == os.path.normcase(os.path.normpath(path)))
 check("says what it did", any("folder structure" in d for d in done))
@@ -72,7 +74,7 @@ diff = api.structure_diff(H, SC, "NWF_SHF")
 check("no H-drive change = nothing to update", not diff["missing"] and not diff["workspaces"]
       and not diff["gone"])
 work = os.path.join(SC, "NWF_SHF", "maya", "sequences", "EAP_010", "EAP_010_010", "scenes",
-                    "scout", "my_work.ma")
+                    "anim", "scout", "my_work.ma")
 open(work, "w").write("// my work")
 
 # -- 3. H changes: new shot, renamed asset -> seen, flagged, never deleted --

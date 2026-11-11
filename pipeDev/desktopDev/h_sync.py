@@ -56,11 +56,11 @@ LIBRARY_TYPE = "Character"
 LIBRARY_KINDS = ("keyframe", "mocap")
 LIBRARY_PARTS = ("face", "body")
 LIBRARY_ITEMS = ("pose", "motion")
-# Every asset's scenes\model\, scenes\rig\ and scenes\lookDev\ working
+# Every asset's scenes\model\, rig\, creature\ and lookDev\ working
 # folders (each holds a folder per person), new and existing assets alike
-# (user, 2026-10-28). Same as publishTool_api.WORK_FOLDERS (this script
-# runs without Maya).
-WORK_FOLDERS = ("model", "rig", "lookDev")
+# (user, 2026-10-28; creature 2026-11-11). Same as
+# publishTool_api.WORK_FOLDERS (this script runs without Maya).
+WORK_FOLDERS = ("model", "rig", "creature", "lookDev")
 # And every shot's scenes\layout\, anim\, fx\ and lighting\ (user, 2026-10-28).
 # Same as publishTool_api.SHOT_WORK_FOLDERS.
 SHOT_WORK_FOLDERS = ("layout", "anim", "fx", "lighting")

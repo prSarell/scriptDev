@@ -160,9 +160,10 @@ fieldB_sc = os.path.join(SC, "NWF_SHF", "maya", "assets", "environment", "fieldB
 dest = os.path.join(fieldB_sc, "scenes", "model", "scout", "fieldB_001.ma")
 check("asked once, saying fieldB will be made on scratch",
       len(asked) == 1 and "isn't on your scratch drive yet" in asked[0])
-check("fieldB made on scratch like Set Project (workspace.mel, sourceimages, scenes/scout)",
+check("fieldB made on scratch like Set Project (workspace.mel, sourceimages, scenes/model/scout)",
       all(os.path.exists(os.path.join(fieldB_sc, p)) for p in
-          ("workspace.mel", "sourceimages", os.path.join("scenes", "scout"))))
+          ("workspace.mel", "sourceimages", os.path.join("scenes", "model", "scout")))
+      and not os.path.exists(os.path.join(fieldB_sc, "scenes", "scout")))
 check("scene saved there as fieldB_001.ma, the old file left as it was",
       os.path.normcase(cmds.file(query=True, sceneName=True)) == os.path.normcase(dest.replace("\\", "/"))
       and os.path.isfile(dest) and os.path.getmtime(outside) == saved_before)

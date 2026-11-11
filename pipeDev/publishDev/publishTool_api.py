@@ -140,8 +140,10 @@ SHOTGRID_AS = "shotgrid_as"
 # Every asset's scenes folder has these working folders, each holding one
 # folder per person (scenes\model\s1234567\): model, rig and lookdev
 # iteration and development (user, 2026-10-28). Named by department code.
-# Publishes still go in scenes\<login>\.
-WORK_FOLDERS = ("model", "rig", "lookDev")
+# Publishes still go in scenes\<login>\, on the H drive only: the tools
+# never make scenes\<login>\ on scratch (user, 2026-11-11), so every asset
+# department, Creature included, has its working folder here.
+WORK_FOLDERS = ("model", "rig", "creature", "lookDev")
 # Every shot's scenes folder has the same, for shot departments
 # (scenes\anim\s1234567\), so a shot can be built for rendering (user,
 # 2026-10-28).
@@ -406,12 +408,10 @@ def personal_folder(h_root, rel_project, login):
 
 def work_folder(project, code, login):
     """Where one person's working scenes go in an asset or shot project:
-    scenes\\<code>\\<login> for the WORK_FOLDERS departments (model, rig,
-    lookDev) and SHOT_WORK_FOLDERS (layout, anim, fx, render), else
-    scenes\\<login>."""
-    if code in WORK_FOLDERS + SHOT_WORK_FOLDERS:
-        return os.path.join(project, "scenes", code, login)
-    return os.path.join(project, "scenes", login)
+    scenes\\<code>\\<login>, always under a department folder (WORK_FOLDERS,
+    SHOT_WORK_FOLDERS). Never scenes\\<login>: that's for publishes, on the
+    H drive."""
+    return os.path.join(project, "scenes", code, login)
 
 
 def list_h_assets(h_root, film):

@@ -1,5 +1,6 @@
-# Asset working folders (user, 2026-10-28): scenes\model, scenes\rig and
-# scenes\lookDev, each with a folder per person; staff named by their
+# Asset working folders (user, 2026-10-28): scenes\model, rig, creature and
+# lookDev, each with a folder per person (never scenes\<login> on scratch,
+# 2026-11-11); staff named by their
 # e-number (shotgrid_as) instead of the machine's Windows login. Set
 # Project makes the person's folders, Save Here uses the department's,
 # Build never mistakes a working file for a publish. ShotGrid not needed.
@@ -59,22 +60,26 @@ with open(os.path.join(H, "NWF_SHF", "pipeline.json"), "w") as f:
     f.write('{"film": "NWF_SHF", "shotgrid_project_id": 157}')
 
 path, done = api.set_project(H, SC, ["NWF_SHF", "maya", "assets", "character", "scout"])
-check("asset: scenes\\e131988 plus model, rig and lookDev\\e131988",
+check("asset: model, rig, creature and lookDev\\e131988",
       all(os.path.isdir(os.path.join(path, "scenes", *p)) for p in
-          (("e131988",), ("model", "e131988"), ("rig", "e131988"), ("lookDev", "e131988"))))
+          (("model", "e131988"), ("rig", "e131988"), ("creature", "e131988"),
+           ("lookDev", "e131988"))))
+check("asset: no scenes\\e131988 on scratch (publishes only, on the H drive)",
+      not os.path.exists(os.path.join(path, "scenes", "e131988")))
 check("... and says so", any("rig\\e131988" in d for d in done))
 shot, _ = api.set_project(H, SC, ["NWF_SHF", "maya", "sequences", "EAP_010", "EAP_010_010"])
-check("shot: scenes\\e131988 plus layout, anim, fx and lighting\\e131988, no asset ones",
+check("shot: layout, anim, fx and lighting\\e131988, no asset ones, no scenes\\e131988",
       all(os.path.isdir(os.path.join(shot, "scenes", *p)) for p in
-          (("e131988",), ("layout", "e131988"), ("anim", "e131988"), ("fx", "e131988"),
+          (("layout", "e131988"), ("anim", "e131988"), ("fx", "e131988"),
            ("lighting", "e131988")))
-      and not os.path.exists(os.path.join(shot, "scenes", "model")))
+      and not os.path.exists(os.path.join(shot, "scenes", "model"))
+      and not os.path.exists(os.path.join(shot, "scenes", "e131988")))
 
 # -- Save Here's folder --------------------------------------------------------
-check("work_folder: model, rig, lookDev get their own; others scenes\\<login>",
-      [os.path.relpath(pub.work_folder(path, c, "e131988"), path) for c in ("model", "rig", "lookDev", "env")]
-      == [os.path.join("scenes", "model", "e131988"), os.path.join("scenes", "rig", "e131988"),
-          os.path.join("scenes", "lookDev", "e131988"), os.path.join("scenes", "e131988")])
+check("work_folder: every department its own, Creature too; never scenes\\<login>",
+      [os.path.relpath(pub.work_folder(path, c, "e131988"), path)
+       for c in ("model", "rig", "creature", "lookDev")]
+      == [os.path.join("scenes", c, "e131988") for c in ("model", "rig", "creature", "lookDev")])
 check("work_folder: shot departments get their own",
       [os.path.relpath(pub.work_folder(shot, c, "e131988"), shot) for c in ("anim", "lighting")]
       == [os.path.join("scenes", "anim", "e131988"), os.path.join("scenes", "lighting", "e131988")])
@@ -87,7 +92,13 @@ os.makedirs(os.path.join(shot_h, "scenes", "lighting", "s2222222"))
 diff = api.structure_diff(H, SC, "NWF_SHF")
 check("a new person in scenes\\rig or a shot's scenes\\lighting is named, not "
       "'lighting' itself", api.describe_diff(diff) ==
-      "new people's folders: s1111111 (in scout), s2222222 (in EAP_010_010), s7654321 (in scout)")
+      "new people's folders: s2222222 (in EAP_010_010), s7654321 (in scout)")
+check("someone's scenes\\<login> publish folder on H isn't mirrored to scratch",
+      not any(r[-1] == "s1111111" for r in diff["missing"]))
+api.update_structure(H, SC, "NWF_SHF", diff)
+check("... and Update leaves scratch without it",
+      not os.path.exists(os.path.join(path, "scenes", "s1111111"))
+      and os.path.isdir(os.path.join(path, "scenes", "rig", "s7654321")))
 
 # -- Build lists publishes only ----------------------------------------------
 pubs = os.path.join(asset_h, "scenes", "e131988")

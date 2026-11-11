@@ -1206,6 +1206,15 @@ The tools are developed side by side:
       existing assets; Set Project makes the person's own; Save Here uses
       the department's; Build skips them. Publishes still go in
       `scenes\<login>\`. Test: `projectDev/test_workFolders_mayapy.py`.
+      - **No `scenes\<login>\` on scratch (DECIDED + BUILT 2026-11-11):**
+        user: "the tools shouldn't be making that folder", people's
+        e/s-number folders live under the department folders. Set Project
+        no longer makes `scenes\<login>\`, and the Project Tool's H→scratch
+        mirror skips anything in `scenes\` that isn't a department folder
+        (people's publish folders stay on the H drive only). **Creature**
+        got its working folder (`scenes\creature\<login>\`, every asset
+        type, like `rig\`), so Save Here never falls back to
+        `scenes\<login>\`. Publishes on the H drive are unchanged.
     - **Shot working folders (DECIDED + BUILT 2026-10-28):** the same for
       shots, so a shot can be built for rendering (caches, cameras,
       environment, everything a final render needs). The user proposed

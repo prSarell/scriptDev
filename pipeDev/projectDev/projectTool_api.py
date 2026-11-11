@@ -13,7 +13,9 @@ Design: pipeDev/projectSwitcher_brief.md (DECIDED 2026-10-19), spec §3h
   task assignments are highlighted, not used as a filter.
 - Setting a project on a clean scratch drive lays down the film's full
   folder structure from the H drive (folders + workspace.mel, no files),
-  plus scenes/<login>/ in that project, then sets the Maya project.
+  plus the person's scenes/<dept>/<login>/ folders in that project, then
+  sets the Maya project. People's scenes/<login>/ publish folders stay on
+  the H drive: never copied to or made on scratch.
 - When the H drive's structure changes the tool sees it and asks before
   updating. Things on scratch that are no longer on the H drive are listed,
   never deleted (they may hold work).
@@ -145,6 +147,13 @@ def _dirs(root, film):
         # their files (spec §4b).
         dirnames[:] = [d for d in dirnames if d != slib.FOLDER]
         rel = (film,) + tuple(p for p in os.path.relpath(dirpath, top).split(os.sep) if p != ".")
+        # An asset's or shot's scenes\ holds only the department folders as
+        # structure. Anything else there (people's scenes\<login>\ publish
+        # folders on the H drive) isn't mirrored to scratch (2026-11-11).
+        if len(rel) == 6 and rel[1] == "maya" and rel[5] == "scenes" \
+                and rel[2] in ("assets", "sequences"):
+            work = pub.WORK_FOLDERS if rel[2] == "assets" else pub.SHOT_WORK_FOLDERS
+            dirnames[:] = [d for d in dirnames if d in work]
         dirs.add(rel)
         if WORKSPACE in filenames:
             workspaces.add(rel)
@@ -186,20 +195,16 @@ def describe_diff(diff):
         parts.append("new shots: " + ", ".join(shots))
     if assets:
         parts.append("new assets: " + ", ".join(assets))
-    # Someone's first publish makes their scenes\<login>\ folder on the H
-    # drive (spec §4 "Personal work folders"): name whose, and where.
-    # Also scenes\model\<login>\ etc. (pub.WORK_FOLDERS) in assets and
-    # scenes\anim\<login>\ etc. (pub.SHOT_WORK_FOLDERS) in shots.
+    # Someone's new working folder on the H drive: scenes\model\<login>\
+    # etc. (pub.WORK_FOLDERS) in assets, scenes\anim\<login>\ etc.
+    # (pub.SHOT_WORK_FOLDERS) in shots. Name whose, and where. (Publish
+    # folders, scenes\<login>\, aren't mirrored, so never in the diff.)
     def person(r):
-        if len(r) < 7 or r[1] != "maya" or r[2] not in ("sequences", "assets") \
+        if len(r) != 8 or r[1] != "maya" or r[2] not in ("sequences", "assets") \
                 or r[5] != "scenes" or r[:5] in new:
             return None
         work = pub.WORK_FOLDERS if r[2] == "assets" else pub.SHOT_WORK_FOLDERS
-        if len(r) == 7 and r[6] not in work:
-            return r[6]
-        if len(r) == 8 and r[6] in work:
-            return r[7]
-        return None
+        return r[7] if r[6] in work else None
     people = sorted(set((person(r), r[4]) for r in diff["missing"] if person(r)))
     if people:
         parts.append("new people's folders: " + ", ".join("%s (in %s)" % p for p in people))
@@ -245,8 +250,8 @@ def current_project():
 
 def set_project(h_root, scratch_root, rel, login=None, progress=None):
     """Make sure the project exists on scratch (laying down the film's full
-    structure first on a clean scratch drive), make scenes/<login>/, and set
-    it as the Maya project. Returns (project path, what was done)."""
+    structure first on a clean scratch drive), make the person's department
+    folders (scenes/<dept>/<login>/), and set it as the Maya project. Returns (project path, what was done)."""
     h_root, scratch_root = pub.resolve_root(h_root), pub.resolve_root(scratch_root)
     pub.check_roots(h_root, scratch_root)
     film = rel[0]
@@ -269,9 +274,10 @@ def set_project(h_root, scratch_root, rel, login=None, progress=None):
         folders, _ = update_structure(h_root, scratch_root, film, diff=diff)
         done.append("made %s on scratch (%d folders)" % (rel[-1], folders))
     login = login or pub.who()
-    mine = [os.path.join(project, "scenes", login)]
+    # Only the department folders: scenes\<login>\ is for publishes, on the
+    # H drive, never made on scratch (user, 2026-11-11).
     work = pub.WORK_FOLDERS if rel[2] == "assets" else pub.SHOT_WORK_FOLDERS
-    mine += [pub.work_folder(project, code, login) for code in work]
+    mine = [pub.work_folder(project, code, login) for code in work]
     for folder in mine:
         if not os.path.isdir(folder):
             os.makedirs(folder)
