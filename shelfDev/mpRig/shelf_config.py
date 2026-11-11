@@ -9,6 +9,7 @@ EXTRA_SCRIPTS = []
 # they are deployed using just the basename.
 RIGTOOL_SCRIPTS = [
     "ps_spine.py",
+    "edgeToCurve.py",
     "follicleRig_api.py",
     "follicleRig_ui.py",
     "../metahuman_facial_transfer/metahuman_api_25.py",
@@ -48,6 +49,17 @@ BUTTONS = [
             "import ps_spine\n"
             "importlib.reload(ps_spine)\n"
             "ps_spine.show()"
+        ),
+    },
+    {
+        "label": "Edge Curve",
+        "tooltip": "Edge To Curve — build a curve with one CV snapped to each vertex of the selected edges (e.g. for ps_spine)",
+        "icon": "iconEdgeToCurve.png",
+        "command": (
+            "import importlib\n"
+            "import edgeToCurve\n"
+            "importlib.reload(edgeToCurve)\n"
+            "edgeToCurve.run()"
         ),
     },
     {

@@ -14,6 +14,17 @@ BUTTONS = [
         ),
     },
     {
+        "label": "Edge Curve",
+        "tooltip": "Edge To Curve — build a curve with one CV snapped to each vertex of the selected edges (e.g. for ps_spine)",
+        "icon": "iconEdgeToCurve.png",
+        "command": (
+            "import importlib\n"
+            "import edgeToCurve\n"
+            "importlib.reload(edgeToCurve)\n"
+            "edgeToCurve.run()"
+        ),
+    },
+    {
         "label": "Follicle Rig",
         "tooltip": "Open Follicle Rig Tools — scatter follicles across NURBS or poly surfaces",
         "icon": "iconFollicleRig.png",

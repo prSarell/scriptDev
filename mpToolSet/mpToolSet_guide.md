@@ -20,6 +20,15 @@ Builds an IK spline ribbon spine rig from a hand-drawn CV curve.
 - Set a prefix name (e.g. `spine`, `tail`, `neck`)
 - Click Build
 - The tool creates FK joints at each CV, an IK spline solver, a NURBS ribbon surface, and follicle-driven skeleton joints
+- **Conform Controls:** with more than one spine rig, reshape and recolour rig A's controls, select rig A's `NoTransform000_GRP`, shift-select rig B's, and click Conform Controls. Rig B's controls take rig A's shape and colour but stay in place on rig B
+
+### Edge Curve (WIP Testing)
+
+Builds a curve from polygon edges, ready for the Ribbon Spine.
+
+- Select a run of connected edges on a mesh (e.g. an edge path down a character's back) and click Edge Curve
+- One CV is snapped to each vertex along the edges; an open run starts at its lowest point so a spine runs bottom to top
+- A closed edge loop makes a closed curve
 
 ### Follicle Rig (WIP Testing)
 

@@ -569,8 +569,12 @@ def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
         cmds.connectAttr(prefix + '_GlobalScale000_MDN.outputX',
                          prefix + '_SquashStretch000_MDN.input2X')
 
+        # The master CTL scales itself, not its offset group: All000_GRP's
+        # pivot is frozen at the build position, so scaling the group pushed
+        # a translated COG (and the whole rig with it) away from where the
+        # animator had put it. The CTL's own scale pivots on the CTL.
         scale_targets = (
-            [prefix + '_All000_GRP', prefix + '_All001_GRP', prefix + '_All002_GRP',
+            [prefix + '_All000_CTL', prefix + '_All001_GRP', prefix + '_All002_GRP',
              prefix + '_Mid000_FOL', prefix + '_Geo000_FK', prefix + '_Geo001_FK',
              prefix + '_Geo002_FK', prefix + '_CTL000_GRP', prefix + '_CTL002_GRP'] +
             [prefix + '_Joint_' + str(i).zfill(3) + '_FOL' for i in range(pointNumber)]
@@ -817,13 +821,17 @@ def addTip(prefix, tip_crv):
     for i in range(1, len(new_skl_names)):
         cmds.parent(new_skl_names[i], new_skl_names[i - 1])
 
-    # Constrain each new SKL to its matching tip CTL
+    # Constrain each new SKL to its matching tip CTL. Scale is wired the same
+    # way as the spine SKLs: segmentScaleCompensate cancels the parent SKL's
+    # scale, so without this the tip joints stay at 1 under globalScale.
     for i, ctl in enumerate(ctl_names):
         skl = new_skl_names[i]
         pc = cmds.parentConstraint(ctl, skl)[0]
         cmds.delete(pc)
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
+        for axis in ['scaleX', 'scaleY', 'scaleZ']:
+            cmds.connectAttr(cog_ctl + '.globalScale', skl + '.' + axis)
 
     # ── If FK rig already exists, wire Tip_001_GRP into the FK_IK blend ───
     _wireTipToFKRig(prefix)
@@ -988,13 +996,15 @@ def addTail(prefix, tail_crv):
     for i in range(1, len(new_skl_names)):
         cmds.parent(new_skl_names[i], new_skl_names[i - 1])
 
-    # Constrain each new SKL to its matching tail CTL
+    # Constrain each new SKL to its matching tail CTL; scale wired as in addTip.
     for i, ctl in enumerate(ctl_names):
         skl = new_skl_names[i]
         pc = cmds.parentConstraint(ctl, skl)[0]
         cmds.delete(pc)
         cmds.setAttr(skl + '.rotate', 0, 0, 0)
         cmds.parentConstraint(ctl, skl)
+        for axis in ['scaleX', 'scaleY', 'scaleZ']:
+            cmds.connectAttr(cog_ctl + '.globalScale', skl + '.' + axis)
 
     # ── If FK rig already exists, wire Tail_001_GRP into the FK_IK blend ──
     _wireTailToFKRig(prefix)
@@ -1193,6 +1203,95 @@ def addFK(prefix):
     cmds.select(clear=True)
 
 
+# ── conform controls ──────────────────────────────────────────────────────────
+
+_NO_XF_SUFFIX = '_NoTransform000_GRP'
+_OVERRIDE_ATTRS = ('overrideEnabled', 'overrideRGBColors', 'overrideColor',
+                   'overrideColorRGB')
+
+
+def _rigControls(no_xf_grp):
+    # {name without the rig's prefix: CTL transform} for every curve control
+    # under a spine rig. Namespaces are dropped so a referenced rig matches too.
+    prefix = no_xf_grp.split('|')[-1].split(':')[-1][:-len(_NO_XF_SUFFIX)]
+    ctls = {}
+    for node in cmds.listRelatives(no_xf_grp, allDescendents=True,
+                                   type='transform', fullPath=True) or []:
+        short = node.split('|')[-1].split(':')[-1]
+        if not short.endswith('_CTL') or not short.startswith(prefix):
+            continue
+        if cmds.listRelatives(node, shapes=True, type='nurbsCurve', noIntermediate=True):
+            ctls[short[len(prefix):]] = node
+    return ctls
+
+
+def _copyOverrides(src, dst):
+    for attr in _OVERRIDE_ATTRS:
+        value = cmds.getAttr(src + '.' + attr)
+        if attr == 'overrideColorRGB':
+            cmds.setAttr(dst + '.' + attr, *value[0])
+        else:
+            cmds.setAttr(dst + '.' + attr, value)
+    if cmds.attributeQuery('lineWidth', node=src, exists=True) and \
+            cmds.attributeQuery('lineWidth', node=dst, exists=True):
+        cmds.setAttr(dst + '.lineWidth', cmds.getAttr(src + '.lineWidth'))
+
+
+def _conformControl(src_ctl, dst_ctl):
+    # Copy the curve in object space: the target's shape takes the source's
+    # local CVs, so it lands around the target CTL wherever that sits.
+    src_shapes = cmds.listRelatives(src_ctl, shapes=True, type='nurbsCurve',
+                                    noIntermediate=True, fullPath=True)
+    dst_shapes = cmds.listRelatives(dst_ctl, shapes=True, type='nurbsCurve',
+                                    noIntermediate=True, fullPath=True)
+    # If the artist combined or split shapes on the source, give the target
+    # the same number of curve shapes first; existing ones are kept in place.
+    base = dst_shapes[0].split('|')[-1].split(':')[-1]
+    while len(dst_shapes) < len(src_shapes):
+        dst_shapes.append(cmds.createNode(
+            'nurbsCurve', parent=dst_ctl, skipSelect=True,
+            name=base + str(len(dst_shapes))))
+    for extra in dst_shapes[len(src_shapes):]:
+        cmds.delete(extra)
+    # .local -> .create rewrites each curve in place (any CV count/degree)
+    # and keeps the shape node and anything wired to it.
+    for src, dst in zip(src_shapes, dst_shapes):
+        cmds.connectAttr(src + '.local', dst + '.create', force=True)
+        cmds.dgeval(dst + '.local')  # pull the copy through before disconnecting
+        cmds.disconnectAttr(src + '.local', dst + '.create')
+        _copyOverrides(src, dst)
+    _copyOverrides(src_ctl, dst_ctl)
+
+
+def conformControls(source_no_xf, target_no_xf):
+    """
+    Match the shape and colour of every control in the target spine rig to
+    the same-named control in the source rig (names compared without each
+    rig's prefix). Shapes copy in each control's local space, so the target
+    controls keep their place on the target rig. Returns (conformed, unmatched)
+    lists of target control names.
+    """
+    for grp in (source_no_xf, target_no_xf):
+        if not cmds.objExists(grp) or not grp.split('|')[-1].endswith(_NO_XF_SUFFIX):
+            raise RuntimeError('Not a spine NoTransform GRP: ' + grp)
+    src_ctls = _rigControls(source_no_xf)
+    dst_ctls = _rigControls(target_no_xf)
+
+    conformed, unmatched = [], []
+    cmds.undoInfo(openChunk=True, chunkName='ps_spine_conformControls')
+    try:
+        for key, dst in sorted(dst_ctls.items()):
+            src = src_ctls.get(key)
+            if src is None:
+                unmatched.append(dst.split('|')[-1])
+                continue
+            _conformControl(src, dst)
+            conformed.append(dst.split('|')[-1])
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return conformed, unmatched
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _spine_preview(spans, w=100, h=20):
@@ -1346,6 +1445,23 @@ class SpineRigUI(QtWidgets.QDialog):
 
         layout.addWidget(_separator())
 
+        # Conform Controls section
+        conform_box = QtWidgets.QGroupBox('Conform Controls')
+        conform_layout = QtWidgets.QVBoxLayout(conform_box)
+        conform_layout.setSpacing(6)
+        conform_note = QtWidgets.QLabel(
+            'Select rig A\'s NoTransform GRP, shift-select rig B\'s, then click.\n'
+            'Rig B\'s controls take rig A\'s shape and colour.'
+        )
+        conform_note.setWordWrap(True)
+        conform_layout.addWidget(conform_note)
+        conform_btn = QtWidgets.QPushButton('Conform Controls')
+        conform_btn.clicked.connect(self._conform_controls)
+        conform_layout.addWidget(conform_btn)
+        layout.addWidget(conform_box)
+
+        layout.addWidget(_separator())
+
         # Log
         log_box = QtWidgets.QGroupBox('Log')
         log_layout = QtWidgets.QVBoxLayout(log_box)
@@ -1469,6 +1585,34 @@ class SpineRigUI(QtWidgets.QDialog):
             )
         except Exception as e:
             self._log_msg(f'ERROR: {e}')
+
+    def _conform_controls(self):
+        sel = cmds.ls(sl=True, long=True) or []
+        if len(sel) != 2:
+            self._log_msg('ERROR: Select rig A\'s NoTransform GRP, then shift-select '
+                          'rig B\'s.')
+            return
+        source, target = sel
+        for node in sel:
+            if not node.endswith(_NO_XF_SUFFIX):
+                self._log_msg(f'ERROR: "{node.split("|")[-1]}" is not a spine '
+                              f'NoTransform GRP (*{_NO_XF_SUFFIX}).')
+                return
+        src_name, dst_name = source.split('|')[-1], target.split('|')[-1]
+        self._log_msg(f'Conforming "{dst_name}" controls to "{src_name}"...')
+        try:
+            conformed, unmatched = conformControls(source, target)
+        except Exception as e:
+            self._log_msg(f'ERROR: {e}')
+            return
+        self._log_msg(f'Done — {len(conformed)} control(s) conformed.')
+        if unmatched:
+            self._log_msg('No match in rig A (left as is): ' + ', '.join(unmatched))
+        cmds.select(sel, replace=True)
+        cmds.inViewMessage(
+            amg=f'{len(conformed)} control(s) conformed to <b>{src_name}</b>.',
+            pos='midCenter', fade=True
+        )
 
     def _add_fk(self):
         sel = cmds.ls(sl=True)
