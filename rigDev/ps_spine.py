@@ -587,8 +587,11 @@ def buildSpine(prefix, surface_spans=3, master_pos='bottom'):
         cmds.setAttr(prefix + '_All000_CTL.scaleY', lock=True, keyable=False)
         cmds.setAttr(prefix + '_All000_CTL.scaleZ', lock=True, keyable=False)
 
-        cmds.createNode('addDoubleLinear', n=prefix + 'ExtraTwist000_ADL')
-        cmds.createNode('addDoubleLinear', n=prefix + 'ExtraTwist002_ADL')
+        # Maya 2026+ replaces addDoubleLinear with addDL (same input1/input2/
+        # output) and warns on the old name; Maya 2025 only has the old one.
+        adl_type = 'addDL' if 'addDL' in cmds.allNodeTypes() else 'addDoubleLinear'
+        cmds.createNode(adl_type, n=prefix + 'ExtraTwist000_ADL')
+        cmds.createNode(adl_type, n=prefix + 'ExtraTwist002_ADL')
         cmds.connectAttr(prefix + '_000_CTL.rotateY', prefix + 'ExtraTwist000_ADL.input1')
         cmds.connectAttr(prefix + '_002_CTL.rotateY', prefix + 'ExtraTwist002_ADL.input1')
         cmds.connectAttr(prefix + 'ExtraTwist000_ADL.output', prefix + '_000_CTL.twist')
