@@ -87,18 +87,25 @@ check("work_folder: shot departments get their own",
 # -- Project Tool names someone's new working folder on the H drive --------
 os.makedirs(os.path.join(asset_h, "scenes", "rig", "s7654321"))
 os.makedirs(os.path.join(asset_h, "scenes", "s1111111"))
+# Maya's own folder inside scenes (workspace offlineEdit rule): still structure.
+os.makedirs(os.path.join(asset_h, "scenes", "edits"))
+with open(os.path.join(asset_h, "workspace.mel"), "a") as f:
+    f.write('workspace -fr "offlineEdit" "scenes/edits";\n')
 shot_h = os.path.join(H, "NWF_SHF", "maya", "sequences", "EAP_010", "EAP_010_010")
 os.makedirs(os.path.join(shot_h, "scenes", "lighting", "s2222222"))
 diff = api.structure_diff(H, SC, "NWF_SHF")
 check("a new person in scenes\\rig or a shot's scenes\\lighting is named, not "
       "'lighting' itself", api.describe_diff(diff) ==
-      "new people's folders: s2222222 (in EAP_010_010), s7654321 (in scout)")
+      "new people's folders: s2222222 (in EAP_010_010), s7654321 (in scout); "
+      "1 other new folder(s)")
 check("someone's scenes\\<login> publish folder on H isn't mirrored to scratch",
       not any(r[-1] == "s1111111" for r in diff["missing"]))
 api.update_structure(H, SC, "NWF_SHF", diff)
 check("... and Update leaves scratch without it",
       not os.path.exists(os.path.join(path, "scenes", "s1111111"))
       and os.path.isdir(os.path.join(path, "scenes", "rig", "s7654321")))
+check("... but Maya's scenes\\edits (workspace offlineEdit rule) is still mirrored",
+      os.path.isdir(os.path.join(path, "scenes", "edits")))
 
 # -- Build lists publishes only ----------------------------------------------
 pubs = os.path.join(asset_h, "scenes", "e131988")

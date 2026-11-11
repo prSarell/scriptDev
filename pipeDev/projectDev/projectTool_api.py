@@ -22,6 +22,7 @@ Design: pipeDev/projectSwitcher_brief.md (DECIDED 2026-10-19), spec §3h
 """
 
 import os
+import re
 import shutil
 
 import maya.cmds as cmds
@@ -134,6 +135,19 @@ def is_assigned(project, mine):
 # Folder structure: H drive -> scratch, 1:1
 # ---------------------------------------------------------------------------
 
+_SCENE_RULE_RE = re.compile(r'workspace\s+-fr\s+"[^"]*"\s+"scenes/([^"/]+)', re.IGNORECASE)
+
+
+def _workspace_scene_folders(project):
+    """Folders inside scenes\\ that the project's workspace.mel names
+    (e.g. offlineEdit -> scenes/edits): Maya's structure, not anyone's."""
+    try:
+        with open(os.path.join(project, WORKSPACE), "r") as f:
+            return set(_SCENE_RULE_RE.findall(f.read()))
+    except OSError:
+        return set()
+
+
 def _dirs(root, film):
     """Every folder of the film below root, as relative path tuples
     (film first), plus the set of those holding a workspace.mel."""
@@ -147,13 +161,16 @@ def _dirs(root, film):
         # their files (spec §4b).
         dirnames[:] = [d for d in dirnames if d != slib.FOLDER]
         rel = (film,) + tuple(p for p in os.path.relpath(dirpath, top).split(os.sep) if p != ".")
-        # An asset's or shot's scenes\ holds only the department folders as
-        # structure. Anything else there (people's scenes\<login>\ publish
-        # folders on the H drive) isn't mirrored to scratch (2026-11-11).
+        # An asset's or shot's scenes\ holds only the department folders and
+        # Maya's own (workspace rules such as offlineEdit -> scenes/edits)
+        # as structure. Anything else there (people's scenes\<login>\
+        # publish folders on the H drive) isn't mirrored to scratch
+        # (2026-11-11).
         if len(rel) == 6 and rel[1] == "maya" and rel[5] == "scenes" \
                 and rel[2] in ("assets", "sequences"):
             work = pub.WORK_FOLDERS if rel[2] == "assets" else pub.SHOT_WORK_FOLDERS
-            dirnames[:] = [d for d in dirnames if d in work]
+            keep = set(work) | _workspace_scene_folders(os.path.dirname(dirpath))
+            dirnames[:] = [d for d in dirnames if d in keep]
         dirs.add(rel)
         if WORKSPACE in filenames:
             workspaces.add(rel)
