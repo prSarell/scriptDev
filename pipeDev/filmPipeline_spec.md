@@ -2404,6 +2404,42 @@ The tools are developed side by side:
                    its members swapped for the export and put back).
                    `publishTool_api._PublishSet`. The older notes below
                    about `controls_SET` are superseded.
+                 - **DECIDED + BUILT 2026-11-11 (user): sets by asset
+                   type.** "We need the same sets for an environment asset
+                   prop vehicle etc except there's no need for a
+                   face_controls_set and we don't need the body_
+                   descriptor." A **character** (type folder `character`)
+                   keeps `cache_SET` + `body_controls_SET` (+
+                   `face_controls_SET`). **Every other type** (environment,
+                   prop, vehicle...) needs `cache_SET` + **`controls_SET`**,
+                   no face set. Names in `rig_rules.py`
+                   (`CHARACTER_TYPES`, `CHARACTER_CONTROL_SETS`,
+                   `OTHER_CONTROL_SETS`, `control_sets_for()`).
+                   `check_control_sets(objects, asset_type)` takes the
+                   publish's asset type; a set with the other kind's name
+                   (e.g. `body_controls_SET` on a prop) is refused with
+                   "rename it to ...". A left-over face set on a prop is
+                   ignored. Found on grassBladeA (an environment asset with
+                   a rig): rig publishes of environment assets follow the
+                   ordinary rig rules; only Modeling becomes an environment
+                   publish.
+                 - **Rig Sets tool (BUILT 2026-11-11, user asked).** A
+                   button on the **mpRig** shelf (`rigDev/rigSets.py`)
+                   checks the open rig for the sets above (type from the
+                   scene's folder, or picked outside the pipe), shows each
+                   one's state and **offers to build the missing ones**
+                   from suggestions (cache: visible meshes in the top
+                   group that aren't blendshape targets; controls: an
+                   mGear / AS controls set, else visible curves named like
+                   controls, `rig_rules.CONTROL_NAMES`), after asking.
+                   Also Select Suggested, Make / Add from Selection, Rename
+                   a misnamed set; one undo. With the pipe installed it
+                   runs Publish's own rig checks for the verdict. This
+                   doesn't change "Publish never makes the sets": the
+                   rigger makes them, with the tool. mpRig ships to
+                   students, so the tool works without the pipe (built-in
+                   names kept equal to `rig_rules` by
+                   `test_rigSetsTool_mayapy.py`).
                  - **Names (DECIDED):** `controls_SET` >
                    `body_controls_SET`, `face_controls_SET`, plus any
                    custom sets the rigger adds inside `controls_SET`

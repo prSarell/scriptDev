@@ -951,8 +951,11 @@ def check_cache_set(objects):
 # ---------------------------------------------------------------------------
 
 PUBLISH_SET = "RMIT_publishSet"
+# A character's sets (rig_rules.CHARACTER_CONTROL_SETS); other assets use
+# rig_rules.OTHER_CONTROL_SETS (controls_SET). Names live in rig_rules.
 BODY_CONTROLS_SET = "body_controls_SET"
 FACE_CONTROLS_SET = "face_controls_SET"
+CONTROLS_SET = "controls_SET"
 
 
 def _short(node):
@@ -1013,16 +1016,17 @@ def metahuman_face_controls():
     return sorted(found)
 
 
-def _known_set_hints():
+def _known_set_hints(asset_type=None):
     """'rig1_controllers_grp: mGear's controllers set: ...' for sets other
-    tools made that are in the scene, to say what goes where."""
+    tools made that are in the scene, to say what goes where (in this
+    asset type's set names)."""
     import fnmatch
     import rig_rules
     hints = []
     for s in cmds.ls(type="objectSet") or []:
-        for pattern, text in rig_rules.KNOWN_SETS:
+        for pattern, _role, text in rig_rules.KNOWN_SETS:
             if fnmatch.fnmatchcase(_short(s), pattern):
-                hints.append("%s: %s" % (s, text))
+                hints.append("%s: %s" % (s, rig_rules.known_set_text(text, asset_type)))
                 break
     return ("\n\nFound in this scene:\n  " + "\n  ".join(hints)) if hints else ""
 
@@ -1037,23 +1041,62 @@ def _one_set(name, how):
     return sets[0]
 
 
-def check_control_sets(objects):
-    """A Rigging publish needs the rigger's control sets. Returns
-    {body, face, metahuman_missing, metahuman_count, sets} where
-    metahuman_missing are MetaHuman face controls not yet in the face set
-    (Publish adds them to the published file only) and sets is every set
-    to export with the rig. Raises PublishError explaining what to fix."""
-    how = ("\n\nRig publishes need control sets, made by hand:\n"
-           "  %s   (body controls; required)\n  %s   (face controls; required "
-           "for a MetaHuman, optional otherwise)\n"
-           "Create > Sets > Set for each. Sets can hold sets, so you can put an existing "
-           "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
-           "Publish puts them in %s itself."
-           % (BODY_CONTROLS_SET, FACE_CONTROLS_SET, PUBLISH_SET))
-    how += _known_set_hints()
-    body = _one_set(BODY_CONTROLS_SET, how)
+def check_control_sets(objects, asset_type=None):
+    """A Rigging publish needs the rigger's control sets, named by the
+    asset's type folder (rig_rules.control_sets_for): a character has
+    body_controls_SET (+ face_controls_SET), anything else (environment,
+    prop, vehicle...) one controls_SET and no face set (user, 2026-11-11).
+    asset_type None = character. Returns {body, face, metahuman_missing,
+    metahuman_count, sets} where body is the required controls set, face
+    the face set or None, metahuman_missing are MetaHuman face controls not
+    yet in the face set (Publish adds them to the published file only) and
+    sets is every set to export with the rig. Raises PublishError
+    explaining what to fix."""
+    import rig_rules
+    names = rig_rules.control_sets_for(asset_type)
+    character = names["face"] is not None
+    kind = asset_type or "character"
+    a_kind = ("an " if kind[:1].lower() in "aeiou" else "a ") + kind
+    tool = ("The Rig Sets button on the mpRig shelf checks these and can make them "
+            "for you.")
+    if character:
+        how = ("\n\nRig publishes need control sets, made by hand:\n"
+               "  %s   (body controls; required)\n  %s   (face controls; required "
+               "for a MetaHuman, optional otherwise)\n"
+               "Create > Sets > Set for each. Sets can hold sets, so you can put an existing "
+               "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
+               "Publish puts them in %s itself. %s"
+               % (names["body"], names["face"], PUBLISH_SET, tool))
+    else:
+        how = ("\n\n%s rig needs one controls set, made by hand:\n"
+               "  %s   (all its controls; required)\n"
+               "No face set and no body_ in the name: those are for characters. "
+               "Create > Sets > Set. Sets can hold sets, so you can put an existing "
+               "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
+               "Publish puts it in %s itself. %s"
+               % (a_kind[0].upper() + a_kind[1:], names["body"], PUBLISH_SET, tool))
+    how += _known_set_hints(asset_type)
+    # The other kind's name: say so, rather than just "no controls set".
+    other = rig_rules.OTHER_CONTROL_SETS if character else rig_rules.CHARACTER_CONTROL_SETS
+    if not _own_sets(names["body"]) and _own_sets(other["body"]):
+        raise PublishError(
+            "This rig's controls are in %s, but %s rig uses %s. Rename the set to %s."
+            % (other["body"], a_kind, names["body"], names["body"]) + how)
+    body = _one_set(names["body"], how)
     if not set_controls(body):
         raise PublishError("%s has no controls in it." % body + how)
+    if not character:
+        sets = set_tree(body)
+        if objects:
+            outside = [c for c in set_controls(body) if not _under(c, objects)]
+            if outside:
+                raise PublishError(
+                    "%s holds controls that aren't in this publish: %s\n"
+                    "Publish the whole rig (or include them), or take them out of the set."
+                    % (body, ", ".join(_short(c) for c in outside[:5])))
+        return {"body": body, "face": None, "metahuman_missing": [],
+                "metahuman_count": 0,
+                "sets": [s for i, s in enumerate(sets) if s not in sets[:i]]}
     face = _own_sets(FACE_CONTROLS_SET)
     face = _one_set(FACE_CONTROLS_SET, how) if face else None
     metahuman = metahuman_face_controls()
@@ -2172,7 +2215,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
         import publishTool_textures as tex
         check_rig_selection(plan["objects"])
         plan["cache_set"] = check_cache_set(plan["objects"])
-        plan["control_sets"] = check_control_sets(plan["objects"])
+        plan["control_sets"] = check_control_sets(plan["objects"], plan.get("asset_type"))
         plan["set_uuids"] = cmds.ls([plan["cache_set"]] + plan["control_sets"]["sets"], uuid=True)
         face_fill = (plan["control_sets"]["face"], plan["control_sets"]["metahuman_missing"])
         # The rig's textures and MetaHuman DNA travel with it (spec §4

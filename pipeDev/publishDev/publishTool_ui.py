@@ -818,7 +818,7 @@ class PublishToolUI(QtWidgets.QDialog):
         # Whatever is selected in Maya becomes this row's objects; nothing
         # selected = the whole scene. environment_SET decides an environment.
         selection = [] if code == env.ENV_CODE else cmds.ls(selection=True) or []
-        problem = self._check_objects(code, selection)
+        problem = self._check_objects(code, selection, group)
         if problem:
             self.status.show_message(problem, ok=False)
             return
@@ -848,7 +848,7 @@ class PublishToolUI(QtWidgets.QDialog):
                    for n in cmds.ls(env.ENVIRONMENT_SET) or [])
 
     @staticmethod
-    def _check_objects(code, objects):
+    def _check_objects(code, objects, asset_type=None):
         """Cameras only go to their shot (spec "Cameras"): a Camera row
         takes exactly one camera, an asset row never takes one."""
         if code == cam.CAM_CODE:
@@ -889,7 +889,7 @@ class PublishToolUI(QtWidgets.QDialog):
                 import publishTool_textures as tex
                 api.check_rig_selection(objects)
                 api.check_cache_set(objects)
-                api.check_control_sets(objects)
+                api.check_control_sets(objects, asset_type)
                 tex.collect(objects)        # missing textures
             except api.PublishError as e:
                 return str(e)
@@ -903,7 +903,8 @@ class PublishToolUI(QtWidgets.QDialog):
                                      ok=False)
             return
         for r in rows:
-            problem = self._check_objects(self._rows[r]["code"], selection)
+            problem = self._check_objects(self._rows[r]["code"], selection,
+                                          self._rows[r]["asset_type"])
             if problem:
                 self.status.show_message(problem, ok=False)
                 return

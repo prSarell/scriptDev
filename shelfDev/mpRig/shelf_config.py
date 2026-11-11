@@ -27,6 +27,7 @@ RIGTOOL_SCRIPTS = [
     "nameStripper/nameStripper/ps_namespace_stripper.py",
     "mh_body_clean/mh_body_clean_api.py",
     "mh_body_clean/mh_body_clean_ui.py",
+    "rigSets.py",
 ]
 
 # Scripts from renderDev/ — deployed flat to ~/maya/scripts/.
@@ -186,6 +187,17 @@ BUTTONS = [
             "importlib.reload(tlmCorrectiveBS_api)\n"
             "importlib.reload(tlmCorrectiveBS_ui)\n"
             "tlmCorrectiveBS_ui.show()"
+        ),
+    },
+    {
+        "label": "Rig Sets",
+        "tooltip": "Rig Sets — check the rig for the sets a pipe Rigging publish needs (cache_SET + controls) and build any that are missing",
+        "icon": "iconRigSets.png",
+        "command": (
+            "import importlib\n"
+            "import rigSets\n"
+            "importlib.reload(rigSets)\n"
+            "rigSets.show()"
         ),
     },
 ]
