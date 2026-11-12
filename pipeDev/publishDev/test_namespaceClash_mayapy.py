@@ -9,13 +9,17 @@ error. Publish now refuses, and the working scene is left as it was.
 Throwaway folders in %TEMP%; nothing real is touched.
 """
 import os, sys, shutil, tempfile
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "layoutDev"),
+                os.path.join(os.path.dirname(HERE), "projectDev")]
+from PySide6 import QtWidgets
+app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 
 import maya.standalone
 maya.standalone.initialize()
 import maya.cmds as cmds
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
 import publishTool_api as api
 
 base = tempfile.mkdtemp(prefix="nsclash_")
@@ -106,6 +110,94 @@ try:
     check("publish() with a clash -> refused", False)
 except api.PublishError as e:
     check("publish() with a clash -> refused before anything else", "(taken)" in str(e) and calls == [])
+
+# --- 2026-11-12, fieldA: grass imported twice left namespaced copies of its
+#     curves and shaders. Unassigned shaders are never published, so they
+#     don't clash; real clashes get a Fix button.
+def fieldA_like():
+    fresh()
+    cmds.namespace(add="tuft"); cmds.namespace(add="tuft:fieldA")
+    # Ours, plain names: the ground and its shader.
+    ground = cmds.polyPlane(name="ground")[0]
+    mat = cmds.shadingNode("lambert", asShader=True, name="lambert_ground")
+    sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="lambert3SG")
+    cmds.connectAttr(mat + ".outColor", sg + ".surfaceShader")
+    cmds.sets(ground, edit=True, forceElement=sg)
+    # The import's copy of it, assigned to nothing.
+    mat2 = cmds.shadingNode("lambert", asShader=True, name="tuft:fieldA:lambert_ground")
+    sg2 = cmds.sets(renderable=True, noSurfaceShader=True, empty=True,
+                    name="tuft:fieldA:lambert3SG")
+    cmds.connectAttr(mat2 + ".outColor", sg2 + ".surfaceShader")
+    return ground, mat2, sg2
+
+ground, mat2, sg2 = fieldA_like()
+before = names()
+api.check_namespace_clashes()
+check("unassigned namespaced shader with a plain twin: no clash, scene unchanged",
+      names() == before)
+
+ground, mat2, sg2 = fieldA_like()
+blade = cmds.polyCube(name="tuft:blade")[0]
+cmds.sets(blade, edit=True, forceElement=sg2)            # now it's in use: published
+cmds.createNode("animCurveTL", name="root_ctl_translateX")
+loose = cmds.createNode("animCurveTL", name="tuft:root_ctl_translateX")
+cmds.setKeyframe(loose, time=1, value=0)
+cmds.lockNode(loose, lock=False)
+try:
+    api.check_namespace_clashes()
+    clash = None
+except api.NamespaceClash as e:
+    clash = e
+check("shader on a mesh + a loose curve: refused, as a NamespaceClash with the nodes",
+      clash is not None and sorted(cmds.ls(clash.uuids)) == sorted(
+          ["tuft:fieldA:lambert3SG", "tuft:fieldA:lambert_ground", "tuft:root_ctl_translateX"]))
+fix = api.plan_namespace_fix(clash.uuids)
+check("plan: the loose curve deleted, the shader in use renamed, flattened",
+      [n.split("|")[-1] for n in fix["delete"]] == ["tuft:root_ctl_translateX"]
+      and sorted(new for _, new in fix["rename"])
+      == ["tuft_fieldA_lambert3SG", "tuft_fieldA_lambert_ground"] and fix["manual"] == [])
+removed = api.fix_namespace_clashes(fix)
+check("fixed: the blade keeps its shader, ours untouched, the curve gone",
+      cmds.sets("tuft:bladeShape", isMember="tuft_fieldA_lambert3SG")
+      and cmds.listConnections("tuft_fieldA_lambert3SG.surfaceShader") == ["tuft_fieldA_lambert_ground"]
+      and cmds.sets("groundShape", isMember="lambert3SG") and not cmds.objExists("tuft:root_ctl_translateX")
+      and cmds.objExists("root_ctl_translateX"))
+check("fixed: empty namespace tuft:fieldA removed, tuft kept (the blade's still in it)",
+      removed == ["tuft:fieldA"] and cmds.namespace(exists=":tuft"))
+cmds.undo()
+check("one Ctrl+Z puts it all back", cmds.objExists("tuft:fieldA:lambert3SG")
+      and cmds.objExists("tuft:root_ctl_translateX") and not cmds.objExists("tuft_fieldA_lambert3SG"))
+cmds.redo()
+before = names()
+api.check_namespace_clashes()
+check("... and after the fix the publish's check passes", names() == before)
+
+# --- MetaHuman DNA (linked by name, review #7) is left for the student
+fresh()
+cmds.createNode("network", name="head_rl4"); cmds.createNode("network", name="wip:head_rl4")
+api.MANUAL_FIX_TYPES = ("network",)          # stands in for embeddedNodeRL4
+try:
+    api.check_namespace_clashes()
+    fix = None
+except api.NamespaceClash as e:
+    fix = api.plan_namespace_fix(e.uuids)
+api.MANUAL_FIX_TYPES = ("embeddedNodeRL4",)
+check("DNA node: left for the student, nothing renamed or deleted",
+      fix and fix["manual"] == ["wip:head_rl4"] and not fix["rename"] and not fix["delete"])
+
+# --- The window's popup lists the plan and fixes on the button
+import publishTool_ui as ui
+ground, mat2, sg2 = fieldA_like()
+cmds.sets(cmds.polyCube(name="tuft:blade")[0], edit=True, forceElement=sg2)
+try:
+    api.check_namespace_clashes()
+except api.NamespaceClash as e:
+    dialog = ui.NamespaceFixDialog("fieldA env — nothing published:\n" + str(e),
+                                   api.plan_namespace_fix(e.uuids))
+buttons = dict((b.text(), b) for b in dialog.findChildren(QtWidgets.QPushButton))
+check("popup: Fix Namespace Clashes and Not Now", sorted(buttons) == ["Fix Namespace Clashes", "Not Now"])
+buttons["Fix Namespace Clashes"].click()
+check("... the button fixes the scene", dialog.fixed and cmds.objExists("tuft_fieldA_lambert3SG"))
 
 print("\n%d/%d passed" % (sum(results), len(results)))
 shutil.rmtree(base, ignore_errors=True)

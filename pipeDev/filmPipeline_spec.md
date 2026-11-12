@@ -772,6 +772,23 @@ The tools are developed side by side:
     line says which namespaces were taken off. A whole-scene publish with
     namespaces is exported; a clean one is still copied. Name clashes
     while stripping get Maya's usual number (`lambert7` → `lambert8`).
+    **Superseded (review #7, 2026-10-30):** a clash refuses the publish
+    instead (a renamed DNA node breaks with no error). **2026-11-12
+    (DECIDED + built):** unassigned shaders don't count, since they're
+    never published (user: "the shaders connected to models in the scene
+    should be published 100% but if the shader is not connected to a mesh
+    of some description it can be excluded from the publish"). A real
+    clash still refuses, and the red popup offers **Fix Namespace
+    Clashes** (user: "can the pipe offer to correct the namespace clashes
+    for the student?"). The popup lists what it will do to the working
+    scene: animation curves that drive nothing are deleted (unlocked
+    first); anything in use, shaders on meshes included, is renamed with
+    its namespace folded in (`tuft_002:fieldA:lambert_ground` →
+    `tuft_002_fieldA_lambert_ground`), and the node it clashed with is never
+    touched. MetaHuman DNA nodes are left for the student. Empty namespaces
+    are removed; one Ctrl+Z undoes it. The student then publishes again.
+    A namespace clash never reaches a publish (user: "We don't want name
+    space clashes in publish").
   - **Build Shot always uses the clean namespace** (`backpack:`). An empty
     leftover namespace is removed first. One still holding nodes is
     explained ("already used in this scene by ..."), never turned into
@@ -3223,6 +3240,28 @@ models** (the backpack's rules). Environments need different ones.
     was), and the row is added. The Publish window also re-reads H's
     assets/shots on every refresh, so an asset made while it's open shows
     up. An override for publishing elsewhere stays parked (§4d).
+- **2026-11-12 changes (DECIDED + built), replacing the 2026-10-22 building
+  rule and the locator decisions above:**
+  - **Any number of groups in every role set.** `building_SET` no longer
+    has to hold one group called `buildings`: like `landscape_SET` and
+    `sky_SET` it takes any groups or objects, nested however the artist
+    likes (e.g. `buildings` > `skyscrapers` / `shopfronts` > each
+    building). Refused cases dropped: something else in `building_SET`,
+    a loose mesh inside `buildings`, two buildings with the same name.
+  - **Locators aren't part of the publish.** User: "the locator is about
+    locking a point in space for the building position. Lets remove this
+    as an essential part of the publish. Locators should still be able to
+    be published if required, but we don't need it to cause the publish to
+    fail." Publish no longer makes `<group>_LOC` or the `locators` group;
+    an artist's own locators inside the sets publish like anything else
+    and are listed on the `pipe_locators` stamp. Model's convert still
+    clears the `locators` group out of older publishes.
+  - **A group named after its role is unpacked.** If a role set holds a
+    group called `landscape` / `buildings` / `sky` (as Layout makes them)
+    with no transforms of its own, its contents go straight into the
+    publish's role group, so there's no `buildings|buildings` (fieldA's
+    `set_002` had `landscape|landscape`). A group like that with
+    transforms is kept as it is.
 
 ### 4b. Studio Library data (started 2026-10-21)
 

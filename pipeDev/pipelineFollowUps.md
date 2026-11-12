@@ -296,9 +296,15 @@ hand. One T7 session could cover most of it.
       assignments, so lookdev must be re-linked to cached meshes by name
       or by a per-mesh tag attribute (e.g. `pipe_look`) that Alembic does
       carry.
-- [ ] Confirm the **house-on-locator** workflow: parent the published
-      `<asset>_model_GRP` under its `_LOC` (it stays locked, at the
-      locator's placement). Tested headless.
+- [x] ~~Confirm the **house-on-locator** workflow~~: dropped 2026-11-12.
+      Publish no longer makes `_LOC` locators (spec §4c, 2026-11-12); an
+      artist who wants one adds their own, and it publishes as is.
+- [ ] Hand test in Maya: an environment with several groups (and groups
+      inside groups) in `building_SET` publishes, and an older publish
+      with a `locators` group still converts cleanly (Model).
+- [ ] Hand test in Maya: fieldA `set_002` (grass imported twice) hits a
+      namespace clash, **Fix Namespace Clashes** clears it, and the
+      environment publishes (spec 2026-11-12, namespaces).
 
 ## 5. Studio Library (spec §4b, built 2026-10-21)
 

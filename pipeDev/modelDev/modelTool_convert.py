@@ -16,7 +16,7 @@ the asset's top node (or anything inside it) and click:
        exactly where it was
     3. the namespace comes off everything that came in with it
     4. what the publish locked is unlocked (an environment's sky), and the
-       publish's own locators group is removed (republishing makes new ones)
+       locators group of an environment published before 2026-11-12 is removed
 
 A fresh start (user): no note of where it came from. Nothing is frozen,
 cleaned or moved; that's left to the student. Environment sets
@@ -183,8 +183,8 @@ def convert(group):
             build.own_files(nodes, pulled, place["folder"])
     group = (cmds.ls(uuid, long=True) or cmds.ls("|" + name.lstrip("|"), long=True))[0]
 
-    # Leftovers of the publish: its locators (an environment republish makes
-    # new ones) and its locks.
+    # Leftovers of the publish: the locators group older environment
+    # publishes made (not made since 2026-11-12) and its locks.
     environment = _is_environment(group)
     for child in _children(group):
         if environment and _bare(child) == env.LOCATOR_GROUP:

@@ -9,23 +9,26 @@ are, sets say what they are:
     environment_SET
       landscape_SET   stays where it is, cleaned up like a model (frozen,
                       history deleted, Mesh Cleanup); the geometry doesn't move
-      building_SET    one group called buildings, holding a group per
-                      building, named freely (user, 2026-10-22);
-                      transforms kept; a <group>_LOC locator is made at each
-                      building's placement (the group's transform, or, if
-                      the group has none, the bottom-centre of its pieces)
-                      so it can be zeroed out, worked on and snapped back
+      building_SET    any number of groups / objects, named freely, nested
+                      however the artist likes (user, 2026-11-12); transforms
+                      kept
       sky_SET         image planes / skydome geometry / clouds; transforms
                       kept, locked in the publish; pictures and image
                       sequences travel with it
+
+Each set takes any number of groups or objects. A group named after its
+role (landscape / buildings / sky, as Layout makes them) with no transforms
+of its own is unpacked, so the publish has buildings > shed, not
+buildings > buildings > shed. Locators aren't made any more (user,
+2026-11-12: "lets remove this as an essential part of the publish"): an
+artist's own locators in the sets publish like anything else.
 
 The published file (copies only; the working scene is never changed):
 
     <asset>_model_GRP                pipe group, stamped, locked at the origin
       landscape / buildings / sky    the copies, by role
-      locators                       <group>_LOC per building
-    + environment_SET and its role sets, holding the copies (building_SET
-      holds buildings, so the publish follows the same rules as the scene)
+    + environment_SET and its role sets, holding the copies, so the publish
+      follows the same rules as the scene
 
 plus <published name>.abc beside it: one frame of the landscape and
 buildings, for visual reference when a shot is rebuilt.
@@ -48,8 +51,9 @@ ENV_TYPE = "environment"
 ENVIRONMENT_SET = "environment_SET"
 LANDSCAPE, BUILDINGS, SKY = "landscape", "buildings", "sky"
 ROLE_SETS = ((LANDSCAPE, "landscape_SET"), (BUILDINGS, "building_SET"), (SKY, "sky_SET"))
-BUILDINGS_GROUP = "buildings"   # the one group building_SET holds
-LOCATOR_SUFFIX = "_LOC"
+BUILDINGS_GROUP = "buildings"   # the group Layout makes for building_SET
+# Publishes before 2026-11-12 made <building>_LOC locators in this group;
+# Model's convert still clears it out of those.
 LOCATOR_GROUP = "locators"
 TRANSFORM_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY",
                       "rotateZ", "scaleX", "scaleY", "scaleZ")
@@ -67,7 +71,7 @@ def _short(node):
 def _how():
     return ("\n\nAn environment publish needs %s (Create > Sets > Set) holding these "
             "sets, each made by hand:\n  landscape_SET   the terrain: stays where it is\n"
-            "  building_SET    one group called buildings, holding a group per building\n"
+            "  building_SET    buildings: any groups or objects\n"
             "  sky_SET         image planes, skydome, clouds\nPut the objects or groups in "
             "the set for their role; a group's whole contents go with it." % ENVIRONMENT_SET)
 
@@ -118,41 +122,25 @@ def _is_identity(node):
     return all(abs(a - b) < TOLERANCE for a, b in zip(values, identity))
 
 
-def placed_by_pieces(group):
-    """True if a building group sits at the origin while what's inside it
-    is somewhere else: the placement is on the pieces, not the group."""
-    if not _is_identity(group):
-        return False
-    box = cmds.exactWorldBoundingBox(group)
-    size = max(box[3] - box[0], box[4] - box[1], box[5] - box[2])
-    centre = [(box[i] + box[i + 3]) / 2.0 for i in range(3)]
-    return sum(c * c for c in centre) ** 0.5 > max(size, TOLERANCE)
-
-
-def pieces_placement(group):
-    """Where a building's locator goes when its group has no transforms
-    (user, 2026-10-21: "if there are no transforms on a building the pipe
-    shouldn't reject it"): the bottom-centre of what's inside (where a
-    building modelled at 0,0,0 has its origin), turned like the pieces if
-    they're all turned the same way. Returns (translation, rotation)."""
-    box = cmds.exactWorldBoundingBox(group)
-    bottom = [(box[0] + box[3]) / 2.0, box[1], (box[2] + box[5]) / 2.0]
-    turns = [cmds.xform(c, query=True, worldSpace=True, rotation=True)
-             for c in cmds.listRelatives(group, children=True, fullPath=True,
-                                         type="transform") or []]
-    same = turns and all(all(abs(a - b) < 1e-3 for a, b in zip(t, turns[0])) for t in turns)
-    return bottom, (turns[0] if same else [0.0, 0.0, 0.0])
+def unpacks(node, role):
+    """True for a group named after its role (landscape / buildings / sky,
+    as Layout makes them) that has no shape and no transforms of its own:
+    the publish takes its contents, not the group, so nothing ends up
+    nested in a group of the same name (fieldA's landscape|landscape)."""
+    return (_short(node) == role
+            and not cmds.listRelatives(node, shapes=True)
+            and bool(cmds.listRelatives(node, children=True, type="transform"))
+            and _is_identity(node))
 
 
 def check_environment(h_root=None, film=None):
     """What an environment publish takes, by role:
-    {"sets", landscape: [...], buildings: [...], sky: [...], "warnings"},
-    buildings being each building's group. A role with nothing in it (no
-    set, an empty set, or only empty groups) is left out with a warning:
-    not every environment has buildings or a sky (user, 2026-10-26).
-    Raises PublishError explaining what to fix. (h_root/film: kept for
-    callers; building names aren't matched to H-drive assets any more,
-    user 2026-10-22.)"""
+    {"sets", landscape: [...], buildings: [...], sky: [...], "warnings"}:
+    the top-most transforms in each role set, any number of them (user,
+    2026-11-12). A role with nothing in it (no set, an empty set, or only
+    empty groups) is left out with a warning: not every environment has
+    buildings or a sky (user, 2026-10-26). Raises PublishError explaining
+    what to fix. (h_root/film: kept for callers.)"""
     sets = find_sets()
     found = {"sets": sets, "warnings": []}
     seen = {}
@@ -170,7 +158,6 @@ def check_environment(h_root=None, film=None):
                 raise PublishError("%s (%s) is inside %s (%s). Each thing has one role: "
                                    "take the inner one out of its set."
                                    % (_short(b), seen[b], _short(a), seen[a]))
-    found[BUILDINGS] = buildings_in(found[BUILDINGS])
     empty = [role for role, _ in ROLE_SETS if not found[role]]
     if len(empty) == len(ROLE_SETS):
         raise PublishError("There's nothing to publish: landscape, buildings and sky are "
@@ -178,35 +165,7 @@ def check_environment(h_root=None, film=None):
     if empty:
         found["warnings"].append("No %s in this environment, so it was published without."
                                  % " or ".join(empty))
-    names = [_short(g) for g in found[BUILDINGS]]
-    clashes = sorted(set(n for n in names if names.count(n) > 1))
-    if clashes:
-        raise PublishError("Two buildings are both called %s: each locator is named "
-                           "after its group, so rename one." % ", ".join(clashes))
     return found
-
-
-def buildings_in(members):
-    """The buildings: building_SET holds one group called buildings, and
-    each group inside it is a building, named however the student likes
-    (user, 2026-10-22: room for more than one building). Empty building
-    groups are skipped; no buildings at all is fine."""
-    if not members:
-        return []
-    if len(members) != 1 or _short(members[0]) != BUILDINGS_GROUP:
-        raise PublishError(
-            "building_SET should hold just one group called %s (it holds %s). Put "
-            "each building in its own group inside %s, and add %s to building_SET."
-            % (BUILDINGS_GROUP, ", ".join(_short(m) for m in members),
-               BUILDINGS_GROUP, BUILDINGS_GROUP))
-    buildings = [g for g in cmds.listRelatives(members[0], children=True, fullPath=True,
-                                               type="transform") or [] if _has_contents(g)]
-    for group in buildings:
-        if not cmds.listRelatives(group, children=True, type="transform"):
-            raise PublishError(
-                "%s in %s isn't a group. Put each building (even a placeholder box) in "
-                "its own group inside %s." % (_short(group), BUILDINGS_GROUP, BUILDINGS_GROUP))
-    return buildings
 
 
 # ---------------------------------------------------------------------------
@@ -318,14 +277,32 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                     for uuid in roles[role]:
                         original = cmds.ls(uuid, long=True)[0]
                         short = original.split("|")[-1]
+                        unpack = unpacks(original, role)
+                        # Children by name (a copy's children keep their names).
+                        inner = dict((c.split("|")[-1], cmds.ls(c, uuid=True)[0])
+                                     for c in cmds.listRelatives(
+                                         original, children=True, fullPath=True,
+                                         type="transform") or []) if unpack else {}
                         copy = cmds.duplicate(original, returnRootsOnly=True)[0]
                         moved.append((uuid, short))
                         cmds.rename(original, "pipeTmp_" + short)
                         copy = cmds.rename(copy, short)
                         # World space kept: parent keeps the world placement.
-                        copy = cmds.parent(copy, holders[role])[0]
-                        copies[role].append(cmds.ls(cmds.ls(copy, long=True)[0], uuid=True)[0])
-                        twins.append((uuid, copies[role][-1]))
+                        copy = cmds.ls(cmds.parent(copy, holders[role])[0], long=True)[0]
+                        if not unpack:
+                            copies[role].append(cmds.ls(copy, uuid=True)[0])
+                            twins.append((uuid, copies[role][-1]))
+                            continue
+                        # A group named after its role: its contents go in
+                        # the role's group instead (no buildings|buildings).
+                        for child in cmds.listRelatives(copy, children=True, fullPath=True,
+                                                        type="transform") or []:
+                            name = child.split("|")[-1]
+                            child = cmds.ls(cmds.parent(child, holders[role])[0], long=True)[0]
+                            copies[role].append(cmds.ls(child, uuid=True)[0])
+                            if name in inner:
+                                twins.append((inner[name], copies[role][-1]))
+                        cmds.delete(copy)
                 # Landscape: cleaned up like a model; the geometry stays put.
                 land = cmds.ls(copies[LANDSCAPE], long=True)
                 if land:
@@ -340,38 +317,20 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                     cmds.delete(everything, constructionHistory=True)
                     cmds.makeIdentity(land, apply=True, translate=True, rotate=True,
                                       scale=True, normal=0, preserveNormals=True)
-                # Buildings: transforms kept; a locator at each placement.
-                loc_group = cmds.ls(_plain_group(LOCATOR_GROUP, group), long=True)[0]
-                locators = []
-                for uuid in copies[BUILDINGS]:
-                    building = cmds.ls(uuid, long=True)[0]
-                    name = building.split("|")[-1]
-                    loc = cmds.spaceLocator(name=name + LOCATOR_SUFFIX)[0]
-                    loc = cmds.parent(loc, loc_group)[0]
-                    if placed_by_pieces(building):
-                        # No transforms on the group: placed from its pieces.
-                        where, turn = pieces_placement(building)
-                        cmds.xform(loc, worldSpace=True, translation=where, rotation=turn)
-                        warnings.append(
-                            "%s has no transforms of its own, so %s%s was put at the bottom "
-                            "centre of what's inside it%s." % (
-                                name, name, LOCATOR_SUFFIX,
-                                ", turned like its pieces (%.1f deg)" % turn[1]
-                                if any(turn) else ""))
-                    else:
-                        cmds.xform(loc, worldSpace=True, matrix=cmds.xform(
-                            building, query=True, worldSpace=True, matrix=True))
-                    locators.append(cmds.ls(loc)[0].split("|")[-1])
-                # Sky: transforms kept, locked.
+                # Buildings: transforms kept, as they are. Sky: kept, locked.
                 for uuid in copies[SKY]:
                     _lock_channels(cmds.ls(uuid, long=True)[0])
+                # The artist's own locators, if any, travel like anything
+                # else; recorded on the stamp (Model's convert reads it).
+                locators = sorted(set(
+                    cmds.listRelatives(shape, parent=True)[0] for shape in cmds.ls(
+                        cmds.listRelatives(list(holders.values()), allDescendents=True,
+                                           fullPath=True) or [], type="locator")))
                 # The sets again, on the copies, so the publish says what's what.
                 role_sets = []
                 for role, name in ROLE_SETS:
                     if found["sets"][role]:
                         nodes = cmds.ls(copies[role], long=True)
-                        if role == BUILDINGS and nodes:
-                            nodes = [holders[BUILDINGS]]    # the buildings group, as in the scene
                         role_sets.append(cmds.sets(nodes, name=name) if nodes else
                                          cmds.sets(empty=True, name=name))
                 env_set = cmds.sets(role_sets, name=ENVIRONMENT_SET)

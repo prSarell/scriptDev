@@ -205,6 +205,44 @@ class FailedDialog(QtWidgets.QDialog):
         layout.addWidget(btn)
 
 
+class NamespaceFixDialog(FailedDialog):
+    """The red popup for a namespace clash, plus what the Fix button would
+    do to the working scene, so the student says yes knowing (user,
+    2026-11-12). self.fixed: True once fixed."""
+
+    def __init__(self, failure, fix, parent=None):
+        super(NamespaceFixDialog, self).__init__([failure], parent)
+        self.fix, self.fixed = fix, False
+        layout = self.layout()
+        got_it = layout.itemAt(layout.count() - 1).widget()
+
+        def listing(title, names):
+            names = [n.split("|")[-1] for n in names]
+            more = "\n  ... and %d more" % (len(names) - 8) if len(names) > 8 else ""
+            return "%s\n  %s%s" % (title, "\n  ".join(names[:8]), more) if names else ""
+
+        parts = [listing("Delete (animation curves driving nothing):", fix["delete"]),
+                 listing("Rename (in use, so they're published):",
+                         ["%s -> %s" % (n.split("|")[-1], new) for n, new in fix["rename"]]),
+                 listing("Left for you (MetaHuman DNA is linked by name):", fix["manual"])]
+        plan = QtWidgets.QLabel("Fix Namespace Clashes will change your scene (Ctrl+Z undoes "
+                                "it):\n\n" + "\n\n".join(p for p in parts if p))
+        plan.setWordWrap(True)
+        plan.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        layout.insertWidget(layout.count() - 1, plan)
+        if fix["delete"] or fix["rename"]:
+            btn = QtWidgets.QPushButton("Fix Namespace Clashes")
+            btn.setMinimumHeight(28)
+            btn.clicked.connect(self._fix)
+            layout.insertWidget(layout.count() - 1, btn)
+            got_it.setText("Not Now")
+
+    def _fix(self):
+        self.removed = api.fix_namespace_clashes(self.fix)
+        self.fixed = True
+        self.accept()
+
+
 def _cell(text, colour=None):
     item = QtWidgets.QTableWidgetItem(text)
     if colour:
@@ -1007,6 +1045,7 @@ class PublishToolUI(QtWidgets.QDialog):
         lines, ok, published, cancelled = [], True, False, False
         failures = []   # for the FailedDialog
         warnings = []   # published, but needs a look (FailedDialog, amber)
+        clash = None    # (failure text, uuids): a namespace clash, offered a fix
         _, ctx = self._scene_context()
         in_shot = bool(ctx) and ctx["kind"] == "shot"
         # Only the ticked rows. All the Animation items for one stage go out
@@ -1073,6 +1112,11 @@ class PublishToolUI(QtWidgets.QDialog):
                                  % label)
                     cancelled = True
                     continue
+                except api.NamespaceClash as e:
+                    lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
+                    clash = clash or ("%s — nothing published:\n%s" % (label, e), e.uuids)
+                    ok = False
+                    continue
                 except Exception as e:
                     lines.append("%s: FAILED — nothing published:\n  %s" % (label, e))
                     failures.append("%s — nothing published:\n%s" % (label, e)
@@ -1115,6 +1159,14 @@ class PublishToolUI(QtWidgets.QDialog):
         self.status.show_message("\n".join(lines), ok=ok)
         if failures or warnings:
             FailedDialog(failures, parent=self, warnings=warnings).exec()
+        if clash:
+            dialog = NamespaceFixDialog(clash[0], api.plan_namespace_fix(clash[1]), self)
+            dialog.exec()
+            if dialog.fixed:
+                self.status.show_message(
+                    "Namespace clashes fixed%s. Press Publish again (it saves first)."
+                    % (" (namespaces %s removed)" % ", ".join(dialog.removed)
+                       if dialog.removed else ""))
 
     def _review(self, label):
         """The publish's review step: watch the movie in RV, then Publish or

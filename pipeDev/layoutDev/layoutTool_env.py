@@ -6,7 +6,7 @@ published into the groups. Nothing they've made is moved or changed.
 
     environment                 group
       landscape                 group, in landscape_SET
-      buildings                 group, in building_SET (a group per building inside)
+      buildings                 group, in building_SET (buildings inside, any way)
       sky                       group, in sky_SET
     environment_SET
       landscape_SET / building_SET / sky_SET
@@ -32,8 +32,8 @@ import maya.cmds as cmds
 import publishTool_env as env
 
 TOP_GROUP = "environment"
-# Role -> the group made for it under environment (buildings: the one group
-# building_SET must hold, publishTool_env.BUILDINGS_GROUP).
+# Role -> the group made for it under environment (Publish unpacks a group
+# named after its role, publishTool_env.unpacks).
 ROLE_GROUPS = ((env.LANDSCAPE, "landscape"), (env.BUILDINGS, env.BUILDINGS_GROUP),
                (env.SKY, "sky"))
 
@@ -115,8 +115,8 @@ def run():
     text = "Made:\n  " + "\n  ".join(made) if made else "Everything was already there."
     if made and kept:
         text += "\n\nAlready there (left as is):\n  " + "\n  ".join(kept)
-    text += ("\n\nPut the terrain in landscape, each building in its own group inside "
-             "buildings, and image planes / skydome in sky. A group you don't need "
+    text += ("\n\nPut the terrain in landscape, the buildings in buildings (grouped "
+             "any way you like), and image planes / skydome in sky. A group you don't need "
              "(no buildings, no sky) can stay empty: the publish leaves it out.")
     print(text)
     cmds.confirmDialog(title="Environment Sets", message=text, button=["OK"])

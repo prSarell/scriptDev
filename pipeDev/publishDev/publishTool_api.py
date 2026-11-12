@@ -72,6 +72,16 @@ class PublishCancelled(PublishError):
     """The student watched the movie and chose not to publish."""
 
 
+class NamespaceClash(PublishError):
+    """Taking the namespaces off would rename something (_NoNamespaces).
+    uuids: the namespaced nodes that clash, for the Publish window's Fix
+    button (plan_namespace_fix / fix_namespace_clashes)."""
+
+    def __init__(self, uuids, message):
+        super(NamespaceClash, self).__init__(message)
+        self.uuids = list(uuids)
+
+
 # ---------------------------------------------------------------------------
 # Settings — where the H drive is. Drive letters differ between setups
 # (home test rig, RMIT), so it's a setting, never hard-coded (§3h).
@@ -728,11 +738,18 @@ def copy_to_h_drive(scene_path, plan):
 
 def namespaced_nodes():
     """Nodes in the scene with a namespace that the publish can rename:
-    not from a reference, not locked, not Maya's own defaults."""
+    not from a reference, not locked, not Maya's own defaults, and not an
+    unassigned shader. Unassigned shaders are never published (DECIDED
+    2026-10-19; user 2026-11-12: "if the shader is not connected to a mesh
+    of some description it can be excluded from the publish"), so their
+    names can't clash in a publish (fieldA's incameraGrass:fieldA:lambert3SG)."""
+    unused = set(unused_shading_nodes())
     found = []
     for node in cmds.ls(recursive=True) or []:
         short = node.split("|")[-1]
         if ":" not in short.lstrip(":"):
+            continue
+        if node in unused:
             continue
         if cmds.referenceQuery(node, isNodeReferenced=True):
             continue
@@ -766,14 +783,14 @@ class _NoNamespaces(object):
             got = cmds.rename(node, ":" + wanted, ignoreShape=True)
             self.renamed.append((uuid, short))
             if got.split("|")[-1].lstrip(":") != wanted:
-                clashes.append((short.lstrip(":"), wanted))
+                clashes.append((short.lstrip(":"), wanted, uuid))
         if clashes:
             self.__exit__()
-            raise PublishError(
+            raise NamespaceClash([u for _, _, u in clashes],
                 "Taking the namespaces off would give these the same name as something "
                 "else in the scene, so Maya would rename them and connections could break:\n  %s"
                 "\n\nRename one of each pair (or delete the one you don't need), then publish "
-                "again." % "\n  ".join("%s -> %s (taken)" % c for c in clashes[:10]))
+                "again." % "\n  ".join("%s -> %s (taken)" % c[:2] for c in clashes[:10]))
         return self
 
     def __exit__(self, *exc):
@@ -789,6 +806,81 @@ def check_namespace_clashes():
     namespaces can't come off cleanly: a dry run of _NoNamespaces."""
     with _NoNamespaces():
         pass
+
+
+# The Fix button for namespace clashes (user, 2026-11-12: "can the pipe
+# offer to correct the namespace clashes for the student?"). It changes
+# the working scene, so the window shows this plan and asks first.
+MANUAL_FIX_TYPES = ("embeddedNodeRL4",)     # MetaHuman DNA: linked by name (review #7)
+
+
+def _flat_name(node):
+    """tuft_002:fieldA:lambert_ground -> tuft_002_fieldA_lambert_ground,
+    made unique if even that is taken."""
+    base = node.split("|")[-1].lstrip(":").replace(":", "_")
+    name, n = base, 2
+    while cmds.ls(name) or cmds.ls("*:" + name, recursive=True):
+        name, n = "%s_%d" % (base, n), n + 1
+    return name
+
+
+def plan_namespace_fix(uuids):
+    """What the Fix button would do to the clashing nodes:
+    {"delete": [...], "rename": [(node, new name)], "manual": [...]}.
+    delete: animation curves driving nothing (left over from an import);
+    they'd never be published. rename: anything in use, shaders on meshes
+    included (those are published): the namespace folds into the name, so
+    it's unique and still readable; the node it clashed with is never
+    touched. manual: MetaHuman DNA nodes, left for the student."""
+    fix = {"delete": [], "rename": [], "manual": []}
+    taken = set()
+    for node in cmds.ls(list(uuids), long=True) or []:
+        if cmds.nodeType(node) in MANUAL_FIX_TYPES:
+            fix["manual"].append(node)
+        elif (cmds.ls(node, type="animCurve")
+              and not cmds.listConnections(node, source=False, destination=True)):
+            fix["delete"].append(node)
+        else:
+            name = _flat_name(node)
+            while name in taken:
+                name += "_2"
+            taken.add(name)
+            fix["rename"].append((node, name))
+    return fix
+
+
+def fix_namespace_clashes(fix):
+    """Do plan_namespace_fix's plan in the working scene (one undo step),
+    then remove namespaces it left empty. Returns the namespaces removed."""
+    before = set(n.split("|")[-1].lstrip(":").rsplit(":", 1)[0]
+                 for n in fix["delete"] + [n for n, _ in fix["rename"]])
+    cmds.undoInfo(openChunk=True, chunkName="pipeFixNamespaceClashes")
+    try:
+        # By UUID: a rename can change another node's path.
+        renames = [(cmds.ls(n, uuid=True)[0], name) for n, name in fix["rename"]
+                   if cmds.objExists(n)]
+        doomed = [n for n in fix["delete"] if cmds.objExists(n)]
+        if doomed:
+            cmds.lockNode(doomed, lock=False)
+            cmds.delete(doomed)
+        for uuid, name in renames:
+            node = cmds.ls(uuid)
+            if node:
+                cmds.rename(node[0], ":" + name, ignoreShape=True)
+        removed = []
+        # Deepest first, so incameraGrass:fieldA goes before incameraGrass.
+        for ns in sorted(before, key=lambda s: -s.count(":")):
+            parts = ns.split(":")
+            for depth in range(len(parts), 0, -1):
+                name = ":".join(parts[:depth])
+                if (cmds.namespace(exists=":" + name)
+                        and not cmds.namespaceInfo(":" + name, listNamespace=True)
+                        and name not in removed):
+                    cmds.namespace(removeNamespace=":" + name)
+                    removed.append(name)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return removed
 
 
 # Every rig publish must contain this set, made by hand by the rigger: it
