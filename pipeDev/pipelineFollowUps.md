@@ -76,6 +76,44 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
       renders carry Arnold's watermark. Do RMIT lab machines have them? If
       not, finals need a licensed machine, the farm, or an in-Maya render
       option.
+- [ ] **Flow Render (Autodesk cloud rendering), researched 2026-11-13.**
+      The user: "this might be a great option for students to handle test
+      render submissions during animation without locking them out of
+      machines." Planned as renderSub's **Render on: Flow Render (cloud)**
+      (the greyed "Render farm" slot).
+      - What it is: Arnold's cloud render service (tech preview since Arnold
+        7.5.1, March 2026), not part of Flow Production Tracking. 40 h
+        (2,400 min) free render time per user per month; CPU only; no
+        end date or price announced; 7.5.4 added custom OCIO, UDIM tokens,
+        a per-frame time limit. Sources: cgchannel.com Arnold 7.5.1 / 7.5.3
+        / 7.5.4 articles; blogs.autodesk.com 2026-04-27 "Cloud Rendering
+        with Autodesk Flow Render".
+      - Scriptable (read on this machine, Maya 2027's Arnold):
+        `C:\Program Files\Autodesk\Arnold\Maya2027\scripts\flow_render\`.
+        `ExportQueueManager.instance().createNewJob()` then
+        `flow_render.cmds.submitFlowRender.submitFlowRender(cameras, width,
+        height, startFrame, endFrame, frameStep, frameSampling="1001 1030 ...",
+        autoDownload=True, autoDownloadLocation=<version folder>,
+        jobId=job.job_id ...)`. Status: `cmds.flowRenderQuery(jobStatus=<id>)`
+        -> (status, percent); local id -> cloud id with
+        `flowRenderQuery(fgeIdFromJobId=...)` (see
+        `cmds/waitForFlowRenderJob.py`). Plug-in: `flowRender.mll`.
+      - How it uploads: saves a temp copy of the scene beside it, converts to
+        USD in a background mayabatch (Maya stays free), uploads, renders in
+        the cloud, downloads frames. Needs the scene saved.
+      - Blockers: (1) needs Arnold for Maya 5.6.1+: in Maya 2027 here, NOT
+        in Maya 2025's Arnold (the pipe's target); depends on RMIT lab
+        versions. (2) Unknown if RMIT education logins get the free hours.
+        (3) Preview: an extra option only, never a pipe dependency.
+        (4) Untested: do Build's `$PIPE_SCRATCH` references and Alembic
+        caches survive the USD export + upload? Does the export need an
+        Arnold batch licence (probably not)?
+      - [ ] **User hand test (~10 min):** Maya 2027, open SEQ010_160, Arnold
+        menu > Flow Render, sign in with the RMIT education account, submit
+        the Lighting-check frames at 25%. Report: accepted? frames correct
+        (references, caches, textures)? Then Claude builds the renderSub
+        option (frames into the version folder, then RV review / Publish as
+        usual).
 - [ ] Delete the test render when done with it: ShotGrid Version 13643 and
       `G:\H\NWF_SHF\...\SEQ010_140\images\lighting\e131988\e131988_render_v001`
       (watermarked, every 30th frame at 25%).
