@@ -21,6 +21,7 @@ import renderSub_api as api
 WINDOW = "renderSubWindow"
 KEEP_VAR = "renderSub_keepVersions"
 OPEN_RV_VAR = "renderSub_openInRV"
+HOW_VAR = "renderSub_how"          # sequence (default) or batch
 DEFAULT_KEEP = 3
 MODE_LABELS = (("shot", "Whole shot"), ("custom", "Custom range"),
                ("step", "Every Nth frame"), ("list", "Frame list"))
@@ -96,6 +97,21 @@ class RenderSubUI(object):
                        "of this shot in the same place.")
         cmds.menuItem(label="%s (%s)" % (api.WHERE_LABELS[api.LOCAL], api.where()["machine"]))
         cmds.menuItem(label="%s (coming soon)" % api.WHERE_LABELS[api.FARM], enable=False)
+        cmds.setParent("..")
+        self._row("Render")
+        cmds.columnLayout(adj=True)
+        self.w["how"] = cmds.radioCollection()
+        saved_how = cmds.optionVar(q=HOW_VAR) if cmds.optionVar(exists=HOW_VAR) else api.SEQUENCE
+        for how, tip in ((api.SEQUENCE, "Renders in this Maya, like Render > Render Sequence. "
+                                        "Maya's own licence covers it (no watermark). Maya is busy "
+                                        "until it's done; press Esc to stop."),
+                         (api.BATCH, "Renders in the background with Render.exe, so you can keep "
+                                     "working. Needs an Arnold batch licence, or the frames carry "
+                                     "Arnold's watermark.")):
+            cmds.radioButton(how, label=api.HOW_LABELS[how], annotation=tip,
+                             select=(how == saved_how),
+                             onCommand=lambda _, h=how: self._set_how(h))
+        cmds.setParent("..")
         cmds.setParent("..")
         self.w["summary"] = cmds.text(label="", align="left", font="boldLabelFont")
         self.w["estimate"] = cmds.text(label="", align="left")
@@ -204,6 +220,13 @@ class RenderSubUI(object):
             control(self.w[key], e=True, enable=on)
         self.update_counts()
 
+    def how(self):
+        return cmds.radioCollection(self.w["how"], q=True, select=True) or api.SEQUENCE
+
+    def _set_how(self, how):
+        cmds.optionVar(sv=(HOW_VAR, how))
+        self.update_counts()
+
     def percent(self):
         return api.RESOLUTIONS[cmds.optionMenu(self.w["size"], q=True, select=True) - 1]
 
@@ -223,7 +246,7 @@ class RenderSubUI(object):
         except api.PublishError as e:
             frames, text = [], str(e)
         if frames and self.ctx:
-            guess = api.predict(self.ctx["shot_project"], len(frames), (w, h))
+            guess = api.predict(self.ctx["shot_project"], len(frames), (w, h), how=self.how())
             if guess:
                 estimate = "About %s a frame on this computer, so about %s in all%s." % (
                     api.duration(guess["per_frame"]), api.duration(guess["total"]),
@@ -274,11 +297,13 @@ class RenderSubUI(object):
         camera = self.camera()
         if not camera:
             return _say("There's no camera to render through.")
+        how = self.how()
         try:
             frames = self.frames()
             changed = api.ensure_arnold()
-            if changed or cmds.file(query=True, modified=True):
+            if how == api.BATCH and (changed or cmds.file(query=True, modified=True)):
                 # The background render reads the saved file, not this session.
+                # (A sequence render renders the scene as it is open.)
                 if cmds.confirmDialog(title="renderSub", message="Save the scene and render it?",
                                       button=["Save and Render", "Cancel"],
                                       defaultButton="Save and Render", cancelButton="Cancel",
@@ -291,7 +316,9 @@ class RenderSubUI(object):
                 cmds.warning("renderSub: deleted unpublished local render(s) %s (keeping the "
                              "newest %d)." % (", ".join(lost), keep))
             info = api.plan_render(self.ctx, cmds.file(query=True, sceneName=True),
-                                   frames, camera, self.percent())
+                                   frames, camera, self.percent(), how=how)
+            if how == api.SEQUENCE:
+                return self._render_in_maya(info)
             _JOB = api.RenderJob(info)
         except (api.PublishError, OSError) as e:
             return _say(str(e))
@@ -300,6 +327,37 @@ class RenderSubUI(object):
         self.tick()
         _start_timer()
         self.refresh_versions()
+
+    def _render_in_maya(self, info):
+        """Sequence render: frame by frame in this Maya, with Maya's progress
+        bar (Esc stops it between frames) and the window's own."""
+        total = len(info["frames"])
+        cmds.progressBar(self.w["progress"], e=True, maxValue=total, progress=0)
+        cmds.progressWindow(title="renderSub", progress=0, maxValue=total, isInterruptable=True,
+                            status="Rendering %s in Maya (Esc to stop)" % info["version"])
+
+        def progress(done, total):
+            status = "Rendering %s: %d of %d frame(s) done" % (info["version"], done, total)
+            timing = api.timing(info)       # in Maya, each frame finishes before the next
+            if timing and done < total:
+                status += ", %s a frame, about %s left" % (
+                    api.duration(timing["per_frame"]),
+                    api.duration((total - done) * timing["per_frame"]))
+            cmds.progressBar(self.w["progress"], e=True, progress=done)
+            cmds.text(self.w["status"], e=True, label=status)
+            cmds.progressWindow(e=True, progress=done, status=status + "  (Esc to stop)")
+            cmds.refresh()
+            return not cmds.progressWindow(q=True, isCancelled=True)
+
+        try:
+            info = api.render_in_maya(info, progress)
+        except Exception as e:
+            info = api.finish_render(info, 1)
+            cmds.warning("renderSub: the render stopped: %s" % e)
+        finally:
+            cmds.progressWindow(endProgress=True)
+        self.refresh()
+        self._report(info)
 
     def _set_running(self, running):
         cmds.button(self.w["render"], e=True, enable=not running)
@@ -349,8 +407,10 @@ class RenderSubUI(object):
             cmds.text(self.w["status"], e=True, label="%s cancelled" % info["version"])
         else:
             cmds.text(self.w["status"], e=True, label="%s failed" % info["version"])
-            _say("%s didn't finish: %d frame(s) missing.\n\nEnd of the render log:\n%s"
-                 % (info["version"], len(info["missing"]), api.log_tail(info)))
+            where = ("Arnold's messages are in the Script Editor." if info.get("how") == api.SEQUENCE
+                     else "End of the render log:\n%s" % api.log_tail(info))
+            _say("%s didn't finish: %d frame(s) missing.\n\n%s"
+                 % (info["version"], len(info["missing"]), where))
 
     def cancel(self):
         if _JOB and _JOB.poll() is None:

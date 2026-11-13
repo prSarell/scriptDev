@@ -155,6 +155,37 @@ if has_rvio:
 else:
     print("SKIP no RV on this machine: movie not checked")
 
+# --- sequence render: in this Maya ------------------------------------------------
+# mayapy is a batch session: without an Arnold batch licence Arnold aborts
+# here, where a Maya with its UI renders unwatermarked (checked by hand,
+# 2026-11-13). Let it render watermarked for the test.
+cmds.setAttr("defaultArnoldRenderOptions.abortOnLicenseFail", False)
+cmds.setAttr("defaultRenderGlobals.imageFilePrefix", "myShot", type="string")
+cam_shape = cmds.listRelatives(cam, shapes=True)[0]
+cmds.setAttr(cam_shape + ".renderable", 0)
+cmds.file(save=True)
+seq_info = rs.plan_render(ctx, scene, [1002, 1004], cam, percent=50, how=rs.SEQUENCE)
+calls = []
+seq_info = rs.render_in_maya(seq_info, lambda d, n: calls.append((d, n)))
+check("sequence render: frames written in this Maya, named like batch frames",
+      seq_info["status"] == "done" and all(os.path.isfile(rs.frame_path(seq_info["folder"], seq_info["prefix"], f))
+                                            for f in (1002, 1004)))
+check("sequence render: no stray files (e.g. MtoA's interactive '_1' names)",
+      sorted(n for n in os.listdir(seq_info["folder"]) if n.endswith(".exr"))
+      == ["%s.1002.exr" % seq_info["prefix"], "%s.1004.exr" % seq_info["prefix"]])
+check("sequence render: progress before each frame and at the end", calls == [(0, 2), (1, 2), (2, 2)])
+check("sequence render: the scene's render settings are put back",
+      cmds.getAttr("defaultRenderGlobals.imageFilePrefix") == "myShot"
+      and cmds.getAttr("defaultResolution.width") == 160 and not cmds.getAttr(cam_shape + ".renderable"))
+check("sequence render: the scene isn't left 'unsaved' by the render", not cmds.file(q=True, modified=True))
+check("sequence render: recorded as one, for the estimates",
+      rs.read_history(shot_dir)[-1]["how"] == rs.SEQUENCE)
+stopped = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam, percent=25, how=rs.SEQUENCE)
+stopped = rs.render_in_maya(stopped, lambda d, n: d < 1)          # Esc after the first frame
+check("sequence render: Esc stops between frames (cancelled, one frame made)",
+      stopped["status"] == "cancelled" and len(rs.frame_files(stopped)) == 1)
+rs.delete_version(stopped["folder"])
+
 # --- publish -------------------------------------------------------------------
 class FakeSG(object):
     calls = []
@@ -200,9 +231,10 @@ for _ in range(3):
     rs.plan_render(ctx, scene, [1001], cam)
 lost = rs.prune(ctx, 2)
 names = [v["name"] for v in rs.local_versions(ctx)]
-check("prune keeps the newest local versions", names == ["tester_render_v004", "tester_render_v003"])
-check("prune reports unpublished versions it deleted", "tester_render_v002" in lost
-      and "tester_render_v001" not in lost if has_rvio else True)
+# Local now: v001 (batch, published), v002 (sequence), v003-v005 (empty).
+check("prune keeps the newest local versions", names == ["tester_render_v005", "tester_render_v004"])
+check("prune reports unpublished versions it deleted", "tester_render_v003" in lost
+      and "tester_render_v002" in lost and ("tester_render_v001" not in lost if has_rvio else True))
 
 def _writable(func, path, _):
     os.chmod(path, stat.S_IWRITE); func(path)

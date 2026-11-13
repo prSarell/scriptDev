@@ -51,6 +51,7 @@ INFO_NAME = "render.json"
 LOG_NAME = "render.log"
 RESOLUTIONS = (100, 50, 25)  # percent of the render settings' size
 FRAME_MODES = ("shot", "custom", "step", "list")
+SEQUENCE, BATCH = "sequence", "batch"     # in this Maya / Render.exe (see render_in_maya)
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +270,9 @@ def render_command(info):
             info["scene"]]
 
 
-def plan_render(ctx, scene_path, frames, camera, percent=100):
-    """Make the next version folder and its render.json. Nothing renders yet."""
+def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
+    """Make the next version folder and its render.json. Nothing renders yet.
+    how: SEQUENCE (in this Maya) or BATCH (Render.exe)."""
     if not cmds.objExists(camera):
         raise PublishError("The camera '%s' isn't in the scene." % camera)
     folder = next_version(ctx)
@@ -283,7 +285,7 @@ def plan_render(ctx, scene_path, frames, camera, percent=100):
         "camera": cmds.ls(camera)[0], "frames": sorted(set(frames)),
         "percent": percent, "size": list(render_size(percent)),
         "fps": pub._scene_fps(), "maya": cmds.about(version=True),
-        "where": where(), "status": "rendering", "started": _now(), "started_ts": time.time(),
+        "where": where(), "how": how, "status": "rendering", "started": _now(), "started_ts": time.time(),
     }
     write_info(folder, info)
     return info
@@ -377,7 +379,8 @@ def record_timing(info):
     if not t or t["done"] < 1:
         return
     entry = {"version": info["version"], "login": info["login"], "at": _now(),
-             "where": info.get("where") or where(), "size": info["size"],
+             "where": info.get("where") or where(), "how": info.get("how", BATCH),
+             "size": info["size"],
              "frames": t["done"], "per_frame": round(t["per_frame"], 2),
              "startup": round(t["startup"], 2)}
     history = (read_history(info["project"]) + [entry])[-HISTORY_KEEP:]
@@ -390,15 +393,19 @@ def record_timing(info):
         pass        # an estimate is a nicety; never fail a render over it
 
 
-def predict(shot_project, frame_count, size, kind=LOCAL, machine=None):
+def predict(shot_project, frame_count, size, kind=LOCAL, machine=None, how=None):
     """Estimate a render from this shot's earlier renders in the same place:
     {"per_frame", "startup", "total", "based_on", "this_machine"} or None.
     Render time is taken as proportional to the pixel count, so a 25% test
     predicts a full-size render (16x the pixels). This machine's renders
-    are preferred; other machines of the same kind are the fallback."""
+    are preferred; other machines of the same kind are the fallback.
+    how (SEQUENCE/BATCH): prefer renders made the same way; a sequence
+    render has no start-up (Maya already has the scene loaded)."""
     machine = machine or where(kind)["machine"]
     same_kind = [e for e in read_history(shot_project)
                  if (e.get("where") or {}).get("kind") == kind and e.get("per_frame")]
+    if how:
+        same_kind = [e for e in same_kind if e.get("how", BATCH) == how] or same_kind
     mine = [e for e in same_kind if e["where"].get("machine") == machine]
     entries = (mine or same_kind)[-5:]
     if not entries:
@@ -407,6 +414,8 @@ def predict(shot_project, frame_count, size, kind=LOCAL, machine=None):
     per = sorted(e["per_frame"] * pixels / (e["size"][0] * e["size"][1]) for e in entries)
     startup = sorted(e["startup"] for e in entries)
     per_frame, startup = per[len(per) // 2], startup[len(startup) // 2]
+    if how == SEQUENCE:
+        startup = 0.0
     return {"per_frame": per_frame, "startup": startup,
             "total": startup + per_frame * frame_count,
             "based_on": len(entries), "this_machine": bool(mine)}
@@ -422,6 +431,92 @@ def duration(seconds):
         return "%d min %d s" % (m, s) if s and m < 10 else "%d min" % m
     h, m = divmod(seconds // 60, 60)
     return "%d h %d min" % (h, m) if m else "%d h" % h
+
+
+# ---------------------------------------------------------------------------
+# Two ways to render (user, 2026-11-13: "a check box for a sequence render and
+# a batch render ... the default needs to be sequence. I am not sure the
+# students have batch render available at RMIT right now"):
+#   sequence  inside this Maya, like Render > Render Sequence. Maya's own
+#             licence covers it (no watermark); Maya is busy until it's done.
+#   batch     Render.exe in the background (RenderJob below). Maya stays
+#             free, but Arnold needs a batch licence or watermarks.
+# ---------------------------------------------------------------------------
+
+HOW_LABELS = {SEQUENCE: "In Maya (Render Sequence)",
+              BATCH: "In the background (batch render)"}
+
+
+class _SequenceSettings(object):
+    """Point the scene's render output at the version folder for an in-Maya
+    render, then put every setting back, and the scene's saved/unsaved state
+    with them, so the artist's render settings are left as they were."""
+
+    def __init__(self, info):
+        self.values = {
+            "defaultRenderGlobals.imageFilePrefix": os.path.join(info["folder"], info["prefix"]).replace("\\", "/"),
+            "defaultRenderGlobals.animation": 1,
+            "defaultRenderGlobals.outFormatControl": 0,
+            "defaultRenderGlobals.putFrameBeforeExt": 1,
+            "defaultRenderGlobals.periodInExt": 1,
+            "defaultRenderGlobals.extensionPadding": PADDING,
+            "defaultArnoldDriver.aiTranslator": IMAGE_FORMAT,
+            # Arnold in Maya renders at the render settings' size, whatever
+            # size it's asked for.
+            "defaultResolution.width": info["size"][0],
+            "defaultResolution.height": info["size"][1],
+        }
+        # Only the chosen camera renderable, as Render.exe's -cam does
+        # (arnoldMakeCameraRenderable).
+        chosen = set(cmds.listRelatives(info["camera"], shapes=True, fullPath=True, type="camera") or [])
+        for shape in cmds.ls(type="camera", long=True) or []:
+            self.values[shape + ".renderable"] = int(shape in chosen)
+        self.saved = {}
+
+    def __enter__(self):
+        self.modified = cmds.file(query=True, modified=True)
+        for attr, value in self.values.items():
+            self.saved[attr] = cmds.getAttr(attr)
+            _set(attr, value)
+        return self
+
+    def __exit__(self, *exc):
+        for attr, value in self.saved.items():
+            _set(attr, value)
+        cmds.file(modified=self.modified)
+        return False
+
+
+def _set(attr, value):
+    """setAttr by the attribute's own type: an unset string (an empty image
+    prefix reads back as None) is put back as ""."""
+    if cmds.getAttr(attr, type=True) == "string":
+        cmds.setAttr(attr, value or "", type="string")
+    else:
+        cmds.setAttr(attr, value)
+
+
+def render_in_maya(info, progress=None):
+    """Render the version's frames in this Maya session, one frame at a
+    time. progress(done, total) is called before each frame and after the
+    last; returning False stops the render (Esc in the progress bar).
+    Returns the finished info, as RenderJob.finish() does.
+
+    arnoldRender's batch flag writes the frame to the render settings' file
+    name (the interactive call, Render Sequence's, added "_1" to it), and in
+    a Maya with its UI it's still covered by Maya's licence: no watermark
+    (both checked 2026-11-13, Maya 2025, no Arnold batch licence)."""
+    total, cancelled = len(info["frames"]), False
+    with _SequenceSettings(info):
+        for i, frame in enumerate(info["frames"]):
+            if progress and progress(i, total) is False:
+                cancelled = True
+                break
+            cmds.currentTime(frame)
+            cmds.arnoldRender(batch=True, seq=str(frame), cam=info["camera"])
+        if progress and not cancelled:
+            progress(total, total)
+    return finish_render(info, 0, cancelled)
 
 
 class RenderJob(object):

@@ -1247,6 +1247,21 @@ The tools are developed side by side:
           H: H holds only publishes (rule 3), and a server/SharePoint H is
           slow and can leave half-written frames. Why not ShotGrid only:
           ShotGrid is review, not frame storage; it gets the mp4.
+        - **Sequence render is the default (DECIDED 2026-11-13).** The
+          user: "We also need to offer a check box for a sequence render
+          and a batch render ... the default needs to be sequence. I am not
+          sure the students have batch render available at RMIT right now."
+          **In Maya (Render Sequence)** renders frame by frame in the open
+          session (`arnoldRender -batch -seq <frame>`, which Maya's own
+          licence covers in a Maya with its UI: no watermark, checked
+          2026-11-13). Maya is busy until it's done; Esc stops it between
+          frames. It renders the scene as it is open (no save needed), and
+          sets the output name/format/size and the renderable camera for the
+          render only, putting them and the scene's saved state back after.
+          (Arnold's own Render Sequence call names files `<prefix>_1.####`,
+          hence the batch flag.) **In the background (batch render)** is the
+          Render.exe route below. The choice is remembered; estimates keep
+          the two apart (`how` in the history).
         - **Background render (DECIDED).** Maya's `Render.exe -r arnold`
           runs at below-normal priority from the **saved** scene (the tool
           saves first, after making Arnold's render options if the scene
