@@ -1267,6 +1267,13 @@ The tools are developed side by side:
           thumbnail straight after the render (as shotSub). No movie (no RV,
           or RV signed out) = no publish, so ShotGrid never gets a blank
           review.
+        - **RV (2026-11-13):** the user: "auto load the frames in RV when
+          the render is complete". A finished render opens its **EXR frames**
+          (full quality; each frame of a step render) in renderSub's own RV
+          window (rvpush tag `renderSub`, reused each time); a checkbox
+          turns it off. Play in RV does the same. Fixed: Play in RV hung
+          silently, because the RV that rvpush starts inherits the output
+          pipes Python was reading.
         - **ShotGrid:** a Version on the Shot (found from the shot folder, as
           the camera publish does) with the movie, the artist's notes, and
           `sg_path_to_frames` = the folder on H; on the Shot's **Lighting**

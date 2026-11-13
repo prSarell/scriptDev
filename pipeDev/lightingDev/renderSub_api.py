@@ -561,6 +561,68 @@ def make_review_media(info):
     return None
 
 
+RV_TAG = "renderSub"
+
+
+def rv_media(info):
+    """What RV loads to show a version's frames (full-quality EXRs): one
+    sequence for a gap-free range, else each frame (step and list renders
+    play one after another). [] when no frames are on disk."""
+    frames = [f for f in info["frames"]
+              if os.path.isfile(frame_path(info["folder"], info["prefix"], f))]
+    if not frames:
+        return []
+    if frames == list(range(frames[0], frames[-1] + 1)):
+        return [os.path.join(info["folder"], "%s.%d-%d#.%s"
+                             % (info["prefix"], frames[0], frames[-1], IMAGE_FORMAT))]
+    return [frame_path(info["folder"], info["prefix"], f) for f in frames]
+
+
+def find_rvpush():
+    rvio = pub.find_rvio()
+    path = os.path.join(os.path.dirname(rvio), "rvpush.exe" if os.name == "nt" else "rvpush") \
+        if rvio else ""
+    return path if path and os.path.isfile(path) else ""
+
+
+def push_to_rv(media, tries=20):
+    """Show media in renderSub's own RV window (rvpush, tag "renderSub"),
+    starting RV if it isn't open; the same window is reused next time.
+    Blocks while a new RV starts, so call it off Maya's main thread.
+    Returns None, or why it failed.
+
+    As shotSub found: when no tagged RV is running, rvpush starts one but
+    may not hand it the media (exit 15), so retry until the new RV listens,
+    with spawning switched off so only one RV ever starts.
+
+    The first call (the one that may start RV) doesn't capture rvpush's
+    output: the RV it starts inherits those pipes and holds them open until
+    it quits, so reading them would wait for RV to close (found 2026-11-13:
+    Play in RV hung with no error)."""
+    rvpush = find_rvpush()
+    if not rvpush:
+        return "RV (rvpush) wasn't found on this machine."
+    command = [rvpush, "-tag", RV_TAG, "set"] + list(media)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    no_spawn = dict(os.environ, RVPUSH_RV_EXECUTABLE_PATH="none")
+    for attempt in range(tries):
+        if attempt == 0:
+            code = subprocess.call(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, creationflags=flags)
+            output = ""
+        else:
+            result = subprocess.run(command, capture_output=True, text=True, env=no_spawn,
+                                    stdin=subprocess.DEVNULL, creationflags=flags)
+            code, output = result.returncode, (result.stderr or result.stdout or "").strip()
+        if code == 0:
+            return None
+        if code == 15 or (code == 11 and attempt > 0):
+            time.sleep(1)
+            continue
+        return "RV didn't take the frames (rvpush exit %d)%s" % (code, ": " + output if output else ".")
+    return "RV started but didn't take the frames in %d s." % tries
+
+
 def _quiet_shotgrid():
     try:
         import shotgridConnect

@@ -142,6 +142,11 @@ check("no farm renders yet: no farm estimate",
       rs.predict(shot_dir, 10, (480, 270), kind=rs.FARM) is None)
 check("durations read naturally", (rs.duration(42), rs.duration(400), rs.duration(7300))
       == ("42 s", "6 min 40 s", "2 h 1 min"))
+check("RV gets each frame of a step render, so they play one after another",
+      rs.rv_media(info) == [rs.frame_path(info["folder"], info["prefix"], f) for f in (1001, 1003, 1005)])
+check("RV gets one sequence for a gap-free range",
+      rs.rv_media(dict(fake, frames=[1, 2, 3])) == [os.path.join(fake["folder"], "t.1-3#.exr")])
+check("RV gets nothing when there are no frames", rs.rv_media(dict(fake, frames=[7])) == [])
 shutil.rmtree(fake["folder"])
 has_rvio = bool(pub.find_rvio())
 if has_rvio:

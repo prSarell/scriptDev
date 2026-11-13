@@ -10,15 +10,17 @@ the window picks it up again; the render itself never depends on the window.
 """
 
 import os
-import subprocess
+import threading
 
 import maya.cmds as cmds
+import maya.utils
 
 import publishTool_api as pub
 import renderSub_api as api
 
 WINDOW = "renderSubWindow"
 KEEP_VAR = "renderSub_keepVersions"
+OPEN_RV_VAR = "renderSub_openInRV"
 DEFAULT_KEEP = 3
 MODE_LABELS = (("shot", "Whole shot"), ("custom", "Custom range"),
                ("step", "Every Nth frame"), ("list", "Frame list"))
@@ -98,6 +100,10 @@ class RenderSubUI(object):
         self.w["summary"] = cmds.text(label="", align="left", font="boldLabelFont")
         self.w["estimate"] = cmds.text(label="", align="left")
         cmds.separator(h=6, style="none")
+        self.w["open_rv"] = cmds.checkBox(
+            label="Open the frames in RV when the render finishes",
+            value=cmds.optionVar(q=OPEN_RV_VAR) if cmds.optionVar(exists=OPEN_RV_VAR) else True,
+            changeCommand=lambda v: cmds.optionVar(iv=(OPEN_RV_VAR, int(v))))
         self.w["render"] = cmds.button(label="Render", h=40, c=lambda *_: self.render())
         self.w["progress"] = cmds.progressBar(maxValue=1, height=14)
         self.w["status"] = cmds.text(label="", align="left")
@@ -325,6 +331,8 @@ class RenderSubUI(object):
         self._report(info)
 
     def _report(self, info):
+        if info["status"] == "done" and cmds.checkBox(self.w["open_rv"], q=True, value=True):
+            open_in_rv(info)
         if info["status"] == "done":
             text = "%s rendered: %d frame(s)." % (info["version"], len(info["frames"]))
             if info.get("watermarked"):
@@ -352,13 +360,8 @@ class RenderSubUI(object):
     # ------------------------------------------------------------------ versions
     def play(self):
         v = self.selected()
-        if not v:
-            return
-        movie = api.movie_path(dict(v["info"], folder=v["path"]))
-        rv = pub.find_rv()
-        if not (rv and os.path.isfile(movie)):
-            return _say("No review movie for %s, or RV isn't installed." % v["name"])
-        subprocess.Popen([rv, movie])
+        if v:
+            open_in_rv(dict(v["info"], folder=v["path"]))
 
     def open_folder(self):
         v = self.selected()
@@ -412,6 +415,24 @@ class RenderSubUI(object):
 
 def _say(message):
     cmds.confirmDialog(title="renderSub", message=message or "", button=["OK"])
+
+
+def open_in_rv(info):
+    """Show a version's EXR frames (the review movie if the frames are
+    gone) in renderSub's RV window. A new RV takes a few seconds to start,
+    so it's done off Maya's main thread; a failure comes back as a warning
+    in the Script Editor and the status line."""
+    media = api.rv_media(info)
+    if not media and os.path.isfile(api.movie_path(info)):
+        media = [api.movie_path(info)]
+    if not media:
+        return _say("%s has no frames or movie to play." % info.get("version", "This version"))
+
+    def run():
+        problem = api.push_to_rv(media)
+        if problem:
+            maya.utils.executeDeferred(cmds.warning, "renderSub: " + problem)
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _start_timer():
