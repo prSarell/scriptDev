@@ -12,7 +12,9 @@ renders (user, 2026-11-13). Design: filmPipeline_spec.md "renderSub".
     review      play the mp4 in RV; delete or render again
     publish     copy the version to the same place on the H drive (checked,
                 read-only), then a ShotGrid Version on the Shot's Lighting
-                task with the movie, pointing at the frames on H
+                task with the movie, pointing at the frames on H. A render
+                that stopped early (cancelled, failed, or interrupted by a
+                crash or power cut) publishes the frames that finished.
 
 Renders stay on scratch until published: H holds only publishes (PIPE_RULES
 rule 3), and rendering straight to a server or SharePoint H is slow and can
@@ -53,6 +55,11 @@ RESOLUTIONS = (100, 50, 25)  # percent of the render settings' size
 FRAME_MODES = ("shot", "check", "custom", "step", "list")
 CHECK_FRAMES = 5     # the lighting check: start, end, middle and halfway either side
 SEQUENCE, BATCH = "sequence", "batch"     # in this Maya / Render.exe (see render_in_maya)
+# render.json "status". INTERRUPTED: still "rendering" but nothing is
+# rendering it any more (Maya crashed, the power went; user, 2026-11-13).
+RENDERING, DONE, CANCELLED, FAILED, INTERRUPTED = (
+    "rendering", "done", "cancelled", "failed", "interrupted")
+STOPPED = (CANCELLED, FAILED, INTERRUPTED)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +308,11 @@ def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
         "camera": cmds.ls(camera)[0], "frames": sorted(set(frames)),
         "percent": percent, "size": list(render_size(percent)),
         "fps": pub._scene_fps(), "maya": cmds.about(version=True),
-        "where": where(), "how": how, "status": "rendering", "started": _now(), "started_ts": time.time(),
+        "where": where(), "how": how, "status": RENDERING, "started": _now(), "started_ts": time.time(),
+        # The process doing the render (this Maya; RenderJob swaps in
+        # Render.exe), so a render nobody is running any more can be told
+        # from one still going (see settle).
+        "pid": os.getpid(),
     }
     write_info(folder, info)
     return info
@@ -333,6 +344,69 @@ def frame_files(info):
     return [p for p in paths if os.path.isfile(p)]
 
 
+def finished_frames(info):
+    """The frames that rendered whole, in render order. A render that
+    stopped early (STOPPED) may have left its last frame half-written:
+    Arnold makes the EXR when the frame starts (a power cut left a 4 KB
+    file, 2026-11-13). That last file counts if it's at least half the
+    usual size of the others; with nothing to compare it to, only an
+    in-Maya cancel (which stops between frames) keeps it."""
+    present = [(f, frame_path(info["folder"], info["prefix"], f)) for f in info["frames"]]
+    present = [(f, p) for f, p in present if os.path.isfile(p)]
+    if not present or info.get("status") not in STOPPED:
+        return [f for f, _ in present]
+    rest, (last, path) = present[:-1], present[-1]
+    if rest:
+        sizes = sorted(os.path.getsize(p) for _, p in rest)
+        whole = os.path.getsize(path) >= sizes[len(sizes) // 2] * 0.5
+    else:
+        whole = info["status"] == CANCELLED and info.get("how") == SEQUENCE
+    return [f for f, _ in rest] + ([last] if whole else [])
+
+
+def partial(info):
+    """True when a stopped render has only some of its frames."""
+    return info.get("status") != DONE and finished_frames(info) != list(info["frames"])
+
+
+def _alive(pid):
+    """True while the process is running (PIDs are reused, so this can be
+    fooled, but only into keeping a version marked rendering)."""
+    if not pid:
+        return False
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, int(pid))    # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel.CloseHandle(handle)
+        return bool(ok) and code.value == 259                   # STILL_ACTIVE
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+
+def settle(info, running_folder=None):
+    """A version still marked rendering that nothing is rendering any more
+    (this machine's render process is gone, or it was rendered on another
+    machine) is marked interrupted, and its finished frames timed, so it can
+    be published. running_folder: the version this session is rendering.
+    Returns the info, updated or not."""
+    if info.get("status") != RENDERING or not info.get("folder"):
+        return info
+    if running_folder and os.path.normcase(running_folder) == os.path.normcase(info["folder"]):
+        return info
+    here = (info.get("where") or {}).get("machine") == where()["machine"]
+    if here and info.get("pid") not in (None, os.getpid()) and _alive(info["pid"]):
+        return info         # another Maya or Render.exe on this machine has it
+    return finish_render(info, None, interrupted=True)
+
+
 def frames_done(info, running=False):
     """Finished frames. Arnold creates a frame's EXR when it starts the frame
     and writes into it as it renders (seen 2026-11-13), so while the render
@@ -356,8 +430,10 @@ def timing(info, running=False):
     Maya's per-frame work, not just Arnold's); with only one finished, that
     frame's own time (last write minus creation). startup = loading Maya
     and the scene before the first frame started."""
-    files = frame_files(info)
-    done = files[:-1] if running else files
+    if running:
+        done = frame_files(info)[:-1]
+    else:
+        done = [frame_path(info["folder"], info["prefix"], f) for f in finished_frames(info)]
     if not done or not info.get("started_ts"):
         return None
     ends = [os.path.getmtime(p) for p in done]
@@ -554,6 +630,9 @@ class RenderJob(object):
         self.process = subprocess.Popen(
             render_command(info), env=env, cwd=info["folder"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        # Render.exe keeps going if Maya closes, so it's the one to watch.
+        info["pid"] = self.process.pid
+        write_info(info["folder"], info)
 
     def frames_done(self):
         return frames_done(self.info, running=self.poll() is None)
@@ -581,21 +660,27 @@ def missing_frames(info):
             if not os.path.isfile(frame_path(info["folder"], info["prefix"], f))]
 
 
-def finish_render(info, returncode, cancelled=False):
+def finish_render(info, returncode, cancelled=False, interrupted=False):
     """Record how the render went; make the movie and thumbnail when every
-    frame is there. Returns the updated info."""
-    info["missing"] = missing_frames(info)
+    frame is there (a stopped render's movie is made when it's published).
+    interrupted: nothing was left running it (see settle). Returns the
+    updated info."""
+    if interrupted:
+        info["status"] = INTERRUPTED
+    elif cancelled:
+        info["status"] = CANCELLED
+    elif missing_frames(info):
+        info["status"] = FAILED
+    else:
+        info["status"] = DONE
+    finished = finished_frames(info)
+    info["missing"] = [f for f in info["frames"] if f not in finished]
     info["finished"] = _now()
     info["returncode"] = returncode
     info["watermarked"] = watermarked(info)
     info["timing"] = timing(info)
-    record_timing(info)         # cancelled and failed renders still timed their frames
-    if cancelled:
-        info["status"] = "cancelled"
-    elif info["missing"]:
-        info["status"] = "failed"
-    else:
-        info["status"] = "done"
+    record_timing(info)         # stopped renders still timed their frames
+    if info["status"] == DONE:
         info["movie_problem"] = make_review_media(info)
     write_info(info["folder"], info)
     return info
@@ -647,11 +732,16 @@ def _rvio(args):
 
 def make_review_media(info):
     """EXRs -> an sRGB H.264 mp4 and a middle-frame thumbnail, with RV's
-    rvio (as shotSub). Returns None, or why there's no movie."""
+    rvio (as shotSub), from the frames that finished. Records which frames
+    the movie holds in info["movie_frames"] (the caller writes render.json).
+    Returns None, or why there's no movie."""
     rvio = pub.find_rvio()
     if not rvio:
         return "RV's rvio wasn't found on this machine, so there's no review movie."
-    frames = info["frames"]
+    frames = finished_frames(info)
+    if not frames:
+        return "No frames finished rendering."
+    info["movie_frames"] = frames
     folder, prefix = info["folder"], info["prefix"]
     contiguous = frames == list(range(frames[0], frames[-1] + 1))
     # A gap-free range is one sequence; step and list renders are
@@ -678,9 +768,9 @@ RV_TAG = "renderSub"
 def rv_media(info):
     """What RV loads to show a version's frames (full-quality EXRs): one
     sequence for a gap-free range, else each frame (step and list renders
-    play one after another). [] when no frames are on disk."""
-    frames = [f for f in info["frames"]
-              if os.path.isfile(frame_path(info["folder"], info["prefix"], f))]
+    play one after another). [] when no frames are on disk. A stopped
+    render's half-written last frame is left out."""
+    frames = finished_frames(info)
     if not frames:
         return []
     if frames == list(range(frames[0], frames[-1] + 1)):
@@ -768,9 +858,15 @@ def prune(ctx, keep):
 # Publish: H drive, then ShotGrid
 # ---------------------------------------------------------------------------
 
-def _published_files(folder):
+def _published_files(info):
+    """Everything in the version folder but the log and any frame that
+    didn't finish (a stopped render's half-written last frame)."""
+    folder = info["folder"]
+    frames = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in info["frames"]}
+    whole = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in finished_frames(info)}
     return sorted(n for n in os.listdir(folder)
-                  if os.path.isfile(os.path.join(folder, n)) and n != LOG_NAME)
+                  if os.path.isfile(os.path.join(folder, n)) and n != LOG_NAME
+                  and (n not in frames or n in whole))
 
 
 def copy_to_h(info, dest):
@@ -778,14 +874,14 @@ def copy_to_h(info, dest):
     then make them read-only. A folder left by an earlier copy that broke
     off is finished, not duplicated."""
     os.makedirs(dest, exist_ok=True)
-    for name in _published_files(info["folder"]):
+    for name in _published_files(info):
         src, dst = os.path.join(info["folder"], name), os.path.join(dest, name)
         if os.path.isfile(dst) and os.path.getsize(dst) == os.path.getsize(src):
             continue
         if os.path.isfile(dst):
             os.chmod(dst, 0o666)
         shutil.copy2(src, dst)
-    short = [n for n in _published_files(info["folder"])
+    short = [n for n in _published_files(info)
              if not os.path.isfile(os.path.join(dest, n))
              or os.path.getsize(os.path.join(dest, n)) != os.path.getsize(os.path.join(info["folder"], n))]
     if short:
@@ -803,37 +899,56 @@ def find_shot_and_task(ctx):
 
 
 def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
-    """Publish one finished local version. Refuses a render that isn't
-    complete. ShotGrid is looked up before H is written; if only the
-    ShotGrid upload fails, the H copy stays and publishing again retries
-    the upload. Returns {"dest", "sg_version", "sg_error", "warnings"}.
+    """Publish one local version: all of it, or for a render that stopped
+    early (cancelled, failed, interrupted) the frames that finished (user,
+    2026-11-13: "There are to many times when a render might not finish for
+    whatever reason. This shouldn't mean the existing rendered frames can't
+    be published"). Refuses one still rendering or with no finished frames.
+    ShotGrid is looked up before H is written; if only the ShotGrid upload
+    fails, the H copy stays and publishing again retries the upload.
+    Returns {"dest", "sg_version", "sg_error", "warnings", "partial"}.
 
     lookup / shotgrid: stand-ins for the tests."""
     info = read_info(folder)
+    if not info:
+        raise PublishError("%s has no render.json, so it can't be published."
+                           % os.path.basename(folder))
     info["folder"] = folder         # the drive may have changed since the render
-    if info.get("status") != "done" or missing_frames(info):
-        raise PublishError("%s isn't a finished render (%s). Only complete renders publish."
-                           % (os.path.basename(folder), info.get("status", "no render.json")))
-    if not os.path.isfile(movie_path(info)):
-        raise PublishError("%s has no review movie. %s\nFix RV, then render again."
+    info = settle(info)
+    if info["status"] == RENDERING:
+        raise PublishError("%s is still rendering. Wait for it, or cancel it." % info["version"])
+    frames = finished_frames(info)
+    if not frames:
+        raise PublishError("%s has no finished frames to publish (%s)."
+                           % (info["version"], info["status"]))
+    is_partial = partial(info)
+    if not os.path.isfile(movie_path(info)) or info.get("movie_frames", frames) != frames:
+        # A stopped render's movie is made now, from the frames it has.
+        info["movie_problem"] = make_review_media(info)
+        write_info(folder, info)
+    if info.get("movie_problem") or not os.path.isfile(movie_path(info)):
+        raise PublishError("%s has no review movie. %s\nFix RV, then publish again."
                            % (info["version"], info.get("movie_problem") or ""))
     sgc = shotgrid or pub._shotgrid()
     shot, task = lookup(ctx)
     result = {"dest": os.path.join(ctx["h"], info["version"]), "sg_version": None,
-              "sg_error": None, "warnings": []}
+              "sg_error": None, "warnings": [], "partial": is_partial}
     if not task:
         result["warnings"].append(
             "The ShotGrid shot %s has no %s task, so this Version isn't on a task "
             "(staff: add a %s task to the shot)." % (ctx["shot"], TASK, TASK))
 
     copy_to_h(info, result["dest"])
-    info["published"] = {"at": _now(), "by": ctx["login"], "dest": result["dest"]}
+    info["published"] = {"at": _now(), "by": ctx["login"], "dest": result["dest"], "frames": frames}
     write_info(folder, info)
 
     note = "Render %s: %d frame(s) (%s), camera %s, %dx%d (%d%%)\nFrames on the H drive:\n%s\nScene: %s" % (
-        info["version"], len(info["frames"]), seq_string(info["frames"]),
+        info["version"], len(frames), seq_string(frames),
         info["camera"].split("|")[-1], info["size"][0], info["size"][1], info["percent"],
         result["dest"], os.path.basename(info["scene"]))
+    if is_partial:
+        note = "Partial render (%s): %d of %d frame(s) finished; %s was asked for.\n%s" % (
+            info["status"], len(frames), len(info["frames"]), seq_string(info["frames"]), note)
     if notes.strip():
         note = notes.strip() + "\n\n---\n" + note
     try:

@@ -268,10 +268,18 @@ class RenderSubUI(object):
     def refresh_versions(self):
         cmds.textScrollList(self.w["versions"], e=True, removeAll=True)
         self._versions = api.local_versions(self.ctx) if self.ctx else []
+        running = _JOB.info["folder"] if _JOB and _JOB.poll() is None else None
         for v in self._versions:
-            info = v["info"]
-            label = "%s   %d frame(s)   %s" % (v["name"], len(info.get("frames", [])),
-                                             info.get("status", "?"))
+            # A render nothing is running any more (Maya crashed, the power
+            # went) shows as interrupted, ready to publish what finished.
+            info = v["info"] = api.settle(dict(v["info"], folder=v["path"]), running) \
+                if v["info"].get("status") == api.RENDERING else v["info"]
+            total = len(info.get("frames", []))
+            if info.get("status") in api.STOPPED and "frames" in info:
+                count = "%d of %d frame(s)" % (len(api.finished_frames(dict(info, folder=v["path"]))), total)
+            else:
+                count = "%d frame(s)" % total
+            label = "%s   %s   %s" % (v["name"], count, info.get("status", "?"))
             if (info.get("timing") or {}).get("per_frame"):
                 label += "   %s/frame" % api.duration(info["timing"]["per_frame"])
             if info.get("watermarked"):
@@ -390,10 +398,10 @@ class RenderSubUI(object):
         self._report(info)
 
     def _report(self, info):
-        in_rv = info["status"] == "done" and cmds.checkBox(self.w["open_rv"], q=True, value=True)
+        in_rv = info["status"] == api.DONE and cmds.checkBox(self.w["open_rv"], q=True, value=True)
         if in_rv:
             open_in_rv(info)
-        if info["status"] == "done":
+        if info["status"] == api.DONE:
             cmds.text(self.w["status"], e=True, label="%s done" % info["version"])
             if info.get("movie_problem"):
                 # No movie, no publish (api.publish refuses): just say why.
@@ -409,14 +417,20 @@ class RenderSubUI(object):
                 return
             cmds.scrollField(self.w["notes"], e=True, text=answer)
             self.publish_version(info["folder"], answer)
-        elif info["status"] == "cancelled":
-            cmds.text(self.w["status"], e=True, label="%s cancelled" % info["version"])
         else:
-            cmds.text(self.w["status"], e=True, label="%s failed" % info["version"])
-            where = ("Arnold's messages are in the Script Editor." if info.get("how") == api.SEQUENCE
-                     else "End of the render log:\n%s" % api.log_tail(info))
-            _say("%s didn't finish: %d frame(s) missing.\n\n%s"
-                 % (info["version"], len(info["missing"]), where))
+            done = len(api.finished_frames(info))
+            label = "%s %s: %d of %d frame(s) finished" % (info["version"], info["status"],
+                                                           done, len(info["frames"]))
+            if done:
+                label += " (Publish Selected publishes them)"
+            cmds.text(self.w["status"], e=True, label=label)
+            if info["status"] == api.FAILED:
+                where = ("Arnold's messages are in the Script Editor." if info.get("how") == api.SEQUENCE
+                         else "End of the render log:\n%s" % api.log_tail(info))
+                _say("%s didn't finish: %d frame(s) missing.%s\n\n%s"
+                     % (info["version"], len(info["missing"]),
+                        " The %d that finished can still be published: pick it in Local "
+                        "Versions, then Publish Selected." % done if done else "", where))
 
     def cancel(self):
         if _JOB and _JOB.poll() is None:
@@ -474,6 +488,8 @@ class RenderSubUI(object):
             cmds.waitCursor(state=False)
         self.refresh()
         lines = ["%s copied to the H drive:\n%s" % (name, result["dest"])]
+        if result.get("partial"):
+            lines.append("Only the frames that finished were published; the ShotGrid note says so.")
         if result["sg_error"]:
             lines.append("The ShotGrid upload failed (publish again to retry it):\n"
                          + result["sg_error"])
@@ -513,10 +529,15 @@ class ReviewDialog(object):
         dialog = QtWidgets.QDialog(_maya_window())
         dialog.setWindowTitle("Watch before publishing")
         dialog.setObjectName("renderSubReview")
-        text = ("%s: %d frame(s) %s.\n\nPublish to the H drive and ShotGrid, or cancel to keep it "
-                "on your scratch drive only (it stays in Local Versions)." % (
-                    info["version"], len(info["frames"]),
-                    "are opening in RV" if in_rv else "rendered"))
+        frames = api.finished_frames(info)
+        if api.partial(info):
+            what = ("%d of %d frame(s) finished (%s) before the render was %s. Only those "
+                    "publish." % (len(frames), len(info["frames"]), api.seq_string(frames),
+                                  info["status"]))
+        else:
+            what = "%d frame(s) %s." % (len(frames), "are opening in RV" if in_rv else "rendered")
+        text = ("%s: %s\n\nPublish to the H drive and ShotGrid, or cancel to keep it "
+                "on your scratch drive only (it stays in Local Versions)." % (info["version"], what))
         if info.get("watermarked"):
             text += "\n\nThese frames carry Arnold's watermark. " + api.NO_LICENCE_HELP
         label = QtWidgets.QLabel(text)

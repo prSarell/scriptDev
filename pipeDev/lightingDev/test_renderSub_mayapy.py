@@ -190,6 +190,8 @@ stopped = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam, percent=25, how=rs
 stopped = rs.render_in_maya(stopped, lambda d, n: d < 1)          # Esc after the first frame
 check("sequence render: Esc stops between frames (cancelled, one frame made)",
       stopped["status"] == "cancelled" and len(rs.frame_files(stopped)) == 1)
+check("... and that one frame counts as finished (an in-Maya cancel stops between frames)",
+      rs.finished_frames(stopped) == [1001] and rs.partial(stopped))
 rs.delete_version(stopped["folder"])
 
 # --- publish -------------------------------------------------------------------
@@ -201,10 +203,58 @@ class FakeSG(object):
 sg = FakeSG()
 lookup = lambda c: ({"type": "Shot", "id": 7, "code": "SEQ010_010"}, {"type": "Task", "id": 3})
 
+import subprocess
+def _writable(func, path, _):
+    os.chmod(path, stat.S_IWRITE); func(path)
+
 broken = rs.plan_render(ctx, scene, [1001], cam)        # never rendered
-check("an unfinished render won't publish",
+check("a render with no finished frames won't publish",
       refuses(rs.publish, ctx, broken["folder"], lookup=lookup, shotgrid=sg))
 rs.delete_version(broken["folder"])
+
+# A power cut (user, 2026-11-13): Maya died mid-render, so render.json still
+# says rendering, two frames finished and the third is a half-written stub.
+cut = rs.plan_render(ctx, scene, [1001, 1002, 1003, 1004], cam)
+for f in (1001, 1002):
+    shutil.copy2(rs.frame_path(info["folder"], info["prefix"], 1001 if f == 1001 else 1003),
+                 rs.frame_path(cut["folder"], cut["prefix"], f))
+with open(rs.frame_path(info["folder"], info["prefix"], 1005), "rb") as src, \
+        open(rs.frame_path(cut["folder"], cut["prefix"], 1003), "wb") as dst:
+    dst.write(src.read(400))                            # the header, nothing more
+sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+rs.write_info(cut["folder"], dict(cut, pid=sleeper.pid))
+check("a render whose process is still running is left alone (another Maya, or Render.exe)",
+      rs.settle(rs.read_info(cut["folder"]))["status"] == rs.RENDERING
+      and refuses(rs.publish, ctx, cut["folder"], lookup=lookup, shotgrid=sg))
+sleeper.kill(); sleeper.wait()
+gone = rs.settle(rs.read_info(cut["folder"]))
+check("once nothing is rendering it, it's marked interrupted",
+      gone["status"] == rs.INTERRUPTED and rs.read_info(cut["folder"])["status"] == rs.INTERRUPTED)
+check("... the half-written frame doesn't count: two of four finished",
+      rs.finished_frames(gone) == [1001, 1002] and gone["missing"] == [1003, 1004] and rs.partial(gone))
+check("... RV is shown only the finished frames",
+      rs.rv_media(gone) == [os.path.join(gone["folder"], "%s.1001-1002#.exr" % gone["prefix"])])
+check("rendered on another machine: interrupted too (its process can't be checked)",
+      rs.settle(dict(cut, status=rs.RENDERING, pid=os.getpid() + 1,
+                     where={"kind": "local", "machine": "ELSEWHERE"}), None)["status"] == rs.INTERRUPTED)
+rs.write_info(cut["folder"], gone)
+if has_rvio:
+    calls_before = len(sg.calls)
+    part = rs.publish(ctx, cut["folder"], "power went", lookup=lookup, shotgrid=sg)
+    names = os.listdir(part["dest"])
+    check("an interrupted render publishes its finished frames, with a movie made now",
+          part["partial"] and len(sg.calls) == calls_before + 1
+          and "%s.1001.exr" % cut["prefix"] in names and "%s.1002.exr" % cut["prefix"] in names
+          and "%s.mp4" % cut["prefix"] in names)
+    check("... the half-written frame stays on scratch", "%s.1003.exr" % cut["prefix"] not in names)
+    check("... the ShotGrid note says it's partial and which frames it has",
+          "Partial render (interrupted): 2 of 4 frame(s) finished; 1001..1004 was asked for."
+          in sg.calls[-1][1]["notes"] and "2 frame(s) (1001..1002)" in sg.calls[-1][1]["notes"])
+    check("... and render.json records the frames published",
+          rs.read_info(cut["folder"])["published"]["frames"] == [1001, 1002])
+    del sg.calls[calls_before:]
+    shutil.rmtree(part["dest"], onerror=_writable)
+rs.delete_version(cut["folder"])
 
 if has_rvio:
     result = rs.publish(ctx, info["folder"], "first light", lookup=lookup, shotgrid=sg)
@@ -242,7 +292,5 @@ check("prune keeps the newest local versions", names == ["tester_render_v005", "
 check("prune reports unpublished versions it deleted", "tester_render_v003" in lost
       and "tester_render_v002" in lost and ("tester_render_v001" not in lost if has_rvio else True))
 
-def _writable(func, path, _):
-    os.chmod(path, stat.S_IWRITE); func(path)
 shutil.rmtree(scratch, onerror=_writable); shutil.rmtree(h_root, onerror=_writable)
 print("\n%d/%d passed" % (sum(ok), len(ok)))
