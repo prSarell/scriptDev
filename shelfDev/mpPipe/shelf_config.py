@@ -14,8 +14,8 @@ RELOAD_ORDER = (
     "rig_rules", "pipeStudioLibrary", "pipePicker",
     "publishTool_api", "publishTool_textures", "publishTool_outputs", "publishTool_env",
     "publishTool_camera", "publishTool_anim",
-    "pipeEnv", "buildTool_api", "projectTool_api",
-    "publishTool_ui", "buildTool_ui", "projectTool_ui",
+    "pipeEnv", "buildTool_api", "projectTool_api", "renderSub_api",
+    "publishTool_ui", "buildTool_ui", "projectTool_ui", "renderSub_ui",
 )
 
 
@@ -45,5 +45,16 @@ BUTTONS = [
         "tooltip": "Build Tool: build shots from published assets, and manage your scratch drive.",
         "icon": "iconPipeBuild.png",
         "command": _command("buildTool_ui"),
+    },
+    {
+        # Every department fires its own test renders, not just Lighting
+        # (user, 2026-11-13), so renderSub is here as well as on mpLighting.
+        # Its icon ships from shelfDev/mpLighting/icons (the installer
+        # copies every pipe shelf's icons).
+        "label": "renderSub",
+        "tooltip": "renderSub: test-render the shot (in Maya or in the background), review "
+                   "it in RV, and publish the frames to the H drive and ShotGrid.",
+        "icon": "iconRenderSub.png",
+        "command": _command("renderSub_ui"),
     },
 ]

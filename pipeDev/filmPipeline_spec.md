@@ -1231,7 +1231,18 @@ The tools are developed side by side:
         published before this (SEQ010_140's first final, 2026-10-28) stay
         where they are.
       - **Render output (DECIDED, BUILT 2026-11-13 as renderSub):**
-        `images\lighting\<login>\`.
+        `images\lighting\<login>\`, **one place for every department's
+        renders** (user, 2026-11-13: "I am happy with a single location for
+        all renders").
+      - **Any department renders (DECIDED 2026-11-13).** The user: "We don't
+        want to lock artists into working in a lighting project. Students
+        need to be able to fire off their own test renders (like this one
+        where we are working from anim)." renderSub works from any shot
+        scene (no department check) and is on the **mpPipe** shelf as well
+        as mpLighting. Render Versions go on the shot's **Lighting** task, or
+        none: never on Animation's Blocking/Final or Layout, because the pipe
+        reads "Final" from the newest Version on a task (`approved_tasks`),
+        and an unapproved test render there would stop Final caches.
       - **renderSub (BUILT 2026-11-13, staff testing):** shotSub's sibling
         for renders, on the new **mpLighting** shelf (installed with mpPipe by
         `pipelineInstaller`). Code: `lightingDev/renderSub_api.py`,
