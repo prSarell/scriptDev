@@ -1230,8 +1230,79 @@ The tools are developed side by side:
         people's `v003` would collide: versions are per person). Caches
         published before this (SEQ010_140's first final, 2026-10-28) stay
         where they are.
-      - **Render output (DECIDED, not built):** `images\lighting\<login>\`,
-        made when the render build exists.
+      - **Render output (DECIDED, BUILT 2026-11-13 as renderSub):**
+        `images\lighting\<login>\`.
+      - **renderSub (BUILT 2026-11-13, staff testing):** shotSub's sibling
+        for renders, on the new **mpLighting** shelf (installed with mpPipe by
+        `pipelineInstaller`). Code: `lightingDev/renderSub_api.py`,
+        `renderSub_ui.py`; test `lightingDev/test_renderSub_mayapy.py`.
+        The user: "it is more like shotSub ... it will need to render to the
+        H drive. It should probably render locally first and then transfer
+        the files to the H drive"; took all the recommendations below
+        ("happy to take all your recommendations").
+        - **Render locally, publish to H (DECIDED).** Frames render to the
+          shot's `images\lighting\<login>\<login>_render_v###\` on scratch;
+          Publish copies the version to the same path on H, checks every
+          file arrived whole, and makes them read-only. Why not straight to
+          H: H holds only publishes (rule 3), and a server/SharePoint H is
+          slow and can leave half-written frames. Why not ShotGrid only:
+          ShotGrid is review, not frame storage; it gets the mp4.
+        - **Background render (DECIDED).** Maya's `Render.exe -r arnold`
+          runs at below-normal priority from the **saved** scene (the tool
+          saves first, after making Arnold's render options if the scene
+          has none), with `$PIPE_SCRATCH` set for Build's references. Maya
+          stays usable; the window shows frames done and can cancel. Each
+          version keeps a `render.json` (scene, camera, frames, size), so a
+          render farm can run the same job later.
+        - **Frames (DECIDED):** whole shot (timeline), custom start/end,
+          every Nth frame (always including the end frame, for test renders
+          across the shot), or a frame list (`1001, 1050, 1100-1105`). Size
+          100 / 50 / 25 % of the render settings.
+        - **Names:** frames `<shot>_<login>_render_v###.####.exr`; one
+          version series per person across scratch and H (a local v004
+          publishes as v004). The ShotGrid Version is
+          `<shot>_<login>_render_v###`, so it never collides with shotSub's
+          `<shot>_v###` or another person's render.
+        - **Review movie:** rvio turns the EXRs into an sRGB H.264 mp4 and a
+          thumbnail straight after the render (as shotSub). No movie (no RV,
+          or RV signed out) = no publish, so ShotGrid never gets a blank
+          review.
+        - **ShotGrid:** a Version on the Shot (found from the shot folder, as
+          the camera publish does) with the movie, the artist's notes, and
+          `sg_path_to_frames` = the folder on H; on the Shot's **Lighting**
+          task when there is one. If only the upload fails, the H copy stays
+          and publishing again retries the upload.
+        - **Local versions:** keep the newest N (default 3, 0 = all); older
+          ones are deleted on the next render, with a warning for any that
+          were never published.
+        - **Render time estimates (BUILT 2026-11-13).** The user: "a
+          predicted render time per frame based on where the render was
+          being done eg locally or in the future on the render farm."
+          - While rendering: seconds per frame from the gaps between
+            finished frames (file write times), and the time left.
+          - Before rendering: predicted from this shot's earlier renders in
+            the **same place** (`where` = local + machine name, or farm),
+            scaled by pixel count, so a 25% test predicts a full-size render
+            (x16). This machine first, else other local machines (said so).
+          - Kept per shot in `<shot>\data\renderSub\history.json` on
+            scratch (last 20 renders), apart from the version folders so
+            pruning keeps the times; each `render.json` has its `where` and
+            `timing` too.
+          - **Render on** menu: This computer, and Render farm greyed out as
+            "coming soon". A farm job writes `where.kind = "farm"`, so farm
+            estimates fill in by themselves once it exists.
+        - **Found while building:** MtoA's `-cam` flag *replaces* Render.exe's
+          option string, so a `-seq` before it is lost and the scene's own
+          range renders instead; `-cam` goes first. **Arnold batch licence:**
+          Maya's licence covers rendering inside Maya, not `Render.exe`;
+          without an Arnold licence Arnold aborts batch renders. renderSub
+          renders anyway with Arnold's watermark (`-ai:alf false`), flags the
+          version "(watermarked)" and asks before publishing it.
+        - OPEN: RMIT's Arnold batch licences (lab machines, a future farm);
+          whether renders should also reach the edit (as anim movies do);
+          render layers / AOVs (today: whatever the scene's settings write,
+          the beauty is what's reviewed); the Final publish's Render
+          checkbox (§ outputs, DECIDED 2026-10-13) could call renderSub.
     - **Build by department (DRAFT 2026-10-28, not built):** the user:
       the Build tool's Department dropdown should be the artist's
       department, "switching between the departments would define the

@@ -49,13 +49,16 @@ SCRIPTS = [
     ("pipeDev/projectDev", "projectTool_ui.py"),
     ("pipeDev/layoutDev", "layoutTool_env.py"),
     ("pipeDev/modelDev", "modelTool_convert.py"),
+    ("pipeDev/lightingDev", "renderSub_api.py"),
+    ("pipeDev/lightingDev", "renderSub_ui.py"),
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
 # Every shelf the package installs (2026-10-23: mpLayout added; 2026-10-30:
-# mpModel). The first
+# mpModel; 2026-11-13: mpLighting). The first
 # goes in the zip as shelf_config.py, the others as shelf_config_<shelf>.py.
 SHELF_DIRS = [SHELF_DIR, os.path.join(REPO, "shelfDev", "mpLayout"),
-              os.path.join(REPO, "shelfDev", "mpModel")]
+              os.path.join(REPO, "shelfDev", "mpModel"),
+              os.path.join(REPO, "shelfDev", "mpLighting")]
 TOP = "mpPipe"
 
 # Each build is also copied here, so the latest is ready to download on
@@ -73,7 +76,8 @@ def _git_hash():
                                          "pipeDev/publishDev", "pipeDev/buildDev",
                                          "pipeDev/pipelineInstaller", "shelfDev/mpPipe",
                                          "pipeDev/layoutDev", "shelfDev/mpLayout",
-                                         "pipeDev/modelDev", "shelfDev/mpModel"],
+                                         "pipeDev/modelDev", "shelfDev/mpModel",
+                                         "pipeDev/lightingDev", "shelfDev/mpLighting"],
                                         stderr=subprocess.DEVNULL)
         return out.decode().strip() + ("+local changes" if dirty.strip() else "")
     except (OSError, subprocess.CalledProcessError):

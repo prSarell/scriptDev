@@ -62,6 +62,24 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
       2026-11-03 and hadn't finished when we stopped. Rerun it and look at
       the summary (`test_projectMatch_mayapy.py` is known stale).
 
+**renderSub (built 2026-11-13, spec "renderSub")**
+- [ ] Hand test the window in Maya (mpLighting shelf, after reinstalling
+      mpPipe): render each frame mode, Cancel mid-render, close and reopen
+      the window during a render, Play in RV, Delete, Publish. The engine
+      was tested headless and on SEQ010_140 (published as
+      `SEQ010_140_e131988_render_v001`, ShotGrid Version 13643); the
+      window itself hasn't been clicked yet.
+- [?] Add a **Lighting** task to the NWF shots (none have one), so render
+      Versions sit on it. Claude can script it, as `asset_tasks.py` does for
+      assets.
+- [?] Arnold **batch** licences: this machine has none, so background
+      renders carry Arnold's watermark. Do RMIT lab machines have them? If
+      not, finals need a licensed machine, the farm, or an in-Maya render
+      option.
+- [ ] Delete the test render when done with it: ShotGrid Version 13643 and
+      `G:\H\NWF_SHF\...\SEQ010_140\images\lighting\e131988\e131988_render_v001`
+      (watermarked, every 30th frame at 25%).
+
 ---
 
 ## 0. [x] How wip moves between machines — CLOSED 2026-10-23
