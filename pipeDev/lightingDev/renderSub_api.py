@@ -50,7 +50,8 @@ PADDING = 4
 INFO_NAME = "render.json"
 LOG_NAME = "render.log"
 RESOLUTIONS = (100, 50, 25)  # percent of the render settings' size
-FRAME_MODES = ("shot", "custom", "step", "list")
+FRAME_MODES = ("shot", "check", "custom", "step", "list")
+CHECK_FRAMES = 5     # the lighting check: start, end, middle and halfway either side
 SEQUENCE, BATCH = "sequence", "batch"     # in this Maya / Render.exe (see render_in_maya)
 
 
@@ -154,11 +155,13 @@ def parse_frame_list(text):
 
 
 def frames_for(mode, start=None, end=None, step=1, text=""):
-    """The frames to render. shot: the timeline; custom: start-end; step:
-    every Nth frame from start, always ending on end (test renders across
-    the shot); list: the typed frames."""
+    """The frames to render. shot: the timeline; check: a lighting check
+    across the timeline (check_frames); custom: start-end; step: every Nth
+    frame from start, always ending on end; list: the typed frames."""
     if mode == "list":
         frames = parse_frame_list(text)
+    elif mode == "check":
+        frames = check_frames(*shot_range())
     else:
         if mode == "shot":
             start, end = shot_range()
@@ -171,6 +174,19 @@ def frames_for(mode, start=None, end=None, step=1, text=""):
     if not frames:
         raise PublishError("No frames to render.")
     return frames
+
+
+def check_frames(start, end, count=CHECK_FRAMES):
+    """A lighting check across the shot without rendering all of it (user,
+    2026-11-13, after seeing a 5-frame test of SEQ010_140): the start, the
+    end, the middle and the frames halfway between the middle and each
+    end, evenly spread whatever the shot's length. 1001-1118 ->
+    1001, 1030, 1060, 1089, 1118. A shot shorter than that renders every
+    frame once."""
+    if end < start:
+        raise PublishError("The end frame is before the start frame.")
+    return sorted({int(round(start + i * (end - start) / float(count - 1)))
+                   for i in range(count)})
 
 
 def seq_string(frames):

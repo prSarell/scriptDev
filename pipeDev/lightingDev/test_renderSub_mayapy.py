@@ -26,6 +26,12 @@ def refuses(fn, *a, **k):
 cmds.playbackOptions(minTime=1001, maxTime=1010)
 check("whole shot = the timeline", rs.frames_for("shot") == list(range(1001, 1011)))
 check("custom range", rs.frames_for("custom", 1003, 1005) == [1003, 1004, 1005])
+check("lighting check: start, end, middle and halfway each side (SEQ010_140's range)",
+      rs.check_frames(1001, 1118) == [1001, 1030, 1060, 1089, 1118])
+check("lighting check: evenly spread on any length", rs.check_frames(1001, 1101) == [1001, 1026, 1051, 1076, 1101])
+check("lighting check: a shot shorter than 5 frames renders each frame once",
+      rs.check_frames(1001, 1003) == [1001, 1002, 1003] and rs.check_frames(1001, 1001) == [1001])
+check("lighting check follows the timeline", rs.frames_for("check") == rs.check_frames(1001, 1010))
 check("every Nth frame, ending on the end frame",
       rs.frames_for("step", 1001, 1010, 4) == [1001, 1005, 1009, 1010])
 check("frame list with ranges, sorted, no repeats",

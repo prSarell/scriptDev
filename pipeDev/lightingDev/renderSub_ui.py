@@ -23,8 +23,9 @@ KEEP_VAR = "renderSub_keepVersions"
 OPEN_RV_VAR = "renderSub_openInRV"
 HOW_VAR = "renderSub_how"          # sequence (default) or batch
 DEFAULT_KEEP = 3
-MODE_LABELS = (("shot", "Whole shot"), ("custom", "Custom range"),
-               ("step", "Every Nth frame"), ("list", "Frame list"))
+MODE_LABELS = (("shot", "Whole shot"),
+               ("check", "Lighting check (start, end, middle + halfway each side)"),
+               ("custom", "Custom range"), ("step", "Every Nth frame"), ("list", "Frame list"))
 TICK_MS = 2000
 
 _JOB = None         # the RenderJob running now, if any
@@ -210,7 +211,7 @@ class RenderSubUI(object):
 
     def update_modes(self):
         mode = self.mode()
-        if mode == "shot":
+        if mode in ("shot", "check"):
             start, end = api.shot_range()
             cmds.intField(self.w["start"], e=True, value=start)
             cmds.intField(self.w["end"], e=True, value=end)

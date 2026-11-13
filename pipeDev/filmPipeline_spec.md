@@ -1280,6 +1280,14 @@ The tools are developed side by side:
           stays usable; the window shows frames done and can cancel. Each
           version keeps a `render.json` (scene, camera, frames, size), so a
           render farm can run the same job later.
+        - **Lighting check (BUILT 2026-11-13).** The user, after seeing a
+          5-frame test of SEQ010_140: "the start end middle and two frames
+          on either side of the shot get rendered. It would be a great test
+          for lighting across the shot without rendering the whole thing."
+          A Frames option: start, end, middle and halfway between the middle
+          and each end, evenly spread on any length (1001-1118 -> 1001,
+          1030, 1060, 1089, 1118). In the Frames menu rather than a checkbox,
+          since the frame choices are either/or.
         - **Frames (DECIDED):** whole shot (timeline), custom start/end,
           every Nth frame (always including the end frame, for test renders
           across the shot), or a frame list (`1001, 1050, 1100-1105`). Size
