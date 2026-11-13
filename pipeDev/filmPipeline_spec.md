@@ -1293,6 +1293,16 @@ The tools are developed side by side:
           thumbnail straight after the render (as shotSub). No movie (no RV,
           or RV signed out) = no publish, so ShotGrid never gets a blank
           review.
+        - **Watch before publishing (BUILT 2026-11-13).** The user: "a popup
+          that asks the student to publish or cancel the renderSub after RV
+          loads. So they can get their eyes on the frames before sending it
+          to ShotGrid. We have that feature as part of the publish tool."
+          After every finished render (and on Publish Selected), a "Watch
+          before publishing" window: Publish / Cancel / Play in RV, with the
+          notes box. Like the Publish tool's, nothing waits on RV. Unlike it,
+          **Cancel keeps the render** on scratch in Local Versions (a test
+          render is worth keeping to compare or publish later); a
+          watermarked render says so in the same window.
         - **RV (2026-11-13):** the user: "auto load the frames in RV when
           the render is complete". A finished render opens its **EXR frames**
           (full quality; each frame of a step render) in renderSub's own RV

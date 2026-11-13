@@ -389,20 +389,25 @@ class RenderSubUI(object):
         self._report(info)
 
     def _report(self, info):
-        if info["status"] == "done" and cmds.checkBox(self.w["open_rv"], q=True, value=True):
+        in_rv = info["status"] == "done" and cmds.checkBox(self.w["open_rv"], q=True, value=True)
+        if in_rv:
             open_in_rv(info)
         if info["status"] == "done":
-            text = "%s rendered: %d frame(s)." % (info["version"], len(info["frames"]))
-            if info.get("watermarked"):
-                text += "\n\n" + api.NO_LICENCE_HELP
-            if info.get("movie_problem"):
-                text += "\n\nNo review movie: " + info["movie_problem"]
             cmds.text(self.w["status"], e=True, label="%s done" % info["version"])
-            if info.get("watermarked") or info.get("movie_problem"):
-                _say(text)
-            else:
-                cmds.inViewMessage(amg="renderSub: <hl>%s</hl> rendered." % info["version"],
-                                   pos="midCenter", fade=True)
+            if info.get("movie_problem"):
+                # No movie, no publish (api.publish refuses): just say why.
+                return _say("%s rendered: %d frame(s), but there's no review movie, so it "
+                            "can't be published:\n%s" % (info["version"], len(info["frames"]),
+                                                        info["movie_problem"]))
+            # Watch, then Publish or Cancel, as the Publish tool does.
+            answer = ReviewDialog.ask(info, cmds.scrollField(self.w["notes"], q=True, text=True),
+                                      in_rv)
+            if answer is None:
+                cmds.inViewMessage(amg="renderSub: <hl>%s</hl> kept on scratch, not published."
+                                   % info["version"], pos="midCenter", fade=True)
+                return
+            cmds.scrollField(self.w["notes"], e=True, text=answer)
+            self.publish_version(info["folder"], answer)
         elif info["status"] == "cancelled":
             cmds.text(self.w["status"], e=True, label="%s cancelled" % info["version"])
         else:
@@ -444,24 +449,30 @@ class RenderSubUI(object):
 
     # ------------------------------------------------------------------ publish
     def publish(self):
+        """Publish Selected: the same watch-then-publish question as after a
+        render, for a version kept earlier."""
         v = self.selected()
         if not (v and self.ctx):
             return
-        if v["info"].get("watermarked") and cmds.confirmDialog(
-                title="renderSub", message="%s has Arnold's watermark.\n\n%s\n\nPublish it anyway?"
-                % (v["name"], api.NO_LICENCE_HELP), button=["Publish", "Cancel"],
-                cancelButton="Cancel", dismissString="Cancel") != "Publish":
-            return
+        info = dict(v["info"], folder=v["path"])
+        answer = ReviewDialog.ask(info, cmds.scrollField(self.w["notes"], q=True, text=True),
+                                  in_rv=False)
+        if answer is not None:
+            self.publish_version(v["path"], answer)
+
+    def publish_version(self, folder, notes):
+        if not self.ctx:
+            return _say(self.error)
+        name = os.path.basename(folder)
         cmds.waitCursor(state=True)
         try:
-            result = api.publish(self.ctx, v["path"],
-                                 cmds.scrollField(self.w["notes"], q=True, text=True))
+            result = api.publish(self.ctx, folder, notes)
         except Exception as e:
             return _say("The publish stopped:\n%s" % e)
         finally:
             cmds.waitCursor(state=False)
         self.refresh()
-        lines = ["%s copied to the H drive:\n%s" % (v["name"], result["dest"])]
+        lines = ["%s copied to the H drive:\n%s" % (name, result["dest"])]
         if result["sg_error"]:
             lines.append("The ShotGrid upload failed (publish again to retry it):\n"
                          + result["sg_error"])
@@ -475,6 +486,64 @@ class RenderSubUI(object):
 
 def _say(message):
     cmds.confirmDialog(title="renderSub", message=message or "", button=["OK"])
+
+
+def _maya_window():
+    from maya import OpenMayaUI
+    from PySide6 import QtWidgets
+    from shiboken6 import wrapInstance
+    pointer = OpenMayaUI.MQtUtil.mainWindow()
+    return wrapInstance(int(pointer), QtWidgets.QWidget) if pointer else None
+
+
+class ReviewDialog(object):
+    """Watch before publishing (user, 2026-11-13: "a popup that asks the
+    student to publish or cancel ... after RV loads. So they can get their
+    eyes on the frames before sending it to ShotGrid. We have that feature
+    as part of the publish tool"). Same shape as the Publish tool's
+    ReviewDialog: both buttons work straight away, nothing waits on RV.
+    Cancel keeps the render on scratch (Local Versions) to publish or delete
+    later; a watermarked render says so here, so it's one question."""
+
+    @staticmethod
+    def ask(info, notes="", in_rv=True):
+        """Returns the notes to publish with, or None for Cancel."""
+        from PySide6 import QtWidgets
+        dialog = QtWidgets.QDialog(_maya_window())
+        dialog.setWindowTitle("Watch before publishing")
+        dialog.setObjectName("renderSubReview")
+        text = ("%s: %d frame(s) %s.\n\nPublish to the H drive and ShotGrid, or cancel to keep it "
+                "on your scratch drive only (it stays in Local Versions)." % (
+                    info["version"], len(info["frames"]),
+                    "are opening in RV" if in_rv else "rendered"))
+        if info.get("watermarked"):
+            text += "\n\nThese frames carry Arnold's watermark. " + api.NO_LICENCE_HELP
+        label = QtWidgets.QLabel(text)
+        label.setWordWrap(True)
+        label.setMinimumWidth(420)
+        notes_box = QtWidgets.QPlainTextEdit(notes or "")
+        notes_box.setPlaceholderText('Notes for ShotGrid, e.g. "first light pass, rim too hot"')
+        notes_box.setFixedHeight(70)
+        play = QtWidgets.QPushButton("Play in RV")
+        play.clicked.connect(lambda: open_in_rv(info))
+        publish = QtWidgets.QPushButton("Publish")
+        publish.setDefault(True)
+        publish.clicked.connect(dialog.accept)
+        cancel = QtWidgets.QPushButton("Cancel")
+        cancel.clicked.connect(dialog.reject)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addWidget(play)
+        buttons.addStretch(1)
+        buttons.addWidget(publish)
+        buttons.addWidget(cancel)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(label)
+        layout.addWidget(QtWidgets.QLabel("Notes (sent with this publish)"))
+        layout.addWidget(notes_box)
+        layout.addLayout(buttons)
+        publish.setFocus()
+        accepted = dialog.exec() == QtWidgets.QDialog.Accepted
+        return notes_box.toPlainText() if accepted else None
 
 
 def open_in_rv(info):
