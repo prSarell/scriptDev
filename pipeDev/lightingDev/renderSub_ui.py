@@ -33,6 +33,25 @@ _TIMER = None
 _UI = None
 
 
+def _flow():
+    """renderSub_flow (Flow Render, the cloud), or None if it won't load."""
+    try:
+        import renderSub_flow
+        return renderSub_flow
+    except Exception:
+        return None
+
+
+def _flow_available():
+    flow = _flow()
+    if not flow:
+        return False, "renderSub's Flow Render part (renderSub_flow.py) isn't installed."
+    try:
+        return flow.available()
+    except Exception as e:
+        return False, "Flow Render didn't load: %s" % e
+
+
 def show():
     global _UI
     _UI = RenderSubUI()
@@ -95,12 +114,21 @@ class RenderSubUI(object):
         self._row("Render on")
         self.w["where"] = cmds.optionMenu(
             annotation="Where the render runs. Time estimates come from earlier renders "
-                       "of this shot in the same place.")
+                       "of this shot in the same place.",
+            changeCommand=lambda *_: self._set_where())
         cmds.menuItem(label="%s (%s)" % (api.WHERE_LABELS[api.LOCAL], api.where()["machine"]))
+        flow_ok, flow_why = _flow_available()
+        cmds.menuItem(label=api.WHERE_LABELS[api.CLOUD] + ("" if flow_ok else " (not in this Maya)"),
+                      enable=flow_ok,
+                      annotation=("Autodesk's cloud rendering (tech preview, free hours each "
+                                  "month on your Autodesk account). Maya stays free while it "
+                                  "uploads and renders; the frames come back here."
+                                  if flow_ok else flow_why))
         cmds.menuItem(label="%s (coming soon)" % api.WHERE_LABELS[api.FARM], enable=False)
+        self._where_kinds = [api.LOCAL, api.CLOUD, api.FARM]
         cmds.setParent("..")
         self._row("Render")
-        cmds.columnLayout(adj=True)
+        self.w["how_column"] = cmds.columnLayout(adj=True)
         self.w["how"] = cmds.radioCollection()
         saved_how = cmds.optionVar(q=HOW_VAR) if cmds.optionVar(exists=HOW_VAR) else api.SEQUENCE
         for how, tip in ((api.SEQUENCE, "Renders in this Maya, like Render > Render Sequence. "
@@ -154,9 +182,24 @@ class RenderSubUI(object):
 
         cmds.showWindow(WINDOW)
         self.refresh()
+        self._pick_up_cloud_render()
         if _JOB and _JOB.poll() is None:
             self._set_running(True)
             _start_timer()
+
+    def _pick_up_cloud_render(self):
+        """A cloud render submitted before Maya was closed carries on in the
+        cloud: watch it again so its frames come back to this version."""
+        global _JOB
+        if (_JOB and _JOB.poll() is None) or not self.ctx:
+            return
+        for v in api.local_versions(self.ctx):
+            if api.cloud_job_id(v["info"]):
+                flow = _flow()
+                if flow:
+                    _JOB = flow.FlowJob(dict(v["info"], folder=v["path"]))
+                    cmds.text(self.w["status"], e=True, label=_JOB.describe())
+                return
 
     def _frame(self, label, parent):
         cmds.frameLayout(label=label, collapsable=False, marginHeight=8, marginWidth=8, parent=parent)
@@ -221,7 +264,18 @@ class RenderSubUI(object):
             control(self.w[key], e=True, enable=on)
         self.update_counts()
 
+    def where(self):
+        return self._where_kinds[cmds.optionMenu(self.w["where"], q=True, select=True) - 1]
+
+    def _set_where(self):
+        # In Maya / in the background only matter on this computer.
+        cmds.columnLayout(self.w["how_column"], e=True, enable=self.where() == api.LOCAL)
+        self._quota = None
+        self.update_counts()
+
     def how(self):
+        if self.where() == api.CLOUD:
+            return api.FLOW
         return cmds.radioCollection(self.w["how"], q=True, select=True) or api.SEQUENCE
 
     def _set_how(self, how):
@@ -232,21 +286,40 @@ class RenderSubUI(object):
         return api.RESOLUTIONS[cmds.optionMenu(self.w["size"], q=True, select=True) - 1]
 
     def frames(self):
-        return api.frames_for(self.mode(),
-                              cmds.intField(self.w["start"], q=True, value=True),
-                              cmds.intField(self.w["end"], q=True, value=True),
-                              cmds.intField(self.w["step"], q=True, value=True),
-                              cmds.textField(self.w["list"], q=True, text=True))
+        frames = api.frames_for(self.mode(),
+                                cmds.intField(self.w["start"], q=True, value=True),
+                                cmds.intField(self.w["end"], q=True, value=True),
+                                cmds.intField(self.w["step"], q=True, value=True),
+                                cmds.textField(self.w["list"], q=True, text=True))
+        if self.where() == api.CLOUD:
+            flow = _flow()
+            if self.mode() == "list" and not flow.is_range(frames):
+                raise api.PublishError("Flow Render renders a range every N frames, not a "
+                                       "frame list: use Every Nth frame or Custom range.")
+            frames = flow.cloud_frames(frames)
+        return frames
 
     def update_counts(self):
         w, h = api.render_size(self.percent())
         estimate = ""
+        cloud = self.where() == api.CLOUD
         try:
             frames = self.frames()
             text = "%d frame(s) at %d x %d" % (len(frames), w, h)
+            if cloud:
+                text += " on Flow Render: %s" % api.seq_string(frames)
         except api.PublishError as e:
             frames, text = [], str(e)
-        if frames and self.ctx:
+        if cloud:
+            if getattr(self, "_quota", None) is None:
+                self._quota = _flow().quota_text() if _flow() else ""
+            guess = api.predict(self.ctx["shot_project"], len(frames), (w, h), kind=api.CLOUD) \
+                if frames and self.ctx else None
+            estimate = ("About %s from submit to frames back, from earlier cloud renders of this "
+                        "shot. " % api.duration(guess["total"]) if guess else
+                        "No estimate yet for the cloud. ")
+            estimate += self._quota or "Hours left: shown once you're signed in to Autodesk."
+        elif frames and self.ctx:
             guess = api.predict(self.ctx["shot_project"], len(frames), (w, h), how=self.how())
             if guess:
                 estimate = "About %s a frame on this computer, so about %s in all%s." % (
@@ -310,9 +383,9 @@ class RenderSubUI(object):
         try:
             frames = self.frames()
             changed = api.ensure_arnold()
-            if how == api.BATCH and (changed or cmds.file(query=True, modified=True)):
-                # The background render reads the saved file, not this session.
-                # (A sequence render renders the scene as it is open.)
+            if how in (api.BATCH, api.FLOW) and (changed or cmds.file(query=True, modified=True)):
+                # The background and cloud renders read the saved file, not
+                # this session. (A sequence render renders the scene as it is open.)
                 if cmds.confirmDialog(title="renderSub", message="Save the scene and render it?",
                                       button=["Save and Render", "Cancel"],
                                       defaultButton="Save and Render", cancelButton="Cancel",
@@ -328,7 +401,15 @@ class RenderSubUI(object):
                                    frames, camera, self.percent(), how=how)
             if how == api.SEQUENCE:
                 return self._render_in_maya(info)
-            _JOB = api.RenderJob(info)
+            if how == api.FLOW:
+                try:
+                    _JOB = _flow().FlowJob.submit(info)
+                except Exception as e:
+                    api.finish_render(info, 1)
+                    self.refresh_versions()
+                    raise api.PublishError("Flow Render didn't take the job:\n%s" % e)
+            else:
+                _JOB = api.RenderJob(info)
         except (api.PublishError, OSError) as e:
             return _say(str(e))
         self._set_running(True)
@@ -381,8 +462,10 @@ class RenderSubUI(object):
         cmds.progressBar(self.w["progress"], e=True, maxValue=total, progress=done)
         if _JOB.poll() is None:
             status = "Rendering %s: %d of %d frame(s) done" % (_JOB.info["version"], done, total)
-            timing = api.timing(_JOB.info, running=True)
-            if timing:
+            timing = None if hasattr(_JOB, "describe") else api.timing(_JOB.info, running=True)
+            if hasattr(_JOB, "describe"):
+                status = _JOB.describe()
+            elif timing:
                 status += ", %s a frame, about %s left" % (
                     api.duration(timing["per_frame"]), api.duration(api.time_left(_JOB.info)))
             else:
@@ -425,17 +508,24 @@ class RenderSubUI(object):
                 label += " (Publish Selected publishes them)"
             cmds.text(self.w["status"], e=True, label=label)
             if info["status"] == api.FAILED:
-                where = ("Arnold's messages are in the Script Editor." if info.get("how") == api.SEQUENCE
-                         else "End of the render log:\n%s" % api.log_tail(info))
+                if info.get("how") == api.FLOW:
+                    where = (info.get("flow") or {}).get("error") or "See the Script Editor."
+                elif info.get("how") == api.SEQUENCE:
+                    where = "Arnold's messages are in the Script Editor."
+                else:
+                    where = "End of the render log:\n%s" % api.log_tail(info)
                 _say("%s didn't finish: %d frame(s) missing.%s\n\n%s"
                      % (info["version"], len(info["missing"]),
                         " The %d that finished can still be published: pick it in Local "
                         "Versions, then Publish Selected." % done if done else "", where))
 
     def cancel(self):
+        note = None
         if _JOB and _JOB.poll() is None:
-            _JOB.cancel()
+            note = _JOB.cancel()
         self.tick()
+        if note:
+            _say(note)
 
     # ------------------------------------------------------------------ versions
     def play(self):

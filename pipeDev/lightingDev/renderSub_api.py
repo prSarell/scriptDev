@@ -55,6 +55,7 @@ RESOLUTIONS = (100, 50, 25)  # percent of the render settings' size
 FRAME_MODES = ("shot", "check", "custom", "step", "list")
 CHECK_FRAMES = 5     # the lighting check: start, end, middle and halfway either side
 SEQUENCE, BATCH = "sequence", "batch"     # in this Maya / Render.exe (see render_in_maya)
+FLOW = "flow"        # Flow Render, Autodesk's cloud (renderSub_flow.py)
 # render.json "status". INTERRUPTED: still "rendering" but nothing is
 # rendering it any more (Maya crashed, the power went; user, 2026-11-13).
 RENDERING, DONE, CANCELLED, FAILED, INTERRUPTED = (
@@ -295,7 +296,7 @@ def render_command(info):
 
 def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
     """Make the next version folder and its render.json. Nothing renders yet.
-    how: SEQUENCE (in this Maya) or BATCH (Render.exe)."""
+    how: SEQUENCE (in this Maya), BATCH (Render.exe) or FLOW (the cloud)."""
     if not cmds.objExists(camera):
         raise PublishError("The camera '%s' isn't in the scene." % camera)
     folder = next_version(ctx)
@@ -308,7 +309,7 @@ def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
         "camera": cmds.ls(camera)[0], "frames": sorted(set(frames)),
         "percent": percent, "size": list(render_size(percent)),
         "fps": pub._scene_fps(), "maya": cmds.about(version=True),
-        "where": where(), "how": how, "status": RENDERING, "started": _now(), "started_ts": time.time(),
+        "where": where(CLOUD if how == FLOW else LOCAL), "how": how, "status": RENDERING, "started": _now(), "started_ts": time.time(),
         # The process doing the render (this Maya; RenderJob swaps in
         # Render.exe), so a render nobody is running any more can be told
         # from one still going (see settle).
@@ -325,16 +326,31 @@ def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
 # or in the future on the render farm").
 # ---------------------------------------------------------------------------
 
-LOCAL, FARM = "local", "farm"
-WHERE_LABELS = {LOCAL: "This computer", FARM: "Render farm"}
+LOCAL, FARM, CLOUD = "local", "farm", "cloud"
+WHERE_LABELS = {LOCAL: "This computer", FARM: "Render farm", CLOUD: "Flow Render (cloud)"}
+CLOUD_MACHINE = "Flow Render"
 HISTORY_KEEP = 20
 
 
 def where(kind=LOCAL):
-    """Where a render runs: {"kind": "local"/"farm", "machine"}. Estimates
-    only use renders from the same place (a farm node isn't a laptop)."""
+    """Where a render runs: {"kind": "local"/"farm"/"cloud", "machine"}.
+    Estimates only use renders from the same place (a farm node isn't a
+    laptop)."""
+    if kind == CLOUD:
+        return {"kind": kind, "machine": CLOUD_MACHINE}
     machine = os.environ.get("COMPUTERNAME") or platform.node() or "unknown"
     return {"kind": kind, "machine": machine}
+
+
+def cloud_timing(info):
+    """A cloud render's frames all arrive together when it's downloaded, so
+    file times say nothing. Its time is the turnaround instead: submit to
+    download, spread over the frames (what an artist waits for)."""
+    frames = finished_frames(info)
+    if not frames or not info.get("started_ts"):
+        return None
+    elapsed = max(0.0, time.time() - info["started_ts"])
+    return {"done": len(frames), "per_frame": elapsed / len(frames), "startup": 0.0}
 
 
 def frame_files(info):
@@ -401,10 +417,19 @@ def settle(info, running_folder=None):
         return info
     if running_folder and os.path.normcase(running_folder) == os.path.normcase(info["folder"]):
         return info
+    if cloud_job_id(info):
+        return info         # in the cloud: it carries on with Maya closed (renderSub_flow)
     here = (info.get("where") or {}).get("machine") == where()["machine"]
     if here and info.get("pid") not in (None, os.getpid()) and _alive(info["pid"]):
         return info         # another Maya or Render.exe on this machine has it
     return finish_render(info, None, interrupted=True)
+
+
+def cloud_job_id(info):
+    """The Flow Render job id of a cloud render still to come back, or ""."""
+    if info.get("how") != FLOW or info.get("status") != RENDERING:
+        return ""
+    return (info.get("flow") or {}).get("fge") or ""
 
 
 def frames_done(info, running=False):
@@ -467,7 +492,7 @@ def read_history(shot_project):
 def record_timing(info):
     """Add a finished render's timing to the shot's history (kept apart from
     the version folders, so pruning old renders keeps their times)."""
-    t = timing(info)
+    t = info.get("timing") if "timing" in info else timing(info)
     if not t or t["done"] < 1:
         return
     entry = {"version": info["version"], "login": info["login"], "at": _now(),
@@ -536,7 +561,8 @@ def duration(seconds):
 # ---------------------------------------------------------------------------
 
 HOW_LABELS = {SEQUENCE: "In Maya (Render Sequence)",
-              BATCH: "In the background (batch render)"}
+              BATCH: "In the background (batch render)",
+              FLOW: "Flow Render (cloud)"}
 
 
 class _SequenceSettings(object):
@@ -678,7 +704,7 @@ def finish_render(info, returncode, cancelled=False, interrupted=False):
     info["finished"] = _now()
     info["returncode"] = returncode
     info["watermarked"] = watermarked(info)
-    info["timing"] = timing(info)
+    info["timing"] = cloud_timing(info) if info.get("how") == FLOW else timing(info)
     record_timing(info)         # stopped renders still timed their frames
     if info["status"] == DONE:
         info["movie_problem"] = make_review_media(info)
@@ -848,6 +874,8 @@ def prune(ctx, keep):
         return []
     lost = []
     for v in local_versions(ctx)[keep:]:
+        if cloud_job_id(v["info"]):
+            continue        # still rendering in the cloud: its frames come back here
         if not v["info"].get("published"):
             lost.append(v["name"])
         shutil.rmtree(v["path"], ignore_errors=True)

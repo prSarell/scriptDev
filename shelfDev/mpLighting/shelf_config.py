@@ -8,7 +8,7 @@ SHELF_NAME = "mpLighting"
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_camera", "pipeEnv",
-                "renderSub_api", "renderSub_ui")
+                "renderSub_api", "renderSub_flow", "renderSub_ui")
 
 
 def _command(module, call):
