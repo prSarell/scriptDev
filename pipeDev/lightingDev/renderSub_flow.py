@@ -44,7 +44,10 @@ import renderSub_api as api
 PublishError = api.PublishError
 
 QUERY_EVERY = 15            # seconds between asking the cloud how a job is going
-ID_WAIT = 300               # seconds to wait for the cloud id once the upload's done
+# Seconds to wait for the cloud id once the export has left Arnold's queue.
+# Hand test 2026-11-18: 5 min was too short; an 11-frame sphere test got its
+# id after renderSub had given up, and rendered fine (SUCCEEDED).
+ID_WAIT = 1800
 DOWNLOAD_WAIT = 1800        # seconds to wait for every frame to download
 INCOMING = "flow_download"  # where Flow Render downloads to, inside the version
 OK_STATES = {"SUCCEEDED", "COMPLETED"}
@@ -315,8 +318,11 @@ class FlowJob(object):
                               "is named in the Script Editor.")
         try:
             out = cmds.flowRenderQuery(fgeIdFromJobId=flow["local"])
-        except Exception:
+        except Exception as e:
             out = None
+            if not getattr(self, "_query_warned", False):   # say once, keep waiting
+                self._query_warned = True
+                cmds.warning("renderSub: Flow Render's job id lookup failed (still waiting): %s" % e)
         fge = str(out[0] if isinstance(out, (list, tuple)) and out else out or "")
         if fge:
             flow.update(fge=fge, state="Queued")
@@ -326,8 +332,8 @@ class FlowJob(object):
             # Uploaded (the job's gone from the queue) but no cloud id yet.
             self._lost_since = self._lost_since or now
             if now - self._lost_since > ID_WAIT:
-                self._fail("The upload finished but Flow Render never gave the job an id. "
-                           "Check Arnold > Flow Render > Job Monitor.")
+                self._fail("Flow Render didn't give the job an id in %d min. It may still be "
+                           "rendering: check Arnold > Flow Render > Job Monitor." % (ID_WAIT // 60))
 
     def _check_status(self, flow):
         result = cmds.flowRenderQuery(jobStatus=flow["fge"]) or []

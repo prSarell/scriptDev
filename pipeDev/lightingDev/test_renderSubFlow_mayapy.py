@@ -181,6 +181,15 @@ note = late.cancel()
 check("cancel once it's in the cloud: says to stop it in the Job Monitor, and opens it",
       note and "Job Monitor" in note and cloud.get("monitor"))
 
+slow = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
+FakeQueue.removeJob(FakeQueue.jobs[-1])          # exported: gone from Arnold's queue, no id yet
+slow.poll()
+slow._lost_since -= 600                          # 10 min on (hand test 2026-11-18: 5 min was too short)
+check("a slow cloud id: still waiting after 10 min", slow.poll() is None)
+slow._lost_since -= flow.ID_WAIT
+check("... and fails, pointing at the Job Monitor, after ID_WAIT",
+      slow.poll() == 1 and "Job Monitor" in slow.info["flow"]["error"])
+
 lost = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
 FakeQueue.jobs[-1].failed = True
 check("the export or upload failing fails the render", lost.poll() == 1)
