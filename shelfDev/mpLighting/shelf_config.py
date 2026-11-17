@@ -8,7 +8,8 @@ SHELF_NAME = "mpLighting"
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_camera", "pipeEnv",
-                "renderSub_api", "renderSub_flow", "renderSub_ui")
+                "renderSub_api", "renderSub_flow", "renderSub_ui",
+                "renderPresets_api", "renderPresets_ui")
 
 
 def _command(module, call):
@@ -26,5 +27,13 @@ BUTTONS = [
                    "the H drive and the movie to ShotGrid.",
         "icon": "iconRenderSub.png",
         "command": _command("renderSub_ui", "show"),
+    },
+    {
+        "label": "Presets",
+        "tooltip": "Render Presets: save this shot's Arnold settings, AOVs and lights (names, "
+                   "world positions and every setting) as a named preset, then apply it in any "
+                   "other shot of the film.",
+        "icon": "iconRenderPresets.png",
+        "command": _command("renderPresets_ui", "show"),
     },
 ]
