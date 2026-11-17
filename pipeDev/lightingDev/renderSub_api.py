@@ -274,6 +274,24 @@ def frame_path(folder, prefix, frame):
     return os.path.join(folder, "%s.%0*d.%s" % (prefix, PADDING, frame, IMAGE_FORMAT))
 
 
+BEAUTY = "beauty"
+
+
+def frames_folder(info):
+    """Where a version's beauty frames are. A scene with AOVs (e.g. Arnold's
+    denoising AOVs) makes Arnold write each AOV to its own subfolder, the
+    beauty included: <version>\\beauty\\, <version>\\N_noice\\, ... (SEQ010_140
+    rendered all 118 frames that way 2026-11-16 and was marked failed because
+    only the version folder was checked)."""
+    sub = os.path.join(info["folder"], BEAUTY)
+    return sub if os.path.isdir(sub) else info["folder"]
+
+
+def beauty_path(info, frame):
+    """A frame's beauty EXR, wherever Arnold put it (see frames_folder)."""
+    return frame_path(frames_folder(info), info["prefix"], frame)
+
+
 def render_command(info):
     folder = info["folder"]
     w, h = info["size"]
@@ -356,7 +374,7 @@ def cloud_timing(info):
 def frame_files(info):
     """The frames on disk, in render order (Render.exe renders -seq in
     ascending order)."""
-    paths = (frame_path(info["folder"], info["prefix"], f) for f in info["frames"])
+    paths = (beauty_path(info, f) for f in info["frames"])
     return [p for p in paths if os.path.isfile(p)]
 
 
@@ -367,7 +385,7 @@ def finished_frames(info):
     file, 2026-11-13). That last file counts if it's at least half the
     usual size of the others; with nothing to compare it to, only an
     in-Maya cancel (which stops between frames) keeps it."""
-    present = [(f, frame_path(info["folder"], info["prefix"], f)) for f in info["frames"]]
+    present = [(f, beauty_path(info, f)) for f in info["frames"]]
     present = [(f, p) for f, p in present if os.path.isfile(p)]
     if not present or info.get("status") not in STOPPED:
         return [f for f, _ in present]
@@ -458,7 +476,7 @@ def timing(info, running=False):
     if running:
         done = frame_files(info)[:-1]
     else:
-        done = [frame_path(info["folder"], info["prefix"], f) for f in finished_frames(info)]
+        done = [beauty_path(info, f) for f in finished_frames(info)]
     if not done or not info.get("started_ts"):
         return None
     ends = [os.path.getmtime(p) for p in done]
@@ -682,8 +700,7 @@ class RenderJob(object):
 
 
 def missing_frames(info):
-    return [f for f in info["frames"]
-            if not os.path.isfile(frame_path(info["folder"], info["prefix"], f))]
+    return [f for f in info["frames"] if not os.path.isfile(beauty_path(info, f))]
 
 
 def finish_render(info, returncode, cancelled=False, interrupted=False):
@@ -768,7 +785,7 @@ def make_review_media(info):
     if not frames:
         return "No frames finished rendering."
     info["movie_frames"] = frames
-    folder, prefix = info["folder"], info["prefix"]
+    folder, prefix = frames_folder(info), info["prefix"]
     contiguous = frames == list(range(frames[0], frames[-1] + 1))
     # A gap-free range is one sequence; step and list renders are
     # separate frames played one after another.
@@ -800,9 +817,9 @@ def rv_media(info):
     if not frames:
         return []
     if frames == list(range(frames[0], frames[-1] + 1)):
-        return [os.path.join(info["folder"], "%s.%d-%d#.%s"
+        return [os.path.join(frames_folder(info), "%s.%d-%d#.%s"
                              % (info["prefix"], frames[0], frames[-1], IMAGE_FORMAT))]
-    return [frame_path(info["folder"], info["prefix"], f) for f in frames]
+    return [beauty_path(info, f) for f in frames]
 
 
 def find_rvpush():
@@ -888,35 +905,48 @@ def prune(ctx, keep):
 
 def _published_files(info):
     """Everything in the version folder but the log and any frame that
-    didn't finish (a stopped render's half-written last frame)."""
+    didn't finish (a stopped render's half-written last frame), as paths
+    relative to it. AOV subfolders (beauty\\, N_noice\\, ...; see
+    frames_folder) go too, holding only the finished frames: anything else
+    in a subfolder (e.g. a leftover flow_download\\) stays on scratch."""
     folder = info["folder"]
     frames = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in info["frames"]}
     whole = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in finished_frames(info)}
-    return sorted(n for n in os.listdir(folder)
-                  if os.path.isfile(os.path.join(folder, n)) and n != LOG_NAME
-                  and (n not in frames or n in whole))
+    files = []
+    for n in os.listdir(folder):
+        path = os.path.join(folder, n)
+        if os.path.isfile(path):
+            if n != LOG_NAME and (n not in frames or n in whole):
+                files.append(n)
+        elif os.path.isdir(path):
+            files += [os.path.join(n, f) for f in os.listdir(path)
+                      if f in whole and os.path.isfile(os.path.join(path, f))]
+    return sorted(files)
 
 
 def copy_to_h(info, dest):
-    """Copy the version's files to dest, check every one arrived whole,
-    then make them read-only. A folder left by an earlier copy that broke
-    off is finished, not duplicated."""
+    """Copy the version's files (and AOV subfolders) to dest, check every
+    one arrived whole, then make them read-only. A folder left by an
+    earlier copy that broke off is finished, not duplicated."""
     os.makedirs(dest, exist_ok=True)
-    for name in _published_files(info):
+    names = _published_files(info)
+    for name in names:
         src, dst = os.path.join(info["folder"], name), os.path.join(dest, name)
         if os.path.isfile(dst) and os.path.getsize(dst) == os.path.getsize(src):
             continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isfile(dst):
             os.chmod(dst, 0o666)
         shutil.copy2(src, dst)
-    short = [n for n in _published_files(info)
+    short = [n for n in names
              if not os.path.isfile(os.path.join(dest, n))
              or os.path.getsize(os.path.join(dest, n)) != os.path.getsize(os.path.join(info["folder"], n))]
     if short:
         raise PublishError("These files didn't copy to the H drive whole: %s\nPublish again "
                            "to finish the copy." % ", ".join(short[:5]))
-    for name in os.listdir(dest):
-        pub._lock(os.path.join(dest, name))
+    for root, _, files in os.walk(dest):
+        for name in files:
+            pub._lock(os.path.join(root, name))
 
 
 def find_shot_and_task(ctx):

@@ -282,6 +282,10 @@ if has_rvio:
     check("no Lighting task: still publishes, with a warning",
           sg.calls[-1][1]["task_id"] is None and any("Lighting task" in w for w in no_task["warnings"]))
 
+stash = tempfile.mkdtemp(prefix="rs_frames_")      # real EXRs for the AOV checks (prune deletes v001)
+for f in (1001, 1003, 1005):
+    shutil.copy2(rs.frame_path(info["folder"], info["prefix"], f), rs.frame_path(stash, "f", f))
+
 # --- prune ------------------------------------------------------------------------
 for _ in range(3):
     rs.plan_render(ctx, scene, [1001], cam)
@@ -292,5 +296,47 @@ check("prune keeps the newest local versions", names == ["tester_render_v005", "
 check("prune reports unpublished versions it deleted", "tester_render_v003" in lost
       and "tester_render_v002" in lost and ("tester_render_v001" not in lost if has_rvio else True))
 
-shutil.rmtree(scratch, onerror=_writable); shutil.rmtree(h_root, onerror=_writable)
+# --- AOVs: Arnold writes each AOV, beauty included, to its own subfolder -----
+# (SEQ010_140, 2026-11-16: all 118 frames rendered into beauty\ and the
+# denoising AOV folders, and renderSub called it failed.)
+aov = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam)
+for sub in ("beauty", "N_noice", "Z_noice"):
+    os.makedirs(os.path.join(aov["folder"], sub))
+    for f, src in ((1001, 1001), (1002, 1003), (1003, 1005)):
+        shutil.copy2(rs.frame_path(stash, "f", src),
+                     rs.frame_path(os.path.join(aov["folder"], sub), aov["prefix"], f))
+aov = rs.finish_render(aov, 0)
+check("AOV render: frames found in beauty\\, so it's done, not failed",
+      aov["status"] == rs.DONE and aov["missing"] == [] and rs.finished_frames(aov) == [1001, 1002, 1003])
+check("AOV render: RV gets the beauty sequence",
+      rs.rv_media(aov) == [os.path.join(aov["folder"], "beauty", "%s.1001-1003#.exr" % aov["prefix"])])
+check("AOV render: timed from the beauty frames", aov["timing"]["done"] == 3)
+os.makedirs(os.path.join(aov["folder"], "flow_download"))
+open(os.path.join(aov["folder"], "flow_download", "junk.txt"), "w").close()
+if has_rvio:
+    check("AOV render: review movie made from the beauty", os.path.isfile(rs.movie_path(aov)))
+    aov_pub = rs.publish(ctx, aov["folder"], lookup=lookup, shotgrid=sg)
+    d = aov_pub["dest"]
+    check("AOV render: every AOV folder's frames published to H",
+          all(os.path.isfile(rs.frame_path(os.path.join(d, sub), aov["prefix"], f))
+              for sub in ("beauty", "N_noice", "Z_noice") for f in (1001, 1002, 1003))
+          and os.path.isfile(os.path.join(d, "%s.mp4" % aov["prefix"])))
+    check("AOV render: other subfolders stay on scratch", not os.path.exists(os.path.join(d, "flow_download")))
+    check("AOV render: published AOV frames are read-only",
+          not os.stat(rs.frame_path(os.path.join(d, "N_noice"), aov["prefix"], 1002)).st_mode & stat.S_IWRITE)
+cut_aov = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam)
+for sub in ("beauty", "N_noice"):
+    os.makedirs(os.path.join(cut_aov["folder"], sub))
+    for f in (1001, 1002):
+        shutil.copy2(rs.frame_path(stash, "f", 1001),
+                     rs.frame_path(os.path.join(cut_aov["folder"], sub), cut_aov["prefix"], f))
+    with open(rs.frame_path(os.path.join(cut_aov["folder"], sub), cut_aov["prefix"], 1003), "w") as stub:
+        stub.write("x")
+cut_aov["status"] = rs.INTERRUPTED
+names = rs._published_files(cut_aov)
+check("stopped AOV render: half-written last frame left out of every AOV folder",
+      os.path.join("N_noice", "%s.1002.exr" % cut_aov["prefix"]) in names
+      and not any(n.endswith(".1003.exr") for n in names))
+
+shutil.rmtree(stash); shutil.rmtree(scratch, onerror=_writable); shutil.rmtree(h_root, onerror=_writable)
 print("\n%d/%d passed" % (sum(ok), len(ok)))
