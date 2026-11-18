@@ -406,12 +406,13 @@ def personal_folder(h_root, rel_project, login):
 
 def work_folder(project, code, login):
     """Where one person's working scenes go in an asset or shot project:
-    scenes\\<code>\\<login> for the WORK_FOLDERS departments (model, rig,
-    lookDev) and SHOT_WORK_FOLDERS (layout, anim, fx, render), else
-    scenes\\<login>."""
-    if code in WORK_FOLDERS + SHOT_WORK_FOLDERS:
-        return os.path.join(project, "scenes", code, login)
-    return os.path.join(project, "scenes", login)
+    scenes\\<code>\\<login>, e.g. scenes\\rig\\e131988. The WORK_FOLDERS
+    (model, rig, lookDev) and SHOT_WORK_FOLDERS (layout, anim, fx,
+    lighting) are made ahead; any other department's (creature) is made
+    when first saved to. Never scenes\\<login> on scratch: that's the
+    person's publish folder on the H drive only (user, 2026-11-19: it
+    "should not be appearing in this place")."""
+    return os.path.join(project, "scenes", code, login)
 
 
 def list_h_assets(h_root, film):

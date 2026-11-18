@@ -155,6 +155,21 @@ def _scratch_only(rel):
     return any(rel[1:1 + len(p)] == p for p in SCRATCH_ONLY)
 
 
+# Folders in a project's scenes\ that aren't anyone's: the departments' work
+# folders and Maya's own workspace folder (scenes\edits).
+_NOT_PEOPLE = set(code for _, code in pub.DEPARTMENTS) | {"edits"}
+
+
+def _publish_folder(rel):
+    """True for a person's publish folder on the H drive, or a folder in it:
+    <asset or shot>\\scenes\\<login>\\. H only: the structure copy leaves
+    them off scratch, where working files go in scenes\\<dept>\\<login>\\
+    (user, 2026-11-19: scenes\\e131988 "should not be appearing in this
+    place")."""
+    return (len(rel) >= 7 and rel[1] == "maya" and rel[2] in ("sequences", "assets")
+            and rel[5] == "scenes" and rel[6] not in _NOT_PEOPLE)
+
+
 def structure_diff(h_root, scratch_root, film):
     """How the film's folders on scratch differ from the H drive:
     {"on_scratch": the film exists on scratch,
@@ -168,7 +183,7 @@ def structure_diff(h_root, scratch_root, film):
         if s_dirs else set()
     return {
         "on_scratch": bool(s_dirs),
-        "missing": sorted(h_dirs - s_dirs),
+        "missing": sorted(r for r in h_dirs - s_dirs if not _publish_folder(r)),
         "workspaces": sorted(h_ws - s_ws),
         "gone": sorted(r for r in s_projects - h_projects if not _scratch_only(r)),
     }
@@ -186,17 +201,15 @@ def describe_diff(diff):
         parts.append("new shots: " + ", ".join(shots))
     if assets:
         parts.append("new assets: " + ", ".join(assets))
-    # Someone's first publish makes their scenes\<login>\ folder on the H
-    # drive (spec §4 "Personal work folders"): name whose, and where.
-    # Also scenes\model\<login>\ etc. (pub.WORK_FOLDERS) in assets and
-    # scenes\anim\<login>\ etc. (pub.SHOT_WORK_FOLDERS) in shots.
+    # Someone's scenes\model\<login>\ etc. (pub.WORK_FOLDERS) in assets and
+    # scenes\anim\<login>\ etc. (pub.SHOT_WORK_FOLDERS) in shots: name
+    # whose, and where. (Their H publish folder, scenes\<login>\, isn't
+    # copied to scratch: _publish_folder.)
     def person(r):
         if len(r) < 7 or r[1] != "maya" or r[2] not in ("sequences", "assets") \
                 or r[5] != "scenes" or r[:5] in new:
             return None
         work = pub.WORK_FOLDERS if r[2] == "assets" else pub.SHOT_WORK_FOLDERS
-        if len(r) == 7 and r[6] not in work:
-            return r[6]
         if len(r) == 8 and r[6] in work:
             return r[7]
         return None
@@ -269,9 +282,10 @@ def set_project(h_root, scratch_root, rel, login=None, progress=None):
         folders, _ = update_structure(h_root, scratch_root, film, diff=diff)
         done.append("made %s on scratch (%d folders)" % (rel[-1], folders))
     login = login or pub.who()
-    mine = [os.path.join(project, "scenes", login)]
+    # Only the department work folders: no scenes\<login>\ on scratch (that's
+    # the H drive's publish folder; see _publish_folder).
     work = pub.WORK_FOLDERS if rel[2] == "assets" else pub.SHOT_WORK_FOLDERS
-    mine += [pub.work_folder(project, code, login) for code in work]
+    mine = [pub.work_folder(project, code, login) for code in work]
     for folder in mine:
         if not os.path.isdir(folder):
             os.makedirs(folder)
