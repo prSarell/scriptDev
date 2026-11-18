@@ -133,12 +133,35 @@ def delete_preset(name, folder=None):
     os.remove(preset_path(name, folder))
 
 
+# What feeds a light, as the window names it.
+INPUT_LABELS = {"aiPhysicalSky": "Physical Sky", "file": "image file", "aiImage": "image file",
+                "aiBarndoor": "barndoor", "aiGobo": "gobo", "aiLightBlocker": "light blocker",
+                "aiLightDecay": "light decay"}
+
+
+def lit_by(preset):
+    """'aiSkyDomeLight1: Physical Sky (aiPhysicalSky3)' for each light with
+    something feeding it, so the window shows a sky or HDRI was caught."""
+    inputs = preset.get("inputs", {})
+    out = []
+    for light in preset.get("lights", []):
+        names = []
+        for feed in light.get("inputs", []):
+            kind = inputs.get(feed["node"], {}).get("type", "")
+            names.append("%s (%s)" % (INPUT_LABELS.get(kind, kind or "node"), feed["node"]))
+        if names:
+            out.append("%s: %s" % (light["name"], ", ".join(names)))
+    return out
+
+
 def describe(preset):
     """One line about a preset, for the window."""
     lights, aovs = len(preset.get("lights", [])), len(preset.get("aovs", []))
     when = (preset.get("savedAt") or "")[:10]
-    return "%d light(s), %d AOV(s). Saved from %s%s%s." % (
-        lights, aovs, preset.get("source") or "an unsaved scene",
+    fed = lit_by(preset)
+    return "%d light(s), %d AOV(s).%s Saved from %s%s%s." % (
+        lights, aovs, " " + "; ".join(fed) + "." if fed else "",
+        preset.get("source") or "an unsaved scene",
         " by " + preset["savedBy"] if preset.get("savedBy") else "",
         " on " + when if when else "")
 

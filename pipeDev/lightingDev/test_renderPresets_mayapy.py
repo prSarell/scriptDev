@@ -91,7 +91,9 @@ check("outputs aren't stored as settings", "outColorR" not in next(
 check("the skydome's HDRI and the barndoor come with their lights",
       saved["inputs"]["skyHDRI"]["attrs"]["fileTextureName"] == "C:/hdri/studio_small.exr"
       and saved["inputs"]["keyBarn"]["type"] == "aiBarndoor")
-check("describe says what's in it", rp.describe(saved).startswith("3 light(s), 2 AOV(s). Saved from light_001"))
+check("describe says what's in it, and what each light is lit by",
+      rp.describe(saved).startswith("3 light(s), 2 AOV(s). key: barndoor (keyBarn); sky: image file (skyHDRI). "
+                                    "Saved from light_001"))
 rp.save("blocking_001")
 
 # --- shot B: different lights, then the preset -------------------------------
@@ -154,6 +156,47 @@ twice = rp.apply(preset, remove_extra=True)
 check("applying twice makes nothing new", twice["lights_made"] == 0 and twice["lights_set"] == 3
       and len(cmds.ls(type="file")) == 1 and len(cmds.ls(type="aiBarndoor")) == 1)
 
+# --- a physical sky (sun) skydome and a light portal (user, 2026-11-18) ------
+cmds.file(new=True, force=True)
+scene_c = shot("SEQ010_030")
+cmds.file(rename=scene_c); cmds.file(save=True, type="mayaAscii")
+rp.ensure_arnold()
+dome = cmds.listRelatives(cmds.rename(cmds.shadingNode("aiSkyDomeLight", asLight=True), "sun"),
+                          shapes=True)[0]
+cmds.setAttr(dome + ".aiExposure", 2.5); cmds.setAttr(dome + ".portalMode", 2)
+phys = cmds.shadingNode("aiPhysicalSky", asTexture=True, name="sunSky")
+for a, v in (("elevation", 8.5), ("azimuth", 200.0), ("turbidity", 7.0), ("intensity", 2.0), ("sunSize", 4.5)):
+    cmds.setAttr("%s.%s" % (phys, a), v)
+cmds.setAttr(phys + ".sunTint", 0.65, 0.38, 0.25, type="float3")
+cmds.connectAttr(phys + ".outColor", dome + ".color")
+import mtoa.utils
+portal = cmds.rename(mtoa.utils.createLocator("aiLightPortal", asLight=True)[1], "window_portal")
+cmds.xform(portal, worldSpace=True, translation=(1, 2, 3), rotation=(0, 45, 0), scale=(2, 3, 1))
+portal_m = matrix(portal)
+_, sun_preset = rp.save("sun_001")
+check("the physical sky is saved with its sun settings",
+      sun_preset["inputs"]["sunSky"]["type"] == "aiPhysicalSky"
+      and abs(sun_preset["inputs"]["sunSky"]["attrs"]["elevation"] - 8.5) < 1e-4)
+check("the window names the physical sky", "sun: Physical Sky (sunSky)" in rp.describe(sun_preset))
+cmds.file(new=True, force=True)                       # a shot lit by another physical sky
+cmds.file(rename=shot("SEQ010_040")); cmds.file(save=True, type="mayaAscii"); rp.ensure_arnold()
+other_dome = cmds.listRelatives(cmds.rename(cmds.shadingNode("aiSkyDomeLight", asLight=True), "sun"),
+                                shapes=True)[0]
+other = cmds.shadingNode("aiPhysicalSky", asTexture=True, name="oldSky")
+cmds.setAttr(other + ".elevation", 60)
+cmds.connectAttr(other + ".outColor", other_dome + ".color")
+rp.apply(rp.read_preset("sun_001"))
+src = cmds.listConnections(other_dome + ".color", source=True, destination=False) or []
+check("applying puts the preset's physical sky on the skydome, with its sun",
+      src == ["sunSky"] and abs(cmds.getAttr("sunSky.elevation") - 8.5) < 1e-4
+      and abs(cmds.getAttr("sunSky.azimuth") - 200) < 1e-4 and abs(cmds.getAttr("sunSky.sunSize") - 4.5) < 1e-4
+      and close(cmds.getAttr("sunSky.sunTint")[0], (0.65, 0.38, 0.25))
+      and abs(cmds.getAttr(other_dome + ".aiExposure") - 2.5) < 1e-4)
+check("the skydome's portal mode and the portal come across",
+      cmds.getAttr(other_dome + ".portalMode") == 2 and cmds.objExists("window_portal")
+      and cmds.nodeType(cmds.listRelatives("window_portal", shapes=True)[0]) == "aiLightPortal"
+      and close(matrix("window_portal"), portal_m))
+
 # --- outside a film folder: the project's data folder -----------------------
 cmds.file(new=True, force=True)
 loose = tempfile.mkdtemp(prefix="rp_project_")
@@ -162,7 +205,7 @@ check("outside a film folder: the project's data\\renderPresets",
       rp.preset_folder("") == os.path.join(loose, "data", "renderPresets"))
 rp.delete_preset("blocking_001", os.path.join(scratch, "RPT_TST", "maya", "renderPresets"))
 check("delete removes the preset file",
-      rp.list_presets(os.path.join(scratch, "RPT_TST", "maya", "renderPresets")) == ["lookdev_001"])
+      rp.list_presets(os.path.join(scratch, "RPT_TST", "maya", "renderPresets")) == ["lookdev_001", "sun_001"])
 
 shutil.rmtree(scratch, ignore_errors=True); shutil.rmtree(loose, ignore_errors=True)
 print("\n%d/%d passed" % (sum(ok), len(ok)))

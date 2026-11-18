@@ -77,6 +77,9 @@ def save(*_):
     cmds.textField(_NAME, e=True, text="")
     refresh(select=name)
     text = "Saved '%s': %d light(s), %d AOV(s)." % (name, len(preset["lights"]), len(preset["aovs"]))
+    fed = api.lit_by(preset)
+    if fed:
+        text += " " + "; ".join(fed) + "."
     if preset.get("skippedLights"):
         text += " Mesh lights aren't saved: %s." % ", ".join(preset["skippedLights"])
     _say(text)
