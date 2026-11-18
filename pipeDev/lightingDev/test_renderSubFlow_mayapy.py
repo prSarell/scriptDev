@@ -1,11 +1,13 @@
 # renderSub on Flow Render (user, 2026-11-13: "lets get it running so I can
 # test it"). mayapy can't sign in to Autodesk or reach the cloud, so Arnold's
-# Flow Render queue and its flowRenderQuery / flowRenderSubmit commands are
-# stood in; this checks renderSub's side: what it submits, how it tracks the
-# job (also after Maya restarts), and how the downloaded frames come back
-# under renderSub's names. The real cloud is the user's hand test.
+# Flow Render export queue is stood in, and the "download" is files written
+# where Flow Render writes them. This checks renderSub's side: what it
+# submits, that it only waits for the frames in the version folder (2026-11-18:
+# it no longer tracks the cloud job), and that frames arriving any other way
+# (later, from a Job Monitor zip, in Flow Render's own folder) still finish
+# the version. The real cloud is the user's hand test.
 # Run: mayapy test_renderSubFlow_mayapy.py
-import sys, os, shutil, tempfile
+import sys, os, shutil, tempfile, zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 for sub in ("", "../publishDev", "../buildDev"):
     sys.path.insert(0, os.path.normpath(os.path.join(HERE, sub)))
@@ -44,9 +46,9 @@ ctx = rs.shot_of(scene, h_root)
 
 class FakeJob(object):
     def __init__(self, n):
-        self.job_id, self.args, self.failed = "local-%d" % n, {}, False
+        self.job_id, self.args, self.failed, self.finished, self.progress = "local-%d" % n, {}, False, False, 0
     def setStartFrame(self, f): self.start = f
-    def setEndFrame(self, f): self.end = f
+    def setEndFrame(self, f): self.end = self.endFrame = f
     def setFrameStep(self, f): self.step = f
     def appendJobArgs(self, a): self.args.update(a)
     def generateExportFiles(self):
@@ -54,6 +56,8 @@ class FakeJob(object):
         self.exported_size = (cmds.getAttr("defaultResolution.width"), cmds.getAttr("defaultResolution.height"))
         return True
     def isFailed(self): return self.failed
+    def isFinished(self): return self.finished
+    def getProgress(self): return self.progress
 
 
 class FakeQueue(object):
@@ -78,34 +82,21 @@ class FakeSubmitModule(object):
     def incrementCurrentExportProcessCounter(): pass
 
 
-cloud = {"ids": {}, "status": {}, "downloads": []}
+def download(folder, info, frames, aovs=("beauty", "N_noice")):
+    """Flow Render's auto-download: <folder>\\<aov>\\<prefix>.####.exr."""
+    for aov in aovs:
+        os.makedirs(os.path.join(folder, aov), exist_ok=True)
+        for f in frames:
+            with open(rs.frame_path(os.path.join(folder, aov), info["prefix"], f), "w") as out:
+                out.write(aov)
 
-def fake_query(**kw):
-    if "fgeIdFromJobId" in kw:
-        return cloud["ids"].get(kw["fgeIdFromJobId"], "")
-    if "jobStatus" in kw:
-        return list(cloud["status"].get(kw["jobStatus"], ("QUEUED", "0")))
-    return ""
 
-def fake_submit(download=None, downloadLocation=None, downloadFinishedCallback=None):
-    # What Flow Render's download might look like: its own names, in
-    # subfolders, with an AOV beside the beauty.
-    cloud["downloads"].append((download, downloadLocation, downloadFinishedCallback))
-    sub = os.path.join(downloadLocation, "images", "camera1")
-    os.makedirs(sub, exist_ok=True)
-    for f in cloud["frames"]:
-        for name in ("light_001.%04d.exr" % f, "light_001_AO.%04d.exr" % f):
-            with open(os.path.join(sub, name), "w") as out:
-                out.write("beauty" if "_AO" not in name else "ao")
-    import maya.mel
-    maya.mel.eval(downloadFinishedCallback)
-
-cmds.flowRenderQuery, cmds.flowRenderSubmit = fake_query, fake_submit
-cmds.flowRenderJobMonitor = lambda *a, **k: cloud.setdefault("monitor", True)
+monitor = []
+cmds.flowRenderJobMonitor = lambda *a, **k: monitor.append(True)
 flow._modules = lambda: (FakeQueue, FakeSubmitModule)
 flow.available = lambda: (True, "")
 flow.signed_in = lambda: True
-flow.QUERY_EVERY = 0
+flow.CHECK_EVERY, flow.SETTLE = 0, -1
 rs.make_review_media = lambda info: None         # the frames here aren't real EXRs
 
 # --- submit ------------------------------------------------------------------------
@@ -119,76 +110,101 @@ check("submitted to Arnold's queue: the frames as a range, the size, the camera"
       (fj.start, fj.end, fj.step) == (1001, 1005, 2) and (fj.width, fj.height) == tuple(info["size"])
       and fj.cameras == [cmds.listRelatives(cam, shapes=True, fullPath=True)[0].replace("|", "/")]
       and fj.args["originalScenePath"] == info["scene"] and FakeQueue.started == [fj])
-check("renderSub downloads it, not Flow Render's auto-download", fj.autoDownload is False)
+check("Flow Render downloads the frames itself, into the version folder",
+      fj.autoDownload is True and os.path.normpath(fj.autoDownloadLocation) == info["folder"]
+      and os.path.isdir(info["folder"]))
 check("the uploaded copy has renderSub's frame name and size",
       fj.exported_prefix == info["prefix"] and fj.exported_size == tuple(info["size"]))
 check("... and the artist's own render settings are put back",
       cmds.getAttr("defaultRenderGlobals.imageFilePrefix") == "myShot"
       and not cmds.file(q=True, modified=True))
-check("still uploading: no cloud id yet", job.poll() is None and "uploading" in job.describe())
+check("exporting: says so", job.poll() is None and "ready to upload" in job.describe())
 
-cloud["ids"][fj.job_id] = "fge-123"
+fj.progress = 1005
+flow.UPLOAD_WARN_MB = 1
+usd = os.path.splitext(scene)[0] + "_defaultRenderLayer__%d__1.usd" % os.getpid()
+with open(usd, "wb") as out:
+    out.write(b"0" * 2000000)
+check("uploading: no frames yet, the upload's size noted and a big one flagged",
+      job.poll() is None and job.info["flow"]["upload_mb"] == 2
+      and "uploading the scene (2 MB)" in job.describe() and "10 min" in job.describe())
+check("an upload isn't 'in the cloud' yet: Maya closing now would lose it",
+      not rs.in_cloud(rs.read_info(info["folder"])))
+os.remove(usd)
+
+fj.finished = True                               # Arnold lets it go: the cloud has it
 job.poll()
 saved = rs.read_info(info["folder"])
-check("the cloud id is saved in render.json once Flow Render gives it",
-      saved["flow"]["fge"] == "fge-123" and rs.cloud_job_id(saved) == "fge-123")
+check("in the cloud once Arnold's queue lets it go, saved in render.json",
+      saved["flow"]["state"] == flow.SENT and rs.in_cloud(saved)
+      and "in the cloud, 0 of 3" in job.describe() and "Job Monitor" in job.describe())
 check("a cloud render isn't marked interrupted (it carries on with Maya closed)",
       rs.settle(saved)["status"] == rs.RENDERING)
 check("... and pruning leaves it alone", rs.prune(ctx, 0) == [] and os.path.isdir(info["folder"]))
 
-cloud["status"]["fge-123"] = ("RUNNING", "66.7")
-job.poll()
-check("progress from the cloud's percent", job.frames_done() == 2 and "running, 66%" in job.describe())
+download(info["folder"], info, [1001, 1003])
+check("frames arriving: counted, still waiting for the rest", job.poll() is None and job.frames_done() == 2)
 
 # Maya closed and opened again: the window picks the job up from render.json.
 job = flow.FlowJob(rs.read_info(info["folder"]))
-cloud["frames"] = [1001, 1003, 1005]
-cloud["status"]["fge-123"] = ("SUCCEEDED", "100")
-check("picked up after a restart, it carries on to the end", job.poll() == 0)
-download, location, callback = cloud["downloads"][-1]
-check("downloaded into the version's flow_download folder",
-      download == "fge-123" and os.path.normpath(location) == os.path.join(info["folder"], flow.INCOMING))
+download(info["folder"], info, [1005])
+check("picked up after a restart, done once every frame is in the folder", job.poll() == 0)
 done = job.finish()
-check("the frames come back under renderSub's names, the beauty not the AOV",
-      done["status"] == rs.DONE and all(open(rs.frame_path(info["folder"], info["prefix"], f)).read() == "beauty"
-                                        for f in (1001, 1003, 1005)))
-check("files renderSub didn't use stay in flow_download, listed in render.json",
-      os.path.isdir(os.path.join(info["folder"], flow.INCOMING))
-      and len(rs.read_info(info["folder"])["flow"]["unused_downloads"]) == 3)
+check("finished: the beauty frames in beauty\\, AOVs beside them",
+      done["status"] == rs.DONE and done["missing"] == []
+      and all(open(rs.beauty_path(done, f)).read() == "beauty" for f in frames)
+      and os.path.isfile(rs.frame_path(os.path.join(info["folder"], "N_noice"), info["prefix"], 1003)))
 check("timed as a turnaround and kept apart from local renders",
       done["timing"]["done"] == 3 and rs.read_history(shot_dir)[-1]["where"]["kind"] == rs.CLOUD
       and rs.predict(shot_dir, 3, info["size"], kind=rs.CLOUD) is not None
       and rs.predict(shot_dir, 3, info["size"]) is None)
 
-# --- when it goes wrong ---------------------------------------------------------------
-bad = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001, 1002], cam, how=rs.FLOW))
-cloud["ids"][FakeQueue.jobs[-1].job_id] = "fge-bad"
-cloud["status"]["fge-bad"] = ("FAILED", "10")
-bad.poll()
-check("a failed cloud job fails the render, with why",
-      bad.poll() == 1 and bad.finish()["status"] == rs.FAILED
-      and "failed" in rs.read_info(bad.info["folder"])["flow"]["error"])
 
+def sent(frames):
+    j = flow.FlowJob.submit(rs.plan_render(ctx, scene, frames, cam, how=rs.FLOW))
+    FakeQueue.removeJob(FakeQueue.jobs[-1])      # uploaded: gone from Arnold's queue
+    j.poll()
+    return j
+
+# --- frames that come back another way ---------------------------------------------
+late = sent([1001, 1002])
+note = late.cancel()
+check("cancel once it's in the cloud: stops waiting, says to stop it in the Job Monitor, opens it",
+      note and "Job Monitor" in note and monitor and late.finish()["status"] == rs.CANCELLED)
+default = os.path.join(shot_dir, flow.FLOW_DEFAULT_FOLDER)
+download(default, late.info, [1001, 1002])
+download(default, {"prefix": "someone_else"}, [1001], aovs=("beauty",))
+caught = flow.catch_up(rs.read_info(late.info["folder"]))
+check("its frames arriving later, in Flow Render's own folder: moved in and the version finished",
+      caught["status"] == rs.DONE and len(rs.frame_files(caught)) == 2
+      and os.path.isfile(rs.frame_path(os.path.join(default, "beauty"), "someone_else", 1001)))
+
+zipped = sent([1001, 1002])
+zipped.cancel()
+zipped.finish()
+src = os.path.join(scratch, "zipsrc")
+download(os.path.join(src, "job_frames"), zipped.info, [1001, 1002])
+zip_path = os.path.join(zipped.info["folder"], "NFW_defaultRenderLayer_cameraShape1.zip")
+with zipfile.ZipFile(zip_path, "w") as z:
+    for root, _, names in os.walk(src):
+        for n in names:
+            z.write(os.path.join(root, n), os.path.relpath(os.path.join(root, n), src))
+caught = flow.catch_up(rs.read_info(zipped.info["folder"]))
+check("a zip saved from the Job Monitor into the version folder: unzipped into place, zip gone",
+      caught["status"] == rs.DONE and len(rs.frame_files(caught)) == 2 and not os.path.exists(zip_path)
+      and os.path.isdir(os.path.join(zipped.info["folder"], "beauty")))
+
+half = sent([1001, 1002])
+half.cancel(); half.finish()
+download(half.info["folder"], half.info, [1001])
+check("only some frames back: it stays stopped (a partial publish is still there)",
+      flow.catch_up(rs.read_info(half.info["folder"]))["status"] == rs.CANCELLED)
+
+# --- when it goes wrong ---------------------------------------------------------------
 early = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
 check("cancel before the upload finishes: Arnold's queue cancels it",
       early.cancel() is None and FakeQueue.cancelled[-1].job_id == early.info["flow"]["local"]
       and early.finish()["status"] == rs.CANCELLED)
-
-late = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
-cloud["ids"][FakeQueue.jobs[-1].job_id] = "fge-late"
-late.poll()
-note = late.cancel()
-check("cancel once it's in the cloud: says to stop it in the Job Monitor, and opens it",
-      note and "Job Monitor" in note and cloud.get("monitor"))
-
-slow = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
-FakeQueue.removeJob(FakeQueue.jobs[-1])          # exported: gone from Arnold's queue, no id yet
-slow.poll()
-slow._lost_since -= 600                          # 10 min on (hand test 2026-11-18: 5 min was too short)
-check("a slow cloud id: still waiting after 10 min", slow.poll() is None)
-slow._lost_since -= flow.ID_WAIT
-check("... and fails, pointing at the Job Monitor, after ID_WAIT",
-      slow.poll() == 1 and "Job Monitor" in slow.info["flow"]["error"])
 
 lost = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
 FakeQueue.jobs[-1].failed = True

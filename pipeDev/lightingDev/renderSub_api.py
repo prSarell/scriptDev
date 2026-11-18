@@ -435,7 +435,7 @@ def settle(info, running_folder=None):
         return info
     if running_folder and os.path.normcase(running_folder) == os.path.normcase(info["folder"]):
         return info
-    if cloud_job_id(info):
+    if in_cloud(info):
         return info         # in the cloud: it carries on with Maya closed (renderSub_flow)
     here = (info.get("where") or {}).get("machine") == where()["machine"]
     if here and info.get("pid") not in (None, os.getpid()) and _alive(info["pid"]):
@@ -443,11 +443,12 @@ def settle(info, running_folder=None):
     return finish_render(info, None, interrupted=True)
 
 
-def cloud_job_id(info):
-    """The Flow Render job id of a cloud render still to come back, or ""."""
-    if info.get("how") != FLOW or info.get("status") != RENDERING:
-        return ""
-    return (info.get("flow") or {}).get("fge") or ""
+def in_cloud(info):
+    """True for a cloud render the cloud has taken, its frames still to come
+    back (renderSub_flow: they download into the version folder). One still
+    uploading when Maya closed never got there, and settles as interrupted."""
+    return (info.get("how") == FLOW and info.get("status") == RENDERING
+            and (info.get("flow") or {}).get("state") == "in the cloud")
 
 
 def frames_done(info, running=False):
@@ -891,7 +892,7 @@ def prune(ctx, keep):
         return []
     lost = []
     for v in local_versions(ctx)[keep:]:
-        if cloud_job_id(v["info"]):
+        if in_cloud(v["info"]):
             continue        # still rendering in the cloud: its frames come back here
         if not v["info"].get("published"):
             lost.append(v["name"])
@@ -908,7 +909,7 @@ def _published_files(info):
     didn't finish (a stopped render's half-written last frame), as paths
     relative to it. AOV subfolders (beauty\\, N_noice\\, ...; see
     frames_folder) go too, holding only the finished frames: anything else
-    in a subfolder (e.g. a leftover flow_download\\) stays on scratch."""
+    in a subfolder (anything renderSub didn't make) stays on scratch."""
     folder = info["folder"]
     frames = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in info["frames"]}
     whole = {os.path.basename(frame_path(folder, info["prefix"], f)) for f in finished_frames(info)}

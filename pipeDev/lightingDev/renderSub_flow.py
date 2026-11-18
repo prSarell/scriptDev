@@ -10,22 +10,40 @@ Everything Flow Render is in this file, so an Arnold update that changes it
 only breaks this file (renderSub's "Render on" menu then greys the option
 out), and ditching it is deleting this file and that menu item.
 
-How a job goes (the same steps as Arnold's own Flow Render window,
-flow_render/ui/flowRenderSubmitUI.py, read 2026-11-13 in Arnold 7.5.2):
-    submit      ExportQueueManager job: Maya saves a copy of the scene
-                beside it, a background mayabatch exports it to USD and
-                uploads it (Maya stays free). renderSub's frame names and
-                size are set on the scene only while the copy is saved.
-    track       the local job id -> the cloud job id (flowRenderQuery
-                -fgeIdFromJobId; only this Maya knows it until it's saved
-                to render.json), then -jobStatus every QUERY_EVERY s.
-    download    when it succeeds, flowRenderSubmit -download into the
-                version's flow_download\\ folder; the EXRs are moved up into
-                the version folder under renderSub's own names
-                (<shot>_<login>_render_v###.####.exr), so review, partial
-                publish and Publish work as for a local render.
-Once the cloud id is in render.json, closing Maya doesn't lose the job: the
-renderSub window picks it up again and downloads it when it's done.
+renderSub only SENDS the render to the cloud and then watches the version
+folder for the frames (user, 2026-11-18: "Maybe all renderSub needs to do is
+send the render to the the cloud"). Hand tests 2026-11-18 showed the cloud
+renders work, but renderSub can't follow a job there: flowRenderQuery
+-fgeIdFromJobId doesn't map Arnold's export-queue job to the cloud job, so
+renderSub never got an id to ask about or download, and marked good renders
+failed. Flow Render's own auto-download already brings the frames down,
+named as renderSub names them, so:
+
+    submit      ExportQueueManager job (the same steps as Arnold's Flow
+                Render window, flow_render/ui/flowRenderSubmitUI.py): Maya
+                saves a copy of the scene, a background mayabatch exports it
+                to USD, then Maya uploads it (Maya stays free). renderSub's
+                frame names and size are set on the scene only while the copy
+                is saved. Auto-download is on, into the version folder:
+                Flow Render writes <version>\\<aov>\\<prefix>.####.exr, the
+                layout frames_folder() reads (beauty\\ plus the AOVs).
+    uploading   until Arnold's queue lets the job go: it does that when the
+                cloud has taken the job (_finalizeBatchExport, after the
+                submission-finished callback).
+    in the cloud  renderSub waits for every frame to be in the folder. It
+                can't see the cloud job, so a job that fails there just
+                sends no frames: the status line points at Flow Render's Job
+                Monitor, and Cancel stops waiting. Frames that arrive later
+                (Maya was closed, or the artist downloaded the zip from the
+                Job Monitor into the version folder) are picked up by
+                catch_up() whenever the window lists the versions.
+
+Upload limit (hand test 2026-11-18, FlowRenderMaya.log): Flow Render's
+upload links last 10 minutes. A 354 MB USD (101 animated frames) took 12 min
+at ~0.5 MB/s, the last file's link had run out (403), Flow Render skipped it
+without noticing, and every frame failed "Missing path mapping file
+data/pathmap.json". renderSub warns when the export is bigger than
+UPLOAD_WARN_MB; fewer frames make a smaller USD.
 
 Flow Render renders start..end every N frames (its "frameSampling" is
 motion-blur sub-frames, not a frame list), so cloud_frames() turns
@@ -33,9 +51,10 @@ renderSub's frame modes into a range.
 """
 
 import os
-import re
+import glob
 import time
 import shutil
+import zipfile
 
 import maya.cmds as cmds
 
@@ -43,18 +62,13 @@ import renderSub_api as api
 
 PublishError = api.PublishError
 
-QUERY_EVERY = 15            # seconds between asking the cloud how a job is going
-# Seconds to wait for the cloud id once the export has left Arnold's queue.
-# Hand test 2026-11-18: 5 min was too short; an 11-frame sphere test got its
-# id after renderSub had given up, and rendered fine (SUCCEEDED).
-ID_WAIT = 1800
-DOWNLOAD_WAIT = 1800        # seconds to wait for every frame to download
-INCOMING = "flow_download"  # where Flow Render downloads to, inside the version
-OK_STATES = {"SUCCEEDED", "COMPLETED"}
-BAD_STATES = {"FAILED", "CANCELED", "CANCELLED"}
+UPLOADING, SENT = "uploading", "in the cloud"
+CHECK_EVERY = 10            # seconds between looks at the version folder
+SETTLE = 15                 # a frame untouched this long has finished downloading
+UPLOAD_WARN_MB = 250        # ~10 min of upload at 0.5 MB/s (see the module notes)
+FLOW_DEFAULT_FOLDER = "flow_render_images"   # Flow Render's own download folder, in the project
 EXPORT_MAYA_USD, EXPORT_ARNOLD_USD = "maya-usd", "arnold-usd"
-
-_DOWNLOADED = set()         # cloud ids whose download Flow Render says has finished
+JOB_MONITOR = "Arnold > Flow Render > Job Monitor"
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +121,13 @@ def quota_text():
         return ""
 
 
+def open_job_monitor():
+    try:
+        cmds.flowRenderJobMonitor()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Frames
 # ---------------------------------------------------------------------------
@@ -142,54 +163,118 @@ def _range(frames):
 
 
 # ---------------------------------------------------------------------------
-# Download: Flow Render's files -> renderSub's names
+# The frames coming back
 # ---------------------------------------------------------------------------
 
-_FRAME_NUMBER = re.compile(r"(\d+)\.exr$", re.IGNORECASE)
+def _move_into(src, dst, keep=lambda name: True):
+    """Move the files under src (keeping their subfolders) into dst, those
+    keep() wants; a file still being written stays for next time. Empty
+    folders left behind are removed."""
+    for root, _, names in os.walk(src, topdown=False):
+        rel = os.path.relpath(root, src)
+        for name in names:
+            if not keep(name):
+                continue
+            target_dir = os.path.normpath(os.path.join(dst, rel))
+            target = os.path.join(target_dir, name)
+            if os.path.exists(target):
+                continue
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                shutil.move(os.path.join(root, name), target)
+            except OSError:
+                pass
+        if os.path.normcase(root) != os.path.normcase(src):
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+
+
+def _ours(info):
+    return lambda name: name.startswith(info["prefix"] + ".")
+
+
+def _unzip(info):
+    """A zip the artist saved from the Job Monitor into the version folder:
+    its frames go in place and the zip goes (or Publish would copy it to H).
+    A zip still downloading isn't a whole zip yet, so it waits."""
+    folder = info["folder"]
+    for path in glob.glob(os.path.join(folder, "*.zip")):
+        if not zipfile.is_zipfile(path):
+            continue
+        try:
+            with zipfile.ZipFile(path) as z:
+                names = [n for n in z.namelist() if not n.endswith("/")]
+                if not any(os.path.basename(n).startswith(info["prefix"] + ".") for n in names):
+                    continue        # not this version's frames: leave it be
+                for n in names:
+                    if os.path.isabs(n) or ".." in n.replace("\\", "/").split("/"):
+                        continue
+                    z.extract(n, folder)
+            os.remove(path)
+        except (OSError, zipfile.BadZipFile):
+            pass
+
+
+def _lift(info):
+    """Frames that came down one folder too deep (a zip's own top folder,
+    say: <version>\\<something>\\beauty\\...) move up to <version>\\beauty\\..."""
+    folder = info["folder"]
+    for root, dirs, _ in os.walk(folder):
+        depth = os.path.relpath(root, folder).count(os.sep) + (root != folder)
+        if depth > 3:
+            dirs[:] = []
+            continue
+        if root != folder and api.BEAUTY in dirs:
+            _move_into(root, folder, _ours(info))
+            dirs[:] = []
 
 
 def collect(info):
-    """Move downloaded EXRs from flow_download\\ (any subfolder, any name
-    ending <frame>.exr) to <prefix>.####.exr in the version folder. With
-    several files for one frame (AOVs), the beauty, else the shortest name.
-    Returns the frames now in place."""
-    incoming = os.path.join(info["folder"], INCOMING)
-    wanted = set(info["frames"])
-    found = {}
-    for root, _, names in os.walk(incoming):
-        for name in names:
-            m = _FRAME_NUMBER.search(name)
-            if not m or int(m.group(1)) not in wanted:
-                continue
-            frame = int(m.group(1))
-            rank = (0 if "beauty" in name.lower() else 1, len(name))
-            if frame not in found or rank < found[frame][0]:
-                found[frame] = (rank, os.path.join(root, name))
-    for frame, (_, path) in found.items():
-        target = api.frame_path(info["folder"], info["prefix"], frame)
-        if not os.path.isfile(target):
+    """Bring this version's downloaded frames into its folder from wherever
+    they landed (a Job Monitor zip, too deep, or Flow Render's own
+    <project>\\flow_render_images\\ when it ignored the download folder:
+    hand test 2026-11-18). Returns the beauty frames now in place."""
+    _unzip(info)
+    _lift(info)
+    default = os.path.join(info.get("project") or "", FLOW_DEFAULT_FOLDER)
+    if info.get("project") and os.path.isdir(default):
+        _move_into(default, info["folder"], _ours(info))
+        try:
+            os.rmdir(default)               # only when nothing else is in it
+        except OSError:
+            pass
+    return api.frame_files(info)
+
+
+def _settled(info):
+    """True when no file in the version folder has changed for SETTLE s."""
+    newest = 0
+    for root, _, names in os.walk(info["folder"]):
+        for n in names:
             try:
-                shutil.move(path, target)
+                newest = max(newest, os.path.getmtime(os.path.join(root, n)))
             except OSError:
-                pass        # still being written; next time
-    return [f for f in info["frames"] if os.path.isfile(api.frame_path(info["folder"], info["prefix"], f))]
+                return False
+    return time.time() - newest > SETTLE
 
 
-def tidy(info):
-    """Remove flow_download\\ once nothing is left in it but what renderSub
-    didn't use (kept, and named, if anything else came down: the hand test
-    shows what Flow Render sends)."""
-    incoming = os.path.join(info["folder"], INCOMING)
-    left = [os.path.relpath(os.path.join(r, n), incoming)
-            for r, _, names in os.walk(incoming) for n in names]
-    if not left:
-        shutil.rmtree(incoming, ignore_errors=True)
-    return left
+def all_down(info):
+    return len(collect(info)) == len(info["frames"]) and _settled(info)
 
 
-def _downloaded(job_id):
-    """Flow Render's download-finished callback."""
-    _DOWNLOADED.add(str(job_id))
+def catch_up(info):
+    """A cloud render renderSub isn't watching (Maya was closed, Cancel
+    stopped the wait, the frames came from the Job Monitor): once every
+    frame is in the folder, finish it so it can be reviewed and published.
+    Returns the info, updated or not."""
+    if (info.get("how") != api.FLOW or info.get("published") or info.get("status") == api.DONE
+            or info.get("status") not in api.STOPPED + (api.RENDERING,)):
+        return info
+    if all_down(info):
+        return api.finish_render(info, 0)
+    return info
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +288,8 @@ class FlowJob(object):
         self.info = info
         self.cancelled = False
         self._result = None
-        self._next_query = 0.0
-        self._download_asked = info.get("flow", {}).get("download_asked")
-        self._lost_since = None
+        self._next_check = 0.0
+        self._warned_size = False
 
     # ------------------------------------------------------------- submit
     @classmethod
@@ -229,6 +313,7 @@ class FlowJob(object):
         if not cam_shapes:
             raise PublishError("The camera '%s' has no camera shape." % info["camera"])
         start, end, step = _range(frames)
+        os.makedirs(info["folder"], exist_ok=True)
 
         sfr.incrementCurrentExportProcessCounter()
         manager = EQM.instance()
@@ -238,7 +323,8 @@ class FlowJob(object):
                           else EXPORT_ARNOLD_USD)
         job.testResolution = "100%"
         job.skipFileCheck = True        # renderSub saved the scene first
-        job.autoDownload = False        # renderSub downloads it, into the version folder
+        job.autoDownload = True         # Flow Render brings the frames down...
+        job.autoDownloadLocation = info["folder"].replace("\\", "/")   # ...into the version
         job.setStartFrame(start)
         job.setEndFrame(end)
         job.setFrameStep(step)
@@ -258,9 +344,8 @@ class FlowJob(object):
             raise PublishError("Flow Render couldn't save a copy of the scene to upload. "
                                "See the Script Editor.")
         manager.startNextJob()
-        info["flow"] = {"local": str(job.job_id), "fge": "", "state": "Uploading",
-                        "percent": 0, "export_mode": job.exportMode,
-                        "range": [start, end, step]}
+        info["flow"] = {"local": str(job.job_id), "state": UPLOADING,
+                        "export_mode": job.exportMode, "range": [start, end, step]}
         api.write_info(info["folder"], info)
         return cls(info)
 
@@ -281,128 +366,99 @@ class FlowJob(object):
         self._result = 1
 
     def poll(self):
-        """None while the job runs; then 0 (frames came back) or 1."""
+        """None while the job runs; then 0 (every frame is in the folder) or 1."""
         if self._result is None:
             try:
                 self._step()
             except Exception as e:
-                self._fail("Flow Render stopped answering: %s" % e)
+                self._fail("renderSub lost track of the Flow Render job: %s" % e)
         return self._result
 
     def _step(self):
         flow = self.info["flow"]
-        now = time.time()
-        if not flow.get("fge"):
-            return self._find_cloud_id(flow, now)
-        if not self._download_asked:
-            if now < self._next_query:
-                return
-            self._next_query = now + QUERY_EVERY
-            self._check_status(flow)
-        if self._download_asked and self._result is None:
-            got = collect(self.info)
-            if set(self.info["frames"]) <= set(got) or flow["fge"] in _DOWNLOADED:
-                collect(self.info)
-                left = tidy(self.info)
-                if left:
-                    flow["unused_downloads"] = left[:20]
+        if flow.get("state") == UPLOADING:
+            job = self._local_job()
+            if job is not None and job.isFailed():
+                return self._fail("Flow Render couldn't export or upload the scene. Arnold's log "
+                                  "is named in the Script Editor.")
+            self._note_upload_size()
+            if job is None or job.isFinished():
+                # Arnold lets the job go once the cloud has it.
+                flow.update(state=SENT, sent=api._now())
                 self._save()
-                self._result = 0
-            elif now - flow.get("download_started", now) > DOWNLOAD_WAIT:
-                self._fail("The download didn't finish in %d min." % (DOWNLOAD_WAIT // 60))
-
-    def _find_cloud_id(self, flow, now):
-        job = self._local_job()
-        if job is not None and job.isFailed():
-            return self._fail("Flow Render couldn't export or upload the scene. Arnold's log "
-                              "is named in the Script Editor.")
-        try:
-            out = cmds.flowRenderQuery(fgeIdFromJobId=flow["local"])
-        except Exception as e:
-            out = None
-            if not getattr(self, "_query_warned", False):   # say once, keep waiting
-                self._query_warned = True
-                cmds.warning("renderSub: Flow Render's job id lookup failed (still waiting): %s" % e)
-        fge = str(out[0] if isinstance(out, (list, tuple)) and out else out or "")
-        if fge:
-            flow.update(fge=fge, state="Queued")
-            self._save()
             return
-        if job is None:
-            # Uploaded (the job's gone from the queue) but no cloud id yet.
-            self._lost_since = self._lost_since or now
-            if now - self._lost_since > ID_WAIT:
-                self._fail("Flow Render didn't give the job an id in %d min. It may still be "
-                           "rendering: check Arnold > Flow Render > Job Monitor." % (ID_WAIT // 60))
+        now = time.time()
+        if now < self._next_check:
+            return
+        self._next_check = now + CHECK_EVERY
+        if all_down(self.info):
+            self._result = 0
 
-    def _check_status(self, flow):
-        result = cmds.flowRenderQuery(jobStatus=flow["fge"]) or []
-        if isinstance(result, str):
-            result = [result]
-        state = str(result[0]).upper() if result else ""
+    def _usd(self):
+        """The USD Arnold exported for upload (beside the scene, named
+        <scene>_<layer>__<pid>__<n>.usd; deleted once it's uploaded)."""
+        base = os.path.splitext(self.info["scene"])[0]
+        found = glob.glob("%s_*__%d__*.usd" % (glob.escape(base), os.getpid()))
+        return max(found, key=os.path.getmtime) if found else None
+
+    def _note_upload_size(self):
+        usd = self._usd()
         try:
-            percent = float(result[1]) if len(result) > 1 else flow.get("percent", 0)
-        except ValueError:
-            percent = flow.get("percent", 0)
-        if state and (state != flow.get("state") or percent != flow.get("percent")):
-            flow.update(state=state, percent=percent)
-            self._save()
-        if state in OK_STATES:
-            self._download(flow)
-        elif state in BAD_STATES:
-            self._fail("Flow Render says the job %s." % state.lower())
-
-    def _download(self, flow):
-        incoming = os.path.join(self.info["folder"], INCOMING)
-        os.makedirs(incoming, exist_ok=True)
-        callback = 'python("import renderSub_flow; renderSub_flow._downloaded(\\"%s\\")")' % flow["fge"]
-        cmds.flowRenderSubmit(download=flow["fge"], downloadLocation=incoming.replace("\\", "/"),
-                              downloadFinishedCallback=callback)
-        self._download_asked = True
-        flow.update(download_asked=True, download_started=time.time(), state="Downloading")
+            mb = os.path.getsize(usd) / 1e6 if usd else 0
+        except OSError:
+            return
+        if mb <= self.info["flow"].get("upload_mb", 0):
+            return
+        self.info["flow"]["upload_mb"] = round(mb)
         self._save()
+        if mb > UPLOAD_WARN_MB and not self._warned_size:
+            self._warned_size = True
+            cmds.warning("renderSub: the scene for Flow Render is %d MB. On a slow connection "
+                         "an upload over ~%d MB can run past Flow Render's 10 min upload limit, "
+                         "and the job then fails in the cloud ('Missing path mapping file'). "
+                         "Fewer frames make a smaller upload." % (mb, UPLOAD_WARN_MB))
 
     # ------------------------------------------------------------- the window's view
     def frames_done(self):
-        if self._download_asked:
-            return len(api.frame_files(self.info))
-        percent = self.info["flow"].get("percent") or 0
-        return int(len(self.info["frames"]) * min(100.0, percent) / 100.0)
+        return len(api.frame_files(self.info))
 
     def describe(self):
-        flow = self.info["flow"]
-        state = flow.get("state", "")
-        if not flow.get("fge"):
-            text = "uploading the scene (Maya stays free; don't close it until it's queued)"
-        elif self._download_asked:
-            text = "downloading: %d of %d frame(s)" % (len(api.frame_files(self.info)),
-                                                       len(self.info["frames"]))
-        else:
-            text = "%s, %d%%" % (state.lower() or "queued", int(flow.get("percent") or 0))
-        return "Flow Render %s: %s" % (self.info["version"], text)
+        flow, version = self.info["flow"], self.info["version"]
+        if flow.get("state") == UPLOADING:
+            job = self._local_job()
+            exporting = job is not None and (job.getProgress() or 0) < getattr(job, "endFrame", 0)
+            if exporting:
+                text = "getting the scene ready to upload (frame %d)" % job.getProgress()
+            else:
+                mb = flow.get("upload_mb")
+                text = "uploading the scene%s" % (" (%d MB)" % mb if mb else "")
+                if mb and mb > UPLOAD_WARN_MB:
+                    text += ", big: it may not make Flow Render's 10 min limit"
+            return "Flow Render %s: %s. Keep Maya open." % (version, text)
+        return ("Flow Render %s: in the cloud, %d of %d frame(s) downloaded. Keep Maya open; "
+                "the render's progress is in %s." % (version, self.frames_done(),
+                                                    len(self.info["frames"]), JOB_MONITOR))
 
     def cancel(self):
         """Stop it. Before the upload finishes, Arnold's queue cancels it;
-        after, the cloud job can only be stopped in Flow Render's Job
-        Monitor (opened here). Returns a note for the artist, or None."""
+        after, renderSub stops waiting and the cloud job can only be
+        stopped in Flow Render's Job Monitor (opened here). Returns a note
+        for the artist, or None."""
         self.cancelled = True
         self._result = 1
-        flow = self.info["flow"]
-        if not flow.get("fge"):
+        if self.info["flow"].get("state") == UPLOADING:
             job = self._local_job()
             if job is not None:
                 EQM, _ = _modules()
                 EQM.instance().cancelJob(job)
-            return None
-        try:
-            cmds.flowRenderJobMonitor()
-        except Exception:
-            pass
-        return ("renderSub has stopped waiting for %s, but the job may still be rendering in "
-                "the cloud (and using your hours). Cancel it in Flow Render's Job Monitor, "
-                "now open." % self.info["version"])
+                return None
+        open_job_monitor()
+        return ("renderSub has stopped waiting for %s, but it may still be rendering in the "
+                "cloud (and using your hours): cancel it in the Job Monitor, now open.\n\n"
+                "If you let it finish instead, its frames still come back to the version "
+                "folder, and renderSub finishes the version when they're all there."
+                % self.info["version"])
 
     def finish(self):
-        if self.info["flow"].get("download_asked"):
-            collect(self.info)
+        collect(self.info)
         return api.finish_render(self.info, self._result, cancelled=self.cancelled)

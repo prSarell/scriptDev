@@ -69,6 +69,13 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
       was tested headless and on SEQ010_140 (published as
       `SEQ010_140_e131988_render_v001`, ShotGrid Version 13643); the
       window itself hasn't been clicked yet.
+- [x] Hand test **partial publish** (built 2026-11-13 after a power cut; PASSED by the user 2026-11-13):
+      reopen renderSub on SEQ010_160; `e131988_render_v003` should list as
+      "39 of 181 frame(s) interrupted". Play in RV (1001-1039), then
+      Publish Selected: H gets 1001-1039 (not the 1040 stub), ShotGrid
+      note says partial. Also Cancel a batch render mid-frame and publish.
+- [?] **Resume** a stopped render into the same version (render only the
+      missing frames)? Not built; ask the user.
 - [?] Add a **Lighting** task to the NWF shots (none have one), so render
       Versions sit on it. Claude can script it, as `asset_tasks.py` does for
       assets.
@@ -92,7 +99,9 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
         `C:\Program Files\Autodesk\Arnold\Maya2027\scripts\flow_render\`.
         `ExportQueueManager.instance().createNewJob()` then
         `flow_render.cmds.submitFlowRender.submitFlowRender(cameras, width,
-        height, startFrame, endFrame, frameStep, frameSampling="1001 1030 ...",
+        height, startFrame, endFrame, frameStep, ...` (CORRECTED 2026-11-13: `frameSampling` is
+        motion-blur sub-frames, not a frame list; Flow renders start..end by
+        step only), `
         autoDownload=True, autoDownloadLocation=<version folder>,
         jobId=job.job_id ...)`. Status: `cmds.flowRenderQuery(jobStatus=<id>)`
         -> (status, percent); local id -> cloud id with
@@ -108,12 +117,107 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
         (4) Untested: do Build's `$PIPE_SCRATCH` references and Alembic
         caches survive the USD export + upload? Does the export need an
         Arnold batch licence (probably not)?
-      - [ ] **User hand test (~10 min):** Maya 2027, open SEQ010_160, Arnold
-        menu > Flow Render, sign in with the RMIT education account, submit
-        the Lighting-check frames at 25%. Report: accepted? frames correct
-        (references, caches, textures)? Then Claude builds the renderSub
-        option (frames into the version folder, then RV review / Publish as
-        usual).
+      - [x] **BUILT 2026-11-13 as a trial** (user: "lets get it running so I
+        can test it. If it turns out to be to difficult to manage we will
+        ditch it."): `lightingDev/renderSub_flow.py` (all Flow calls; ditch =
+        delete it + the Render on menu item), test
+        `test_renderSubFlow_mayapy.py` (cloud stood in). Render on > Flow
+        Render (cloud); greyed with the reason where Flow isn't in the Maya.
+        Flow renders ranges only: Lighting check -> 5 evenly spaced frames
+        (can be a frame off the end), Every Nth drops renderSub's added end
+        frame, frame lists refused unless evenly spaced. (Tracking and
+        download below SUPERSEDED 2026-11-18: see "simpler Flow flow".) Downloads go to
+        `<version>\flow_download\` and are renamed into the version; leftovers
+        (AOVs, anything unexpected) stay there, listed in render.json
+        `flow.unused_downloads`. The cloud id is saved in render.json, so the
+        window picks the job up after Maya restarts. Cancel after upload
+        can't stop the cloud job (no API): it opens Flow's Job Monitor.
+      - [ ] **User hand test:** Maya 2027, reinstall mpPipe, SEQ010_160,
+        renderSub > Render on: Flow Render (cloud) > Lighting check at 25% >
+        Render. Report: quota line (education hours?), upload/queued/running
+        status, frames back in the version folder and correct (references,
+        caches, textures), what's left in `flow_download\`, close Maya
+        mid-render and reopen renderSub (does it pick it up and download?).
+        Unverified until then: `flowRenderSubmit -download` behaviour and
+        Flow's download folder layout.
+- [ ] **Flow Render first real job, 2026-11-13** (end of day): SEQ010_160
+      `e131988_render_v004`, whole shot 1001-1181. Scene export to USD done
+      (~16 min, 553 MB); upload was in progress, no cloud id in render.json
+      yet; quota 0 of 2400 min used, resets 2026-12-01. Next session: check
+      v004 (queued/running/downloaded?), frames correct, minutes used per
+      frame, what's left in `flow_download\`, and whether Maya was signed in
+      with the RMIT education account. Log:
+      `%TEMP%\setUP_v009_defaultRenderLayer_17388__1.log`.
+      Seen in the export log: sky dome `light_shader.outputs:color` type
+      mismatch (may light wrong); background export ran with
+      `-proj ...ssets\propackpack\` (wrong project: set the shot's
+      project before submitting).
+- [ ] **v004 cloud job FAILED (found 2026-11-13 17:00).** From
+      `%LOCALAPPDATA%\Autodesk\Logs\FlowRenderMaya.log`: upload ok (one
+      `403 Forbidden` at 16:12, retried with renewed URLs: likely the
+      "lost connection" popup the user saw), cloud job
+      `39e6ac5b-170f-49c7-bcfa-56ba23e6bbbf` (181 tasks) started 16:14:04,
+      failed 16:15:50: "Task failed: Rendering failed, see log for more
+      information". 0 min of quota used. `flowRenderSubmit -download` on it
+      ran but found 0 outputs (no log comes down). Next: user opens Arnold >
+      Flow Render > Job Monitor, clicks the failed job, reads a task log.
+      Suspects: assets on D:\ / `$PIPE_SCRATCH` not uploaded (caches,
+      textures), wrong `-proj` (backpack asset), sky dome type mismatch.
+      Retry with a 1-frame, 25% test.
+- [ ] **renderSub bug: cloud id never found.** `flowRenderQuery
+      -fgeIdFromJobId` wants the plug-in's own submission id (log: "Job
+      85d1ed75... submission finished"), not ExportQueueManager's job_id
+      (207964c2...), so v004 sat at "uploading". Fix: get the id another way
+      (try `flowRenderQuery -sceneActiveJobList`, or the submission
+      callback) and test against a real job. Also check why ID_WAIT (300 s)
+      didn't fail it. Leftover: `scenes\anim\e131988\setUP_v009__17388__1.mb`
+      (394 MB) Flow didn't delete.
+- [ ] **Flow hand tests 2026-11-18: cloud renders WORK; only renderSub's
+      tracking is broken.** SEQ010_130 v002 (11 fr) and SEQ010_120 v001
+      (101 fr, 1920x1080) both SUCCEEDED in the cloud, but renderSub marked
+      them failed (no cloud id, even after ID_WAIT was raised to 30 min).
+      `%LOCALAPPDATA%\Autodesk\Logs\FlowRenderMaya.log` shows the facts:
+      - Flow AUTO-DOWNLOADS even with `job.autoDownload = False` (Arnold
+        only passes the flag when True; the plug-in default is on) into
+        `<shot project>\flow_render_images\<aov>\<prefix>.####.exr`, e.g.
+        `beauty\SEQ010_120_e131988_render_v001.1001.exr`: renderSub's own
+        names (its prefix is in the uploaded copy), AOVs in subfolders.
+      - Speed: Maya's download ~4 MB/s (12 GB in ~50 min); the Job
+        Monitor's zip download ~0.2-0.5 MB/s (unusable for full shots).
+      - Size: 5 files a frame (beauty + denoise_albedo_noice, N_noice,
+        variance, Z_noice), ~24 MB each: the noice AOVs are 80% of it.
+      - CORRECTED 2026-11-18 (I first blamed Maya closing): the
+        `pathmap.json` "Missing path mapping file" failure is Flow's
+        **10-minute upload-link expiry**. SEQ010_120 v002 (101 fr): the
+        354 MB USD took 12 min at ~0.5 MB/s, pathmap.json (uploaded last)
+        got 403, Flow's retry wrongly said "already uploaded" and submitted
+        without it. A Flow plug-in bug (it should renew the link): report
+        to Autodesk. Workaround: keep uploads under ~250 MB (fewer frames;
+        the USD grows with animated frames) or a faster connection.
+      - [x] **BUILT 2026-11-18, the simpler Flow flow** (user: "Maybe all
+        renderSub needs to do is send the render to the cloud"):
+        `job.autoDownload = True`, `autoDownloadLocation` = the version
+        folder; no cloud id, no status polling, no own download. States:
+        uploading (until Arnold's queue lets the job go) -> "in the cloud"
+        (waits for every beauty frame, untouched 15 s). `catch_up()` finishes
+        a Flow version whenever its frames turn up later (Maya closed,
+        Cancel, a Job Monitor zip saved into the version folder: unzipped,
+        zip removed; frames in `<project>\flow_render_images\`: moved in).
+        Warns when the export USD is over 250 MB. `api.cloud_job_id` ->
+        `api.in_cloud`. Test 26/26. Old records with an `fge` id settle as
+        interrupted, then catch_up picks their frames up.
+      - [ ] **User hand test** of the above: a ~10-frame Flow render; frames
+        should land straight in `<version>\beauty\` etc. and the version
+        finish by itself. Check Flow honours `autoDownloadLocation` (if it
+        still uses `flow_render_images\`, catch_up moves them anyway).
+      - [?] Not done: a cloud job that fails in the cloud just never sends
+        frames (renderSub can't see it; the status line points at the Job
+        Monitor). A waiting cloud job blocks the next render until Cancel.
+        Consider dropping the noice AOVs on cloud tests (1/5 the download).
+- [?] Flow follow-ups offered, not yet agreed: delete Flow's temp .mb/.usd
+      (~1 GB) when a cloud render is interrupted before upload; warn on Maya
+      quit while a cloud job is still uploading; set the shot's project
+      before submit. Also still open: Resume a stopped local render.
 - [ ] Delete the test render when done with it: ShotGrid Version 13643 and
       `G:\H\NWF_SHF\...\SEQ010_140\images\lighting\e131988\e131988_render_v001`
       (watermarked, every 30th frame at 25%).
