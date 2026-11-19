@@ -1342,6 +1342,32 @@ The tools are developed side by side:
           - **Render on** menu: This computer, and Render farm greyed out as
             "coming soon". A farm job writes `where.kind = "farm"`, so farm
             estimates fill in by themselves once it exists.
+        - **Render queue (DECIDED 2026-11-19).** The user: "I want to be
+          able to kick of a cloud render, work in another shot and either
+          cue another cloud render or do a batch render locally or a que of
+          batch renders." Decided:
+          - Renders from any shot can run at once from one Maya. Cloud
+            renders upload one at a time (Arnold's own Flow queue), then
+            render in the cloud side by side; local batch renders run one
+            after another (two Render.exe would fight over the machine).
+          - **A copy of the scene is rendered** ("render saves a copy for
+            sure"): saved into the version folder when the render is
+            queued, so later work on the scene doesn't change it.
+          - **The working file is saved and versioned up** on every render
+            ("save and version up the file it is rendering from and not
+            just save over"): `..._001.ma` -> `..._002.ma`, and the artist
+            carries on in the new one.
+          - **Maya closing:** cloud renders already uploaded carry on; local
+            batch renders (running or queued) are stopped ("I think the
+            batch renders should probably not"), and the artist is warned in
+            the Script Editor the next time Maya starts. An upload cut off
+            by Maya closing is warned about the same way.
+          - **When a render finishes**, the "Watch before publishing" window
+            comes up as now, whatever shot is open: it publishes to the
+            shot the render came from (fixed 2026-11-19).
+          - **ShotGrid lists the scene it was rendered from:** the scene
+            copy is published to H with the frames, and the ShotGrid note
+            gives its H path and the working file's name.
         - **Found while building:** MtoA's `-cam` flag *replaces* Render.exe's
           option string, so a `-seq` before it is lost and the scene's own
           range renders instead; `-cam` goes first. **Arnold batch licence:**

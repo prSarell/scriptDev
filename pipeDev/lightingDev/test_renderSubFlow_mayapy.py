@@ -47,6 +47,7 @@ ctx = rs.shot_of(scene, h_root)
 class FakeJob(object):
     def __init__(self, n):
         self.job_id, self.args, self.failed, self.finished, self.progress = "local-%d" % n, {}, False, False, 0
+        self.pending = False
     def setStartFrame(self, f): self.start = f
     def setEndFrame(self, f): self.end = self.endFrame = f
     def setFrameStep(self, f): self.step = f
@@ -57,6 +58,7 @@ class FakeJob(object):
         return True
     def isFailed(self): return self.failed
     def isFinished(self): return self.finished
+    def isPending(self): return self.pending
     def getProgress(self): return self.progress
 
 
@@ -118,6 +120,10 @@ check("the uploaded copy has renderSub's frame name and size",
 check("... and the artist's own render settings are put back",
       cmds.getAttr("defaultRenderGlobals.imageFilePrefix") == "myShot"
       and not cmds.file(q=True, modified=True))
+fj.pending = True
+check("behind another upload in Flow Render's queue: says it's waiting (2026-11-19)",
+      job.poll() is None and "waiting for the upload before it" in job.describe())
+fj.pending = False
 check("exporting: says so", job.poll() is None and "ready to upload" in job.describe())
 
 fj.progress = 1005

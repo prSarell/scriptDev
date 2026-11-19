@@ -78,13 +78,25 @@ shutil.rmtree(os.path.join(ctx["h"], "tester_render_v004"))
 check("the shot camera list skips top/front/side",
       not any(c.split("|")[-1] in ("top", "front", "side") for c in rs.cameras()))
 check("half size is even pixels", rs.render_size(50) == (80, 44))
+check("department starts from the scene's scenes/<dept> folder",
+      rs.department_of(scene) == "lighting"
+      and rs.department_of(os.path.join(shot_dir, "scenes", "anim", "tester", "a.ma")) == "anim"
+      and rs.department_of(os.path.join(shot_dir, "scenes", "lookdev", "tester", "a.ma")) == "lookDev")
+check("a scene outside a department folder starts as Lighting",
+      rs.department_of(os.path.join(shot_dir, "scenes", "a.ma")) == "lighting")
 
 # --- a real background render: every 2nd frame -----------------------------
-info = rs.plan_render(ctx, scene, rs.frames_for("step", 1001, 1005, 2), cam, percent=100)
+info = rs.plan_render(ctx, scene, rs.frames_for("step", 1001, 1005, 2), cam, percent=100,
+                      department="anim")
 check("render.json written before rendering", rs.read_info(info["folder"])["status"] == "rendering")
+check("the picked department is recorded, not the folder's", info["department"] == "anim")
+rs.copy_scene(info)
 command = rs.render_command(info)
 check("-cam comes before -seq (MtoA's -cam drops an earlier -seq)",
       command.index("-cam") < command.index("-seq"))
+check("Render.exe renders the version's own copy of the scene (user, 2026-11-19)",
+      command[-1] == os.path.join(info["folder"], "light_001.ma")
+      and os.path.isfile(command[-1]) and info["scene"] == os.path.normpath(scene))
 job = rs.RenderJob(info)
 deadline = time.time() + 600
 while job.poll() is None and time.time() < deadline:
@@ -265,6 +277,11 @@ if has_rvio:
               "SEQ010_010_tester_render_v001.mp4", "SEQ010_010_tester_render_v001.thumb.jpg",
               "render.json")))
     check("the render log stays on scratch", not os.path.isfile(os.path.join(dest, rs.LOG_NAME)))
+    check("the scene it was rendered from is published with the frames",
+          os.path.isfile(os.path.join(dest, "light_001.ma")))
+    check("... and the ShotGrid note lists it on H, with the working file's name",
+          ("Rendered from (on the H drive):\n%s\nWorking file: light_001.ma"
+           % os.path.join(dest, "light_001.ma")) in sg.calls[-1][1]["notes"])
     check("published files are read-only",
           not os.stat(os.path.join(dest, "SEQ010_010_tester_render_v001.1003.exr")).st_mode & stat.S_IWRITE)
     args, kwargs = sg.calls[-1]
@@ -272,7 +289,7 @@ if has_rvio:
           args[:3] == ("Shot", 7, dest) and kwargs["task_id"] == 3
           and kwargs["movie_path"].startswith(dest))
     check("the artist's notes come first in the ShotGrid note",
-          kwargs["notes"].startswith("first light\n\n---\nRender tester_render_v001: 3 frame(s)"))
+          kwargs["notes"].startswith("first light\n\n---\nRender tester_render_v001 from Animation: 3 frame(s)"))
     check("marked published locally, with the ShotGrid id",
           rs.read_info(info["folder"])["published"]["sg_version_id"] == 99)
     again = rs.publish(ctx, info["folder"], lookup=lookup, shotgrid=sg)
@@ -281,14 +298,6 @@ if has_rvio:
     no_task = rs.publish(ctx, info["folder"], lookup=lambda c: (lookup(c)[0], None), shotgrid=sg)
     check("no Lighting task: still publishes, with a warning",
           sg.calls[-1][1]["task_id"] is None and any("Lighting task" in w for w in no_task["warnings"]))
-
-stash = tempfile.mkdtemp(prefix="rs_frames_")      # real EXRs for the AOV checks (prune deletes v001)
-for f in (1001, 1003, 1005):
-    shutil.copy2(rs.frame_path(info["folder"], info["prefix"], f), rs.frame_path(stash, "f", f))
-
-# --- prune ------------------------------------------------------------------------
-for _ in range(3):
-    rs.plan_render(ctx, scene, [1001], cam)
     # The render finished after another shot was opened (user, 2026-11-19):
     # it publishes to its own shot, on H and in ShotGrid.
     other_work = os.path.join(scratch, "RST_TST", "maya", "sequences", "SEQ010", "SEQ010_020",
@@ -305,6 +314,14 @@ for _ in range(3):
     check("... and with no shot open at all (an unsaved scene)",
           rs.publish(None, info["folder"], lookup=lookup, shotgrid=sg)["dest"] == dest)
     rs.pub.get_root = real_root
+
+stash = tempfile.mkdtemp(prefix="rs_frames_")      # real EXRs for the AOV checks (prune deletes v001)
+for f in (1001, 1003, 1005):
+    shutil.copy2(rs.frame_path(info["folder"], info["prefix"], f), rs.frame_path(stash, "f", f))
+
+# --- prune ------------------------------------------------------------------------
+for _ in range(3):
+    rs.plan_render(ctx, scene, [1001], cam)
 lost = rs.prune(ctx, 2)
 names = [v["name"] for v in rs.local_versions(ctx)]
 # Local now: v001 (batch, published), v002 (sequence), v003-v005 (empty).
@@ -353,6 +370,86 @@ names = rs._published_files(cut_aov)
 check("stopped AOV render: half-written last frame left out of every AOV folder",
       os.path.join("N_noice", "%s.1002.exr" % cut_aov["prefix"]) in names
       and not any(n.endswith(".1003.exr") for n in names))
+
+# --- the working file is versioned up on every render (user, 2026-11-19) ---
+check("version up: the next number", os.path.basename(rs.version_up_path(
+    os.path.join(work, "NFW_SEQ010_170_001.ma"))) == "NFW_SEQ010_170_002.ma")
+open(os.path.join(work, "light_007.ma"), "w").close()
+check("version up: past any version already in the folder",
+      os.path.basename(rs.version_up_path(scene)) == "light_008.ma")
+check("version up: a name with no number gets _001",
+      os.path.basename(rs.version_up_path(os.path.join(work, "light.mb"))) == "light_001.mb")
+cmds.file(scene, open=True, force=True)
+saved = rs.save_version_up()
+check("save_version_up: saved as the next version and carries on in it",
+      saved == os.path.join(work, "light_008.ma") and os.path.isfile(saved)
+      and os.path.normpath(cmds.file(q=True, sceneName=True)) == saved
+      and os.path.isfile(scene))
+
+# --- the render queue: any shot, batch renders one at a time ----------------
+class FakeBatch(object):
+    started = []
+    def __init__(self, info):
+        self.info, self.done, self.cancelled = info, False, False
+        FakeBatch.started.append(info["version"])
+    def poll(self): return 0 if self.done or self.cancelled else None
+    def frames_done(self): return 0
+    def cancel(self): self.cancelled = True
+    def finish(self): return rs.finish_render(self.info, 0, self.cancelled)
+q = rs.RenderQueue(start_batch=FakeBatch)
+a = rs.plan_render(ctx, scene, [1001], cam)
+b = rs.plan_render(other_ctx if has_rvio else ctx, scene, [1001], cam)
+c = rs.plan_render(ctx, scene, [1001], cam)
+first = q.add_batch(a)
+check("queue: the first batch render starts", first is not None and FakeBatch.started == [a["version"]])
+check("queue: the next ones wait, from any shot",
+      q.add_batch(b) is None and q.add_batch(c) is None
+      and rs.read_info(b["folder"])["status"] == rs.QUEUED and q.place(c["folder"]) == 2)
+check("queue: a queued render isn't settled as interrupted while it waits",
+      rs.settle(dict(rs.read_info(b["folder"]), folder=b["folder"]), q.folders())["status"] == rs.QUEUED)
+check("queue: queued and running renders aren't pruned", not any(
+    n in rs.prune(ctx, 0, q.folders()) for n in (a["version"], c["version"]))
+      and os.path.isdir(a["folder"]) and os.path.isdir(c["folder"]))
+check("queue: a queued render won't publish", refuses(rs.publish, ctx, c["folder"], lookup=lookup, shotgrid=sg,
+                                                       running=q.folders()))
+first.done = True
+done = q.step()
+check("queue: when one finishes, the next starts",
+      [i["version"] for i in done] == [a["version"]] and FakeBatch.started[-1] == b["version"]
+      and rs.read_info(b["folder"])["status"] == rs.RENDERING)
+q.cancel(c["folder"])
+check("queue: a waiting render can be cancelled", not q.waiting
+      and rs.read_info(c["folder"])["status"] == rs.CANCELLED)
+d = rs.plan_render(ctx, scene, [1001], cam)
+q.add_batch(d)
+class FakeCloud(object):
+    def __init__(self, info, state):
+        self.info = dict(info, how=rs.FLOW, flow={"state": state})
+    def poll(self): return None
+    def frames_done(self): return 0
+cloud_up = q.add(FakeCloud(rs.plan_render(ctx, scene, [1001], cam), "in the cloud"))
+cloud_uploading = q.add(FakeCloud(rs.plan_render(ctx, scene, [1001], cam), "uploading"))
+check("queue: a cloud render doesn't hold up the batch renders", q.batch_running() and q.place(d["folder"]) == 1)
+lines = q.stop_for_quit()
+check("Maya closing: the batch render is stopped, the waiting one too",
+      q.jobs[0].info["version"] == cloud_up.info["version"] and len(q.jobs) == 1 and not q.waiting
+      and rs.read_info(b["folder"])["status"] == rs.INTERRUPTED
+      and rs.read_info(d["folder"])["status"] == rs.INTERRUPTED
+      and rs.read_info(d["folder"])["stopped_why"] == rs.MAYA_CLOSED)
+check("... the uploaded cloud render carries on, the one still uploading doesn't",
+      cloud_up in q.jobs and cloud_uploading not in q.jobs
+      and rs.read_info(cloud_uploading.info["folder"])["status"] == rs.INTERRUPTED)
+check("... and says what was stopped, render by render", len(lines) == 3
+      and any(b["version"] in l and "no frames had finished" in l for l in lines)
+      and any("still uploading" in l for l in lines))
+prefs = tempfile.mkdtemp(prefix="rs_prefs_")
+rs._jobs_path = lambda: os.path.join(prefs, rs.JOBS_FILE)     # never the real Maya prefs
+rs.write_jobs(stopped=lines, cloud=[cloud_up.info["folder"]])
+warned = rs.warn_stopped_renders()
+check("next Maya: the stopped renders are warned about once, the cloud one remembered",
+      warned == lines and rs.read_jobs() == {"stopped": [], "cloud": [cloud_up.info["folder"]]}
+      and rs.warn_stopped_renders() == [])
+shutil.rmtree(prefs)
 
 shutil.rmtree(stash); shutil.rmtree(scratch, onerror=_writable); shutil.rmtree(h_root, onerror=_writable)
 print("\n%d/%d passed" % (sum(ok), len(ok)))

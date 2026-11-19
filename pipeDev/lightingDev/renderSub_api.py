@@ -44,7 +44,12 @@ import pipeEnv
 
 PublishError = pub.PublishError
 
-DEPARTMENT = "lighting"      # images\lighting\<login>\ (spec "Render output")
+DEPARTMENT = "lighting"      # images\lighting\<login>\ (spec "Render output"),
+                             # whichever department the render comes from
+# The department a render comes from: the artist picks it (user, 2026-11-14).
+# It is recorded in render.json and on the ShotGrid Version only; the output
+# folder and the Lighting task stay the same for every department.
+DEPARTMENTS = pub.DEPARTMENTS
 CODE = "render"
 TASK = "Lighting"            # the ShotGrid Task on the Shot
 IMAGE_FORMAT = "exr"
@@ -61,6 +66,10 @@ FLOW = "flow"        # Flow Render, Autodesk's cloud (renderSub_flow.py)
 RENDERING, DONE, CANCELLED, FAILED, INTERRUPTED = (
     "rendering", "done", "cancelled", "failed", "interrupted")
 STOPPED = (CANCELLED, FAILED, INTERRUPTED)
+# QUEUED: a batch render waiting for the one before it (RenderQueue).
+QUEUED = "queued"
+ACTIVE = (RENDERING, QUEUED)
+MAYA_CLOSED = "Maya was closed"
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +97,22 @@ def shot_of(scene_path, h_root):
                h=os.path.join(h_root, ctx["film"], "maya", "sequences", ctx["seq"],
                               ctx["shot"], *rel))
     return ctx
+
+
+def department_of(scene_path):
+    """The department of the scene's scenes\\<dept>\\ folder, else Lighting.
+    Only the dropdown's starting choice: the artist can change it."""
+    parts = [p.lower() for p in os.path.normpath(scene_path or "").split(os.sep)]
+    if "scenes" in parts[:-2]:
+        folder = parts[len(parts) - parts[::-1].index("scenes")]     # the one after scenes
+        for _, code in DEPARTMENTS:
+            if code.lower() == folder:
+                return code
+    return DEPARTMENT
+
+
+def department_label(code):
+    return dict((c, label) for label, c in DEPARTMENTS).get(code, code or "?")
 
 
 def version_name(ctx, number):
@@ -309,18 +334,78 @@ def render_command(info):
             # watermark instead and say so (see watermarked()).
             "-ai:alf", "false", "-ai:lve", "1",
             "-log", os.path.join(folder, LOG_NAME),
-            info["scene"]]
+            scene_to_render(info)]
 
 
-def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH):
+# ---------------------------------------------------------------------------
+# The scene: versioned up, and a copy rendered (user, 2026-11-19: "render
+# saves a copy for sure"; "save and version up the file it is rendering from
+# and not just save over")
+# ---------------------------------------------------------------------------
+
+_NUMBERED = re.compile(r"^(.*?)(\d+)$")
+
+
+def version_up_path(path):
+    """The next free version of a working file: NFW_SEQ010_170_001.ma ->
+    NFW_SEQ010_170_002.ma (past any number already in the folder); a name
+    with no number gets _001."""
+    folder, name = os.path.split(path)
+    stem, ext = os.path.splitext(name)
+    m = _NUMBERED.match(stem)
+    base, width = (m.group(1), len(m.group(2))) if m else (stem + "_", 3)
+    pattern = re.compile(r"^%s(\d+)%s$" % (re.escape(base), re.escape(ext)), re.IGNORECASE)
+    try:
+        used = [int(p.group(1)) for p in map(pattern.match, os.listdir(folder or ".")) if p]
+    except OSError:
+        used = []
+    number = max(used + [int(m.group(2)) if m else 0]) + 1
+    return os.path.join(folder, "%s%0*d%s" % (base, width, number, ext))
+
+
+def save_version_up():
+    """Save the open scene as its next version and carry on in that one.
+    Returns the new path."""
+    scene = cmds.file(query=True, sceneName=True)
+    if not scene:
+        raise PublishError("Save the scene first: renderSub renders the saved file.")
+    path = version_up_path(os.path.normpath(scene))
+    kind = "mayaBinary" if path.lower().endswith(".mb") else "mayaAscii"
+    cmds.file(rename=path.replace("\\", "/"))
+    cmds.file(save=True, type=kind)
+    return os.path.normpath(cmds.file(query=True, sceneName=True))
+
+
+def copy_scene(info):
+    """Copy the saved scene into the version folder: the copy is what
+    renders (Render.exe) and what's published with the frames, so later
+    saves of the working file don't change the render."""
+    name = os.path.basename(info["scene"])
+    shutil.copy2(info["scene"], os.path.join(info["folder"], name))
+    info["scene_copy"] = name
+    write_info(info["folder"], info)
+    return info
+
+
+def scene_to_render(info):
+    """The version's own copy of the scene, else (older versions) the
+    working file."""
+    copy = info.get("scene_copy")
+    path = os.path.join(info["folder"], copy) if copy else ""
+    return path if copy and os.path.isfile(path) else info["scene"]
+
+
+def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH, department=None):
     """Make the next version folder and its render.json. Nothing renders yet.
-    how: SEQUENCE (in this Maya), BATCH (Render.exe) or FLOW (the cloud)."""
+    how: SEQUENCE (in this Maya), BATCH (Render.exe) or FLOW (the cloud).
+    department: the code the render comes from (default: the scene's folder)."""
     if not cmds.objExists(camera):
         raise PublishError("The camera '%s' isn't in the scene." % camera)
     folder = next_version(ctx)
     os.makedirs(folder)
     info = {
         "shot": ctx["shot"], "seq": ctx["seq"], "film": ctx["film"], "login": ctx["login"],
+        "department": department or department_of(scene_path),
         "version": os.path.basename(folder), "folder": folder,
         "prefix": image_prefix(ctx, folder),
         "scene": os.path.normpath(scene_path), "project": ctx["shot_project"],
@@ -425,16 +510,24 @@ def _alive(pid):
     return True
 
 
+def _same(a, b):
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
 def settle(info, running_folder=None):
-    """A version still marked rendering that nothing is rendering any more
-    (this machine's render process is gone, or it was rendered on another
-    machine) is marked interrupted, and its finished frames timed, so it can
-    be published. running_folder: the version this session is rendering.
-    Returns the info, updated or not."""
-    if info.get("status") != RENDERING or not info.get("folder"):
+    """A version still marked rendering (or queued) that nothing is
+    rendering any more (this machine's render process is gone, it was
+    rendered on another machine, or the queue holding it went with Maya) is
+    marked interrupted, and its finished frames timed, so it can be
+    published. running_folder: the version(s) this session is rendering or
+    has queued (a folder or a list). Returns the info, updated or not."""
+    if info.get("status") not in ACTIVE or not info.get("folder"):
         return info
-    if running_folder and os.path.normcase(running_folder) == os.path.normcase(info["folder"]):
+    running = [running_folder] if isinstance(running_folder, str) else (running_folder or [])
+    if any(_same(r, info["folder"]) for r in running):
         return info
+    if info.get("status") == QUEUED:
+        return finish_render(info, None, interrupted=True)
     if in_cloud(info):
         return info         # in the cloud: it carries on with Maya closed (renderSub_flow)
     here = (info.get("where") or {}).get("machine") == where()["machine"]
@@ -700,6 +793,165 @@ class RenderJob(object):
         return finish_render(self.info, self.process.returncode, self.cancelled)
 
 
+class RenderQueue(object):
+    """Every render this Maya is running or holding, from any shot (user,
+    2026-11-19: "kick of a cloud render, work in another shot and either
+    cue another cloud render or do a batch render locally or a que of batch
+    renders"). Batch renders run one at a time, the rest wait (QUEUED);
+    cloud renders are Flow Render's to queue (it uploads one at a time) and
+    don't hold up a batch render. step() moves it on; the window calls it
+    on a timer. start_batch: a stand-in for RenderJob in the tests."""
+
+    def __init__(self, start_batch=None):
+        self.jobs = []          # running: RenderJob / renderSub_flow.FlowJob
+        self.waiting = []       # queued batch renders' infos, in order
+        self._start_batch = start_batch or RenderJob
+
+    def batch_running(self):
+        return any(j.info.get("how") == BATCH and j.poll() is None for j in self.jobs)
+
+    def add_batch(self, info):
+        """Start a planned batch render, or queue it behind the running one.
+        Returns its RenderJob, or None when it's queued."""
+        if self.batch_running() or self.waiting:
+            info["status"] = QUEUED
+            write_info(info["folder"], info)
+            self.waiting.append(info)
+            return None
+        return self._start(info)
+
+    def add(self, job):
+        """A job that's already running (a cloud render)."""
+        self.jobs.append(job)
+        return job
+
+    def _start(self, info):
+        info.update(status=RENDERING, started=_now(), started_ts=time.time())
+        write_info(info["folder"], info)
+        return self.add(self._start_batch(info))
+
+    def step(self):
+        """Finish the jobs that are done and start the next batch render.
+        Returns the finished versions' infos."""
+        finished = []
+        for job in list(self.jobs):
+            if job.poll() is not None:
+                self.jobs.remove(job)
+                finished.append(job.finish())
+        if self.waiting and not self.batch_running():
+            self._start(self.waiting.pop(0))
+        return finished
+
+    def folders(self):
+        return [j.info["folder"] for j in self.jobs] + [i["folder"] for i in self.waiting]
+
+    def busy(self):
+        return bool(self.jobs or self.waiting)
+
+    def place(self, folder):
+        """1 for the next batch render to start, 2 after it...; None when
+        it isn't waiting."""
+        for n, info in enumerate(self.waiting, 1):
+            if _same(info["folder"], folder):
+                return n
+        return None
+
+    def job(self, folder):
+        return next((j for j in self.jobs if _same(j.info["folder"], folder)), None)
+
+    def cancel(self, folder):
+        """Cancel a running or waiting render. Returns a note for the artist,
+        or None. A running one is finished on the next step()."""
+        for info in self.waiting:
+            if _same(info["folder"], folder):
+                self.waiting.remove(info)
+                finish_render(info, None, cancelled=True)
+                return None
+        job = self.job(folder)
+        return job.cancel() if job else None
+
+    def stop_for_quit(self):
+        """Maya is closing (user, 2026-11-19: cloud renders carry on, batch
+        renders don't). Stops the batch renders, marks the waiting ones and
+        any cloud render still uploading interrupted, and returns a line per
+        render stopped, to warn about next time Maya starts."""
+        lines = []
+        for job in list(self.jobs):
+            info = job.info
+            if info.get("how") == FLOW and in_cloud(info):
+                continue            # the cloud has it; its frames still come back
+            if info.get("how") == BATCH and job.poll() is None:
+                job.cancel()
+            info["stopped_why"] = MAYA_CLOSED
+            finish_render(info, None, interrupted=True)
+            lines.append(_stopped_line(info))
+            self.jobs.remove(job)
+        for info in self.waiting:
+            info["stopped_why"] = MAYA_CLOSED
+            finish_render(info, None, interrupted=True)
+            lines.append(_stopped_line(info))
+        self.waiting = []
+        return lines
+
+    def cloud_folders(self):
+        return [j.info["folder"] for j in self.jobs if in_cloud(j.info)]
+
+
+def _stopped_line(info):
+    done = len(finished_frames(info))
+    if info.get("how") == FLOW:
+        what = "the cloud render was still uploading, so it never reached the cloud"
+    elif done:
+        what = "%d of %d frame(s) had finished: publish them from Local Versions, or render again" % (
+            done, len(info["frames"]))
+    else:
+        what = "no frames had finished: render it again"
+    return "%s %s was stopped when Maya was closed; %s." % (info["shot"], info["version"], what)
+
+
+# What a closed Maya leaves for the next one: renders it stopped (warned at
+# startup) and cloud renders still to come back (watched again). Kept in
+# Maya's prefs, so per person and machine.
+JOBS_FILE = "renderSub_jobs.json"
+
+
+def _jobs_path():
+    return os.path.join(cmds.internalVar(userPrefDir=True), JOBS_FILE)
+
+
+def read_jobs():
+    try:
+        with open(_jobs_path()) as f:
+            saved = json.load(f)
+    except (IOError, OSError, ValueError):
+        saved = {}
+    return {"stopped": saved.get("stopped") or [], "cloud": saved.get("cloud") or []}
+
+
+def write_jobs(stopped=None, cloud=None):
+    saved = read_jobs()
+    if stopped is not None:
+        saved["stopped"] = stopped
+    if cloud is not None:
+        saved["cloud"] = cloud
+    try:
+        with open(_jobs_path(), "w") as f:
+            json.dump(saved, f, indent=2)
+    except (IOError, OSError):
+        pass
+
+
+def warn_stopped_renders():
+    """At Maya startup (pipeEnv.install): say which renders were stopped
+    when Maya last closed, in the Script Editor, then forget them."""
+    lines = read_jobs()["stopped"]
+    for line in lines:
+        cmds.warning("renderSub: " + line)
+    if lines:
+        write_jobs(stopped=[])
+    return lines
+
+
 def missing_frames(info):
     return [f for f in info["frames"] if not os.path.isfile(beauty_path(info, f))]
 
@@ -884,17 +1136,20 @@ def delete_version(folder):
     shutil.rmtree(folder)
 
 
-def prune(ctx, keep):
+def prune(ctx, keep, running=None):
     """Delete the oldest local versions beyond keep (None = keep all).
     Published ones are safe on H; returns the names of unpublished ones
-    deleted, so the caller can say so."""
+    deleted, so the caller can say so. running: the versions this Maya is
+    rendering or has queued (see settle); they, and any still rendering
+    elsewhere or in the cloud, are kept."""
     if keep is None or keep < 0:
         return []
     lost = []
     for v in local_versions(ctx)[keep:]:
-        if in_cloud(v["info"]):
-            continue        # still rendering in the cloud: its frames come back here
-        if not v["info"].get("published"):
+        info = settle(dict(v["info"], folder=v["path"]), running)
+        if in_cloud(info) or info.get("status") in ACTIVE:
+            continue        # rendering, queued, or in the cloud (its frames come back here)
+        if not info.get("published"):
             lost.append(v["name"])
         shutil.rmtree(v["path"], ignore_errors=True)
     return lost
@@ -972,7 +1227,19 @@ def version_ctx(info, ctx=None):
     return shot_of(info["scene"], ctx.get("h_root") or pub.get_root(pub.H_DRIVE))
 
 
-def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
+def scene_note(info, dest):
+    """The ShotGrid note's lines naming the scene the frames came from
+    (user, 2026-11-19: "the file the shot was rendered from should be
+    listed"): its copy on H, published with the frames, and the working
+    file it was saved as."""
+    working = os.path.basename(info["scene"])
+    if info.get("scene_copy"):
+        return "Rendered from (on the H drive):\n%s\nWorking file: %s" % (
+            os.path.join(dest, info["scene_copy"]), working)
+    return "Scene: %s" % working
+
+
+def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None, running=None):
     """Publish one local version: all of it, or for a render that stopped
     early (cancelled, failed, interrupted) the frames that finished (user,
     2026-11-13: "There are to many times when a render might not finish for
@@ -982,6 +1249,7 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
     fails, the H copy stays and publishing again retries the upload.
     Returns {"dest", "sg_version", "sg_error", "warnings", "partial"}.
 
+    running: the versions this Maya is rendering or has queued (see settle).
     lookup / shotgrid: stand-ins for the tests."""
     info = read_info(folder)
     if not info:
@@ -989,9 +1257,10 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
                            % os.path.basename(folder))
     info["folder"] = folder         # the drive may have changed since the render
     ctx = version_ctx(info, ctx)
-    info = settle(info)
-    if info["status"] == RENDERING:
-        raise PublishError("%s is still rendering. Wait for it, or cancel it." % info["version"])
+    info = settle(info, running)
+    if info["status"] in ACTIVE:
+        raise PublishError("%s is still %s. Wait for it, or cancel it."
+                           % (info["version"], info["status"]))
     frames = finished_frames(info)
     if not frames:
         raise PublishError("%s has no finished frames to publish (%s)."
@@ -1017,10 +1286,11 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
     info["published"] = {"at": _now(), "by": ctx["login"], "dest": result["dest"], "frames": frames}
     write_info(folder, info)
 
-    note = "Render %s: %d frame(s) (%s), camera %s, %dx%d (%d%%)\nFrames on the H drive:\n%s\nScene: %s" % (
-        info["version"], len(frames), seq_string(frames),
+    note = ("Render %s from %s: %d frame(s) (%s), camera %s, %dx%d (%d%%)\n"
+            "Frames on the H drive:\n%s\n%s") % (
+        info["version"], department_label(info.get("department")), len(frames), seq_string(frames),
         info["camera"].split("|")[-1], info["size"][0], info["size"][1], info["percent"],
-        result["dest"], os.path.basename(info["scene"]))
+        result["dest"], scene_note(info, result["dest"]))
     if is_partial:
         note = "Partial render (%s): %d of %d frame(s) finished; %s was asked for.\n%s" % (
             info["status"], len(frames), len(info["frames"]), seq_string(info["frames"]), note)

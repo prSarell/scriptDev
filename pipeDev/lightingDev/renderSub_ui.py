@@ -5,8 +5,10 @@ publish it to the H drive and ShotGrid. The work is in renderSub_api.py.
 Shelf (mpLighting):
     import renderSub_ui; renderSub_ui.show()
 
-The running render lives at module level (_JOB), so closing and reopening
-the window picks it up again; the render itself never depends on the window.
+The renders running and queued live at module level (_QUEUE, any shot), so
+closing and reopening the window, or opening another shot, picks them up
+again; the renders never depend on the window. Batch renders stop when Maya
+closes, and the next Maya says so at startup (user, 2026-11-19).
 """
 
 import os
@@ -28,9 +30,10 @@ MODE_LABELS = (("shot", "Whole shot"),
                ("custom", "Custom range"), ("step", "Every Nth frame"), ("list", "Frame list"))
 TICK_MS = 2000
 
-_JOB = None         # the RenderJob running now, if any
+_QUEUE = api.RenderQueue()     # every render running or waiting, any shot
 _TIMER = None
 _UI = None
+_QUIT_JOB = None
 
 
 def _flow():
@@ -81,6 +84,14 @@ class RenderSubUI(object):
         cmds.setParent(root)
 
         self._frame("Render", root)
+        self._row("Department")
+        self.w["department"] = cmds.optionMenu(
+            annotation="The department this render comes from. It starts as the scene's "
+                       "scenes\\<department>\\ folder; it goes in the render's notes and on "
+                       "the ShotGrid Version.")
+        for label, _ in api.DEPARTMENTS:
+            cmds.menuItem(label=label)
+        cmds.setParent("..")
         self._row("Camera")
         self.w["camera"] = cmds.optionMenu(changeCommand=lambda *_: self.update_counts())
         cmds.setParent("..")
@@ -149,10 +160,22 @@ class RenderSubUI(object):
             label="Open the frames in RV when the render finishes",
             value=cmds.optionVar(q=OPEN_RV_VAR) if cmds.optionVar(exists=OPEN_RV_VAR) else True,
             changeCommand=lambda v: cmds.optionVar(iv=(OPEN_RV_VAR, int(v))))
-        self.w["render"] = cmds.button(label="Render", h=40, c=lambda *_: self.render())
-        self.w["progress"] = cmds.progressBar(maxValue=1, height=14)
+        self.w["render"] = cmds.button(
+            label="Render", h=40, c=lambda *_: self.render(),
+            annotation="Saves the scene as its next version, copies it into the render's "
+                       "folder and renders the copy. Another render can be started while "
+                       "this one runs, from any shot: batch renders wait their turn.")
         self.w["status"] = cmds.text(label="", align="left")
-        self.w["cancel"] = cmds.button(label="Cancel Render", h=26, enable=False,
+        cmds.setParent(root)
+
+        self._frame("Render Queue (every shot)", root)
+        self.w["queue"] = cmds.textScrollList(
+            numberOfRows=4, allowMultiSelection=False,
+            annotation="Renders running or waiting in this Maya. Batch renders run one at a "
+                       "time and stop if Maya closes; cloud renders carry on in the cloud "
+                       "once they've uploaded.")
+        self.w["progress"] = cmds.progressBar(maxValue=1, height=14)
+        self.w["cancel"] = cmds.button(label="Cancel Selected", h=26, enable=False,
                                        c=lambda *_: self.cancel())
         cmds.setParent(root)
 
@@ -181,25 +204,31 @@ class RenderSubUI(object):
         cmds.setParent(root)
 
         cmds.showWindow(WINDOW)
+        self._reviewing = False
+        self._to_review = []
         self.refresh()
-        self._pick_up_cloud_render()
-        if _JOB and _JOB.poll() is None:
-            self._set_running(True)
+        self._pick_up_cloud_renders()
+        self.show_queue()
+        if _QUEUE.busy():
             _start_timer()
 
-    def _pick_up_cloud_render(self):
-        """A cloud render submitted before Maya was closed carries on in the
-        cloud: watch it again so its frames come back to this version."""
-        global _JOB
-        if (_JOB and _JOB.poll() is None) or not self.ctx:
+    def _pick_up_cloud_renders(self):
+        """Cloud renders sent before Maya was closed carry on in the cloud:
+        watch them again (any shot) so their frames come back to their
+        versions and they finish here."""
+        flow = _flow()
+        if not flow:
             return
-        for v in api.local_versions(self.ctx):
-            if api.in_cloud(v["info"]):
-                flow = _flow()
-                if flow:
-                    _JOB = flow.FlowJob(dict(v["info"], folder=v["path"]))
-                    cmds.text(self.w["status"], e=True, label=_JOB.describe())
-                return
+        folders = list(api.read_jobs()["cloud"])
+        if self.ctx:
+            folders += [v["path"] for v in api.local_versions(self.ctx)]
+        watched = _QUEUE.folders()
+        for folder in folders:
+            info = api.read_info(folder)
+            if api.in_cloud(info) and not any(api._same(folder, w) for w in watched):
+                _QUEUE.add(flow.FlowJob(dict(info, folder=folder)))
+                watched.append(folder)
+        _remember_cloud()
 
     def _frame(self, label, parent):
         cmds.frameLayout(label=label, collapsable=False, marginHeight=8, marginWidth=8, parent=parent)
@@ -230,6 +259,12 @@ class RenderSubUI(object):
                        text=os.path.basename(api.next_version(ctx)) if ctx else "")
         cmds.textField(self.w["local"], e=True, text=ctx.get("local", ""))
         cmds.textField(self.w["h"], e=True, text=ctx.get("h", ""))
+        if scene != getattr(self, "_department_scene", None):
+            # A new scene starts from its folder's department; a refresh of
+            # the same scene keeps the artist's choice.
+            self._department_scene = scene
+            cmds.optionMenu(self.w["department"], e=True,
+                            value=api.department_label(api.department_of(scene)))
 
         menu = self.w["camera"]
         current = cmds.optionMenu(menu, q=True, value=True) if cmds.optionMenu(
@@ -331,6 +366,10 @@ class RenderSubUI(object):
         cmds.text(self.w["summary"], e=True, label=text)
         cmds.text(self.w["estimate"], e=True, label=estimate)
 
+    def department(self):
+        index = cmds.optionMenu(self.w["department"], q=True, select=True)
+        return api.DEPARTMENTS[index - 1][1]
+
     def camera(self):
         name = cmds.optionMenu(self.w["camera"], q=True, value=True)
         for c in api.cameras():
@@ -341,14 +380,13 @@ class RenderSubUI(object):
     def refresh_versions(self):
         cmds.textScrollList(self.w["versions"], e=True, removeAll=True)
         self._versions = api.local_versions(self.ctx) if self.ctx else []
-        running = _JOB.info["folder"] if _JOB and _JOB.poll() is None else None
+        running = _QUEUE.folders()
         for v in self._versions:
             # A render nothing is running any more (Maya crashed, the power
             # went) shows as interrupted, ready to publish what finished.
             info = v["info"] = api.settle(dict(v["info"], folder=v["path"]), running) \
-                if v["info"].get("status") == api.RENDERING else v["info"]
-            watched = running and os.path.normcase(os.path.normpath(running)) == \
-                os.path.normcase(os.path.normpath(v["path"]))
+                if v["info"].get("status") in api.ACTIVE else v["info"]
+            watched = any(api._same(r, v["path"]) for r in running)
             if info.get("how") == api.FLOW and not watched and _flow():
                 # Cloud frames that came back while renderSub wasn't watching
                 # (Maya closed, Cancel, or downloaded from the Job Monitor).
@@ -358,7 +396,12 @@ class RenderSubUI(object):
                 count = "%d of %d frame(s)" % (len(api.finished_frames(dict(info, folder=v["path"]))), total)
             else:
                 count = "%d frame(s)" % total
-            label = "%s   %s   %s" % (v["name"], count, info.get("status", "?"))
+            status = info.get("status", "?")
+            if status == api.QUEUED and _QUEUE.place(v["path"]):
+                status = "queued (%s)" % _ordinal(_QUEUE.place(v["path"]))
+            label = "%s   %s   %s" % (v["name"], count, status)
+            if info.get("department"):
+                label += "   %s" % api.department_label(info["department"])
             if (info.get("timing") or {}).get("per_frame"):
                 label += "   %s/frame" % api.duration(info["timing"]["per_frame"])
             if info.get("watermarked"):
@@ -376,9 +419,10 @@ class RenderSubUI(object):
 
     # ------------------------------------------------------------------ render
     def render(self):
-        global _JOB
-        if _JOB and _JOB.poll() is None:
-            return _say("A render is already running. Wait for it, or cancel it.")
+        """Render the open shot: save the scene as its next version, copy it
+        into a new version folder, then render the copy here, in the
+        background (queued behind a batch render already running) or in the
+        cloud. Other renders, from any shot, can be running."""
         self.refresh()
         if not self.ctx:
             return _say(self.error)
@@ -386,40 +430,51 @@ class RenderSubUI(object):
         if not camera:
             return _say("There's no camera to render through.")
         how = self.how()
+        if how == api.SEQUENCE and _QUEUE.batch_running():
+            return _say("A batch render is using this computer. Render in the background "
+                        "instead (it waits its turn), or wait for it.")
         try:
             frames = self.frames()
             changed = api.ensure_arnold()
-            if how in (api.BATCH, api.FLOW) and (changed or cmds.file(query=True, modified=True)):
-                # The background and cloud renders read the saved file, not
-                # this session. (A sequence render renders the scene as it is open.)
-                if cmds.confirmDialog(title="renderSub", message="Save the scene and render it?",
-                                      button=["Save and Render", "Cancel"],
-                                      defaultButton="Save and Render", cancelButton="Cancel",
-                                      dismissString="Cancel") != "Save and Render":
+            next_name = os.path.basename(api.version_up_path(cmds.file(query=True, sceneName=True)))
+            if changed or cmds.file(query=True, modified=True):
+                if cmds.confirmDialog(
+                        title="renderSub",
+                        message="Save the scene as %s and render it?" % next_name,
+                        button=["Save and Render", "Cancel"], defaultButton="Save and Render",
+                        cancelButton="Cancel", dismissString="Cancel") != "Save and Render":
                     return
-                cmds.file(save=True)
+            # Every render has its own version of the working file (user,
+            # 2026-11-19); the artist carries on in it.
+            scene = api.save_version_up()
+            self.refresh()
             keep = cmds.intField(self.w["keep"], q=True, value=True)
-            lost = api.prune(self.ctx, keep - 1) if keep > 0 else []
+            lost = api.prune(self.ctx, keep - 1, _QUEUE.folders()) if keep > 0 else []
             if lost:
                 cmds.warning("renderSub: deleted unpublished local render(s) %s (keeping the "
                              "newest %d)." % (", ".join(lost), keep))
-            info = api.plan_render(self.ctx, cmds.file(query=True, sceneName=True),
-                                   frames, camera, self.percent(), how=how)
+            info = api.plan_render(self.ctx, scene, frames, camera, self.percent(), how=how,
+                                   department=self.department())
+            api.copy_scene(info)
             if how == api.SEQUENCE:
                 return self._render_in_maya(info)
             if how == api.FLOW:
                 try:
-                    _JOB = _flow().FlowJob.submit(info)
+                    _QUEUE.add(_flow().FlowJob.submit(info))
                 except Exception as e:
                     api.finish_render(info, 1)
                     self.refresh_versions()
                     raise api.PublishError("Flow Render didn't take the job:\n%s" % e)
+                _remember_cloud()
             else:
-                _JOB = api.RenderJob(info)
-        except (api.PublishError, OSError) as e:
+                _QUEUE.add_batch(info)
+        except (api.PublishError, OSError, RuntimeError) as e:
             return _say(str(e))
-        self._set_running(True)
-        cmds.progressBar(self.w["progress"], e=True, maxValue=len(frames), progress=0)
+        _watch_quit()
+        cmds.inViewMessage(amg="renderSub: saved as <hl>%s</hl>; %s %s." % (
+            os.path.basename(scene), info["version"],
+            "queued" if info["status"] == api.QUEUED else "started"),
+            pos="topCenter", fade=True)
         self.tick()
         _start_timer()
         self.refresh_versions()
@@ -453,38 +508,58 @@ class RenderSubUI(object):
         finally:
             cmds.progressWindow(endProgress=True)
         self.refresh()
-        self._report(info)
+        self.report(info)
 
-    def _set_running(self, running):
-        cmds.button(self.w["render"], e=True, enable=not running)
-        cmds.button(self.w["cancel"], e=True, enable=running)
+    # ------------------------------------------------------------------ queue
+    def show_queue(self):
+        """The Render Queue list: every render running or waiting, any shot."""
+        selected = self._queue_selected()
+        self._queue_rows = [j.info for j in _QUEUE.jobs] + list(_QUEUE.waiting)
+        cmds.textScrollList(self.w["queue"], e=True, removeAll=True)
+        for info in self._queue_rows:
+            cmds.textScrollList(self.w["queue"], e=True,
+                                append="%s  %s   %s" % (info["shot"], info["version"],
+                                                        describe(info)))
+        for n, info in enumerate(self._queue_rows, 1):
+            if selected and api._same(info["folder"], selected):
+                cmds.textScrollList(self.w["queue"], e=True, selectIndexedItem=n)
+        cmds.button(self.w["cancel"], e=True, enable=bool(self._queue_rows))
+        batch = next((j for j in _QUEUE.jobs if j.info.get("how") == api.BATCH), None)
+        if batch:
+            cmds.progressBar(self.w["progress"], e=True, maxValue=len(batch.info["frames"]),
+                             progress=batch.frames_done())
+        else:
+            cmds.progressBar(self.w["progress"], e=True, maxValue=1, progress=0)
+
+    def _queue_selected(self):
+        index = cmds.textScrollList(self.w["queue"], q=True, selectIndexedItem=True)
+        rows = getattr(self, "_queue_rows", [])
+        return rows[index[0] - 1]["folder"] if index and index[0] <= len(rows) else None
 
     def tick(self):
-        """Every TICK_MS while a render runs: progress, then the finish."""
-        global _JOB
-        if not _JOB:
+        """Every TICK_MS while anything is in the queue: the list, and the
+        status line for the running batch render (else the newest job)."""
+        self.show_queue()
+        job = next((j for j in _QUEUE.jobs if j.info.get("how") == api.BATCH), None) or \
+            (_QUEUE.jobs[-1] if _QUEUE.jobs else None)
+        if job:
+            cmds.text(self.w["status"], e=True, label="%s %s: %s" % (
+                job.info["shot"], job.info["version"], describe(job.info, job)))
+        elif _QUEUE.waiting:
+            cmds.text(self.w["status"], e=True, label="%d render(s) waiting" % len(_QUEUE.waiting))
+
+    def report(self, info):
+        """A render finished: the Watch before publishing window (or why it
+        failed). One at a time: another that finishes meanwhile waits."""
+        self._to_review.append(info)
+        if self._reviewing:
             return
-        done, total = _JOB.frames_done(), len(_JOB.info["frames"])
-        cmds.progressBar(self.w["progress"], e=True, maxValue=total, progress=done)
-        if _JOB.poll() is None:
-            status = "Rendering %s: %d of %d frame(s) done" % (_JOB.info["version"], done, total)
-            timing = None if hasattr(_JOB, "describe") else api.timing(_JOB.info, running=True)
-            if hasattr(_JOB, "describe"):
-                status = _JOB.describe()
-            elif timing:
-                status += ", %s a frame, about %s left" % (
-                    api.duration(timing["per_frame"]), api.duration(api.time_left(_JOB.info)))
-            else:
-                status += " (loading the scene, then the first frame)"
-            cmds.text(self.w["status"], e=True, label=status)
-            return
-        _stop_timer()
-        cmds.text(self.w["status"], e=True, label="Making the review movie...")
-        cmds.refresh()
-        info, _JOB = _JOB.finish(), None
-        self._set_running(False)
-        self.refresh()
-        self._report(info)
+        self._reviewing = True
+        try:
+            while self._to_review:
+                self._report(self._to_review.pop(0))
+        finally:
+            self._reviewing = False
 
     def _report(self, info):
         in_rv = info["status"] == api.DONE and cmds.checkBox(self.w["open_rv"], q=True, value=True)
@@ -526,10 +601,14 @@ class RenderSubUI(object):
                         "Versions, then Publish Selected." % done if done else "", where))
 
     def cancel(self):
-        note = None
-        if _JOB and _JOB.poll() is None:
-            note = _JOB.cancel()
-        self.tick()
+        """Cancel the render picked in the Render Queue."""
+        folder = self._queue_selected()
+        if not folder:
+            if len(getattr(self, "_queue_rows", [])) != 1:
+                return _say("Pick the render to cancel in the Render Queue list.")
+            folder = self._queue_rows[0]["folder"]
+        note = _QUEUE.cancel(folder)
+        _on_tick()
         if note:
             _say(note)
 
@@ -549,8 +628,8 @@ class RenderSubUI(object):
         v = self.selected()
         if not v:
             return
-        if _JOB and _JOB.poll() is None and _JOB.info["folder"] == v["path"]:
-            return _say("That version is still rendering. Cancel it first.")
+        if any(api._same(f, v["path"]) for f in _QUEUE.folders()):
+            return _say("That version is in the Render Queue. Cancel it first.")
         extra = "" if v["info"].get("published") else "\nIt was never published."
         if cmds.confirmDialog(title="renderSub", message="Delete %s from scratch?%s" % (v["name"], extra),
                               button=["Delete", "Cancel"], cancelButton="Cancel",
@@ -577,7 +656,7 @@ class RenderSubUI(object):
         name = os.path.basename(folder)
         cmds.waitCursor(state=True)
         try:
-            result = api.publish(self.ctx, folder, notes)
+            result = api.publish(self.ctx, folder, notes, running=_QUEUE.folders())
         except Exception as e:
             return _say("The publish stopped:\n%s" % e)
         finally:
@@ -697,11 +776,82 @@ def _stop_timer():
 
 
 def _on_tick():
-    global _JOB
-    if _UI and cmds.window(WINDOW, exists=True):
+    """Move the queue on. Finished renders get the Watch before publishing
+    window when renderSub's window is open; with it closed they wait in
+    their shot's Local Versions."""
+    try:
+        finished = _QUEUE.step()
+    except Exception as e:      # never leave the timer dead with renders queued
+        cmds.warning("renderSub: the render queue hit a problem: %s" % e)
+        finished = []
+    if any(info.get("how") == api.FLOW for info in finished):
+        _remember_cloud()
+    window = _UI and cmds.window(WINDOW, exists=True)
+    if window:
         _UI.tick()
-    elif _JOB and _JOB.poll() is not None:
-        # Window closed during the render: finish it anyway.
+    if finished and window:
+        _UI.refresh()
+        for info in finished:
+            _UI.report(info)
+    for info in finished if not window else []:
+        cmds.inViewMessage(amg="renderSub: <hl>%s %s</hl> %s. Open renderSub to review it."
+                           % (info["shot"], info["version"], info["status"]),
+                           pos="topCenter", fade=True)
+    if not _QUEUE.busy():
         _stop_timer()
-        _JOB, job = None, _JOB
-        job.finish()
+
+
+def describe(info, job=None):
+    """What a render in the queue is doing, in a few words."""
+    job = job or _QUEUE.job(info["folder"])
+    total = len(info["frames"])
+    if info.get("status") == api.QUEUED:
+        return "batch: waiting (%s in line)" % _ordinal(_QUEUE.place(info["folder"]) or 1)
+    if info.get("how") == api.FLOW:
+        if api.in_cloud(info):
+            return "cloud: in the cloud, %d of %d frame(s) downloaded" % (
+                len(api.frame_files(info)), total)
+        text = job.describe() if job else "uploading"
+        return "cloud: " + (text.split(": ", 1)[-1] if text.startswith("Flow Render") else text)
+    done = job.frames_done() if job else 0
+    if job is None or job.poll() is not None:
+        return "batch: finishing"
+    text = "batch: rendering, %d of %d frame(s) done" % (done, total)
+    if api.timing(info, running=True):
+        text += ", about %s left" % api.duration(api.time_left(info))
+    else:
+        text += " (loading the scene)"
+    return text
+
+
+def _ordinal(n):
+    return "%d%s" % (n, {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th"))
+
+
+def _remember_cloud():
+    """Note the cloud renders still to come back, so the next Maya watches
+    them again whatever shot it opens (renderSub_api.read_jobs)."""
+    keep = [f for f in api.read_jobs()["cloud"]
+            if api.in_cloud(api.read_info(f)) and not any(api._same(f, c) for c in _QUEUE.cloud_folders())]
+    api.write_jobs(cloud=keep + _QUEUE.cloud_folders())
+
+
+def _watch_quit():
+    """Once a render starts: when Maya closes, stop the batch renders
+    (user, 2026-11-19: cloud renders carry on, batch renders don't) and
+    leave a warning for the next Maya's Script Editor."""
+    global _QUIT_JOB
+    if _QUIT_JOB is None or not cmds.scriptJob(exists=_QUIT_JOB):
+        _QUIT_JOB = cmds.scriptJob(event=["quitApplication", _on_quit], protected=True)
+
+
+def _on_quit():
+    try:
+        _remember_cloud()
+        lines = _QUEUE.stop_for_quit()
+        if lines:
+            api.write_jobs(stopped=api.read_jobs()["stopped"] + lines)
+            for line in lines:
+                print("renderSub: " + line)
+    except Exception as e:      # never stop Maya closing
+        print("renderSub: couldn't stop the renders cleanly: %s" % e)

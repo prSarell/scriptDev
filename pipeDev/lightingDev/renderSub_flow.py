@@ -427,7 +427,10 @@ class FlowJob(object):
         if flow.get("state") == UPLOADING:
             job = self._local_job()
             exporting = job is not None and (job.getProgress() or 0) < getattr(job, "endFrame", 0)
-            if exporting:
+            if job is not None and job.isPending():
+                # Flow Render uploads one job at a time.
+                text = "waiting for the upload before it"
+            elif exporting:
                 text = "getting the scene ready to upload (frame %d)" % job.getProgress()
             else:
                 mb = flow.get("upload_mb")

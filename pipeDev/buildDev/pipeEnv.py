@@ -189,4 +189,21 @@ def install():
         pipeStudioLibrary.use_config(cmds.internalVar(userPrefDir=True))
     except Exception as e:      # never break Maya starting up
         print("mpPipe: couldn't set up Studio Library's search depth: %s" % e)
+    try:
+        # Renders stopped when Maya last closed: warned in the Script Editor
+        # once Maya is up (renderSub, user 2026-11-19).
+        import maya.cmds as cmds
+        if not cmds.about(batch=True):
+            import maya.utils
+            maya.utils.executeDeferred(_warn_stopped_renders)
+    except Exception as e:
+        print("mpPipe: couldn't check for stopped renders: %s" % e)
     return current()
+
+
+def _warn_stopped_renders():
+    try:
+        import renderSub_api
+        renderSub_api.warn_stopped_renders()
+    except Exception as e:      # never break Maya starting up
+        print("mpPipe: couldn't check for stopped renders: %s" % e)

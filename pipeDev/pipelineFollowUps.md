@@ -218,6 +218,22 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
       (~1 GB) when a cloud render is interrupted before upload; warn on Maya
       quit while a cloud job is still uploading; set the shot's project
       before submit. Also still open: Resume a stopped local render.
+- [x] **BUILT 2026-11-19, render queue** (spec "Render queue"): renders from
+      any shot at once (`api.RenderQueue`, the window's Render Queue list +
+      Cancel Selected); batch renders one at a time, cloud uploads queued
+      by Arnold; every Render saves the scene as its next version
+      (`..._002.ma`) and renders a copy in the version folder, published to
+      H and named in the ShotGrid note; Maya closing stops batch renders
+      (and uploads still going) and the next Maya warns in the Script Editor
+      (`renderSub_jobs.json` in Maya prefs, via `pipeEnv.install`); cloud
+      renders sent before closing are watched again from any shot. Tests
+      105/105 + Flow 27/27; the window itself not tested headless.
+- [ ] **User hand test of the queue:** Flow render shot A; once it's in the
+      cloud, open shot B, batch render it, then batch render shot C (waits).
+      Check the Render Queue list, the scene versions (`_002.ma`...), C
+      starting after B, A's Watch before publishing window coming up in
+      another shot and publishing to A. Then close Maya mid-batch and check
+      the Script Editor warning on the next start.
 - [ ] Delete the test render when done with it: ShotGrid Version 13643 and
       `G:\H\NWF_SHF\...\SEQ010_140\images\lighting\e131988\e131988_render_v001`
       (watermarked, every 30th frame at 25%).
