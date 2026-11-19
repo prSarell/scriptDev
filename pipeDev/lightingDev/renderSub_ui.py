@@ -572,8 +572,8 @@ class RenderSubUI(object):
             self.publish_version(v["path"], answer)
 
     def publish_version(self, folder, notes):
-        if not self.ctx:
-            return _say(self.error)
+        # The version's own shot, not the open scene's (api.version_ctx):
+        # the open scene can be another shot, or unsaved.
         name = os.path.basename(folder)
         cmds.waitCursor(state=True)
         try:

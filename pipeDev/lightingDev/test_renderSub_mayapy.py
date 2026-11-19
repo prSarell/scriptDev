@@ -289,6 +289,22 @@ for f in (1001, 1003, 1005):
 # --- prune ------------------------------------------------------------------------
 for _ in range(3):
     rs.plan_render(ctx, scene, [1001], cam)
+    # The render finished after another shot was opened (user, 2026-11-19):
+    # it publishes to its own shot, on H and in ShotGrid.
+    other_work = os.path.join(scratch, "RST_TST", "maya", "sequences", "SEQ010", "SEQ010_020",
+                              "scenes", "lighting", "tester")
+    os.makedirs(other_work)
+    other_ctx = rs.shot_of(os.path.join(other_work, "light_001.ma"), h_root)
+    asked_for = []
+    moved = rs.publish(other_ctx, info["folder"], shotgrid=sg,
+                       lookup=lambda c: asked_for.append(c["shot"]) or lookup(c))
+    check("another shot open: still publishes to its own shot's H folder and ShotGrid Shot",
+          moved["dest"] == dest and asked_for == ["SEQ010_010"]
+          and not os.path.exists(os.path.join(other_ctx["h"], "tester_render_v001")))
+    real_root, rs.pub.get_root = rs.pub.get_root, lambda key: h_root   # never the real H
+    check("... and with no shot open at all (an unsaved scene)",
+          rs.publish(None, info["folder"], lookup=lookup, shotgrid=sg)["dest"] == dest)
+    rs.pub.get_root = real_root
 lost = rs.prune(ctx, 2)
 names = [v["name"] for v in rs.local_versions(ctx)]
 # Local now: v001 (batch, published), v002 (sequence), v003-v005 (empty).
