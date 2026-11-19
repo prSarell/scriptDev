@@ -23,6 +23,14 @@ can turn up in any shot.
     <H>/<FILM>/maya/studioLibrary/show/scout/keyframe/face/pose/
     <H>/<FILM>/maya/studioLibrary/sequences/EAP_010/EAP_010_010/scout/mocap/body/motion/
 
+And every asset's Substance Painter folder (spec §3f, DECIDED 2026-11-19),
+assets only, mirroring maya/assets. They stay empty on the H drive: they're
+there so the Project Tool's Update Scratch copies them down. Painter work
+lives on scratch only; its textures reach the H drive through the Maya
+model publish.
+
+    <H>/<FILM>/substancePainter/assets/environment/hillShed/
+
 Run (dry run first; --apply to build):
     python h_sync.py --h-root "G:/H" --film NWF_SHF
     python h_sync.py --h-root "/Volumes/T7/H" --film NWF_SHF --apply
@@ -64,6 +72,10 @@ WORK_FOLDERS = ("model", "rig", "lookDev")
 # And every shot's scenes\layout\, anim\, fx\ and lighting\ (user, 2026-10-28).
 # Same as publishTool_api.SHOT_WORK_FOLDERS.
 SHOT_WORK_FOLDERS = ("layout", "anim", "fx", "lighting")
+# <film>/substancePainter/assets/<type>/<asset>/ for every asset with a Maya
+# folder (user, 2026-11-19: "assets only for now"). The per-artist folder
+# inside is left to the desktop tool, later.
+SUBSTANCE = "substancePainter"
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +188,13 @@ def library_folders(maya_dir, shots, characters):
 def plan_sync(h_root, film, shots, assets):
     """{"build": [(kind, label, folder)], "skipped": [(label, why)],
         "not_in_shotgrid": [folder], "library": [folder],
-        "characters": [name], "work": [folder]}. Only folders that don't
-    exist yet are ever in "build", "library" or "work"."""
+        "characters": [name], "work": [folder], "substance": [folder]}.
+    Only folders that don't exist yet are ever in "build", "library",
+    "work" or "substance"."""
     maya_dir = os.path.join(h_root, film, "maya")
     build, skipped, expected = [], [], set()
     work = []           # working folders of every asset/shot that has/gets a folder
+    substance = []      # Substance Painter folders of every asset that has/gets one
     worked_on = []      # (sequence, shot) of every shot that has/gets a folder
     for shot in sorted(shots, key=lambda s: s["code"]):
         if REFERENCE_SHOT.search(shot["code"]):
@@ -220,6 +234,9 @@ def plan_sync(h_root, film, shots, assets):
             build.append(("asset", "%s (%s)" % (asset["code"], asset["type"]), folder))
         work += [os.path.join(folder, "scenes", w) for w in WORK_FOLDERS
                  if not os.path.isdir(os.path.join(folder, "scenes", w))]
+        painter = os.path.join(h_root, film, SUBSTANCE, "assets", type_folder_name(asset["type"]), name)
+        if not os.path.isdir(painter):
+            substance.append(painter)
     # Folders on the H drive that ShotGrid doesn't have (renamed/removed, or
     # made by hand): reported, never touched.
     not_in_shotgrid = []
@@ -240,7 +257,8 @@ def plan_sync(h_root, film, shots, assets):
     library = [f for f in library_folders(maya_dir, worked_on, characters)
                if not os.path.isdir(f)]
     return {"build": build, "skipped": skipped, "not_in_shotgrid": not_in_shotgrid,
-            "library": library, "characters": characters, "work": work}
+            "library": library, "characters": characters, "work": work,
+            "substance": substance}
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +333,20 @@ def apply_sync(h_root, film, plan, log=print):
             log("  skipped %s: %s" % (folder, e))
     if made:
         log("  built  %d working folder(s)" % made)
+    made = 0
+    for folder in plan.get("substance") or []:
+        # Only for an asset whose Maya folder exists (built above or before).
+        maya_folder = os.path.join(h_root, film, "maya", os.path.relpath(
+            folder, os.path.join(h_root, film, SUBSTANCE)))
+        if not os.path.isdir(maya_folder):
+            continue
+        try:
+            os.makedirs(folder, exist_ok=True)
+            made += 1
+        except OSError as e:
+            log("  skipped %s: %s" % (folder, e))
+    if made:
+        log("  built  %d Substance Painter folder(s)" % made)
     return built
 
 
@@ -336,6 +368,9 @@ def report(plan, log=print):
     if plan.get("work"):
         log("Working folders to add (%d): assets' scenes\\%s; shots' scenes\\%s"
             % (len(plan["work"]), ", ".join(WORK_FOLDERS), ", ".join(SHOT_WORK_FOLDERS)))
+    if plan.get("substance"):
+        log("Substance Painter asset folders to add (%d): %s\\assets\\<type>\\<asset>"
+            % (len(plan["substance"]), SUBSTANCE))
 
 
 def films_on(h_root):

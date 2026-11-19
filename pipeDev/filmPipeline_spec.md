@@ -164,7 +164,8 @@ NWF_SHF\                                 <- film folder (organising only)
     cuts\
     edl\
     shotgridMovs\
-  substancePainter\                      <- empty, structure TBD
+  substancePainter\
+    assets\<type>\<asset>\               <- mirrors maya\assets; empty on H (see below)
   toonBoom\                              <- empty, structure TBD
   tvPaint\                               <- empty, structure TBD
   unreal\                                <- empty, structure TBD
@@ -913,6 +914,30 @@ The tools are developed side by side:
     sharing unchanged textures between versions (each version recording
     which files it uses) stays on the table, as does everything else
     about storage.
+  - **Substance Painter folders (DECIDED 2026-11-19, user):**
+    - Assets only for now ("no assets only for now"):
+      `<film>\substancePainter\assets\<type>\<asset>\`, mirroring
+      `maya\assets`. h_sync builds one for every asset with a Maya folder.
+    - Painter works **on scratch only**. The folders exist on H only so
+      the Project Tool's Update Scratch copies them down; nothing from
+      Painter is published on its own. "Any textures that get published
+      will happen via maya model asset publish - unless there's a good
+      reason not to do this."
+    - Publish: textures are stored in the asset's `sourceimages\` on H
+      (already built: `sourceimages\<login>\<published name>\`). Build:
+      they're pulled into the shot's scratch `maya\publish\` folder
+      (already built).
+    - A per-artist folder inside each asset's Substance folder: yes. It
+      will be made by the desktop tool when that is developed.
+    - OPEN: where Painter exports to on scratch before the publish (e.g.
+      the Maya asset's scratch `sourceimages\`); the inner folders
+      (mesh, `.spp`); export preset and naming; a shared Painter shelf.
+    - OPEN: the `.spp` is never on H, so it's lost if scratch is, and
+      nobody else can pick up the texturing. Fine for now?
+    - OPEN: the model publish vs the LookDev publish. The spec says the
+      model carries placeholder textures and LookDev carries render
+      textures (above and "Build by department"). Which publish carries
+      Painter's textures?
   - SUGGESTION from the user (on hold): put textures in `sourceimages`, in
     a structure that mirrors the assets folder. Before choosing a folder
     layout, look closely at how Substance Painter exports shaders and

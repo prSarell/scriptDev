@@ -93,5 +93,22 @@ os.makedirs(os.path.join(backpack, "scenes", "rig", "anna"))
 check("work: second run adds none, people's folders left alone",
       not h_sync.plan_sync(H, film, shots, chars)["work"]
       and os.path.isdir(os.path.join(backpack, "scenes", "rig", "anna")))
+# -- Substance Painter asset folders (user, 2026-11-19) ----------------------
+painter = os.path.join(H, film, "substancePainter", "assets")
+check("substance: every asset with a Maya folder got one, nothing for shots",
+      os.path.isdir(os.path.join(painter, "prop", "backpack"))
+      and os.path.isdir(os.path.join(painter, "environment", "scoutsHouse"))
+      and not os.path.exists(os.path.join(H, film, "substancePainter", "sequences")))
+check("substance: none for Graphic or untyped assets",
+      sorted(os.listdir(painter)) == ["character", "environment", "prop"])
+os.makedirs(os.path.join(painter, "prop", "backpack", "anna"))
+plan = h_sync.plan_sync(H, film, shots, chars)
+check("substance: second run adds none, people's folders left alone",
+      not plan["substance"] and os.path.isdir(os.path.join(painter, "prop", "backpack", "anna")))
+plan = h_sync.plan_sync(H, film, shots, chars + [{"code": "Cabbage Moth", "type": "Prop"}])
+plan["build"] = []
+h_sync.apply_sync(H, film, plan, log=logs.append)
+check("substance: not built for an asset whose Maya folder wasn't",
+      not os.path.exists(os.path.join(painter, "prop", "cabbageMoth")))
 check("Maya never loaded", not any(m == "maya" or m.startswith("maya.") for m in sys.modules))
 print("%d/%d passed" % (sum(ok), len(ok)))
