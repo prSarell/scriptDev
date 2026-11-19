@@ -957,6 +957,21 @@ def find_shot_and_task(ctx):
     return shot, pub.task_on(shot, TASK)
 
 
+def version_ctx(info, ctx=None):
+    """The shot a version was rendered in, which isn't always the open
+    scene's: a background render can finish after the artist has opened
+    another shot (2026-11-19: Publish would have sent it to that shot's H
+    folder and ShotGrid Shot). ctx is used when it is the same shot."""
+    ctx = ctx or {}
+    if (ctx.get("film"), ctx.get("shot")) == (info.get("film"), info.get("shot")):
+        return ctx
+    if not info.get("scene"):
+        raise PublishError("%s doesn't say which shot it was rendered in (render.json "
+                           "has no scene), so it can't be published."
+                           % info.get("version", os.path.basename(info.get("folder", ""))))
+    return shot_of(info["scene"], ctx.get("h_root") or pub.get_root(pub.H_DRIVE))
+
+
 def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
     """Publish one local version: all of it, or for a render that stopped
     early (cancelled, failed, interrupted) the frames that finished (user,
@@ -973,6 +988,7 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
         raise PublishError("%s has no render.json, so it can't be published."
                            % os.path.basename(folder))
     info["folder"] = folder         # the drive may have changed since the render
+    ctx = version_ctx(info, ctx)
     info = settle(info)
     if info["status"] == RENDERING:
         raise PublishError("%s is still rendering. Wait for it, or cancel it." % info["version"])
@@ -980,21 +996,6 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None):
     if not frames:
         raise PublishError("%s has no finished frames to publish (%s)."
                            % (info["version"], info["status"]))
-def version_ctx(info, ctx=None):
-    """The shot a version was rendered in, which isn't always the open
-    scene's: a background render can finish after the artist has opened
-    another shot (2026-11-19: Publish would have sent it to that shot's H
-    folder and ShotGrid Shot). ctx is used when it is the same shot."""
-    ctx = ctx or {}
-    if (ctx.get("film"), ctx.get("shot")) == (info.get("film"), info.get("shot")):
-        return ctx
-    if not info.get("scene"):
-        raise PublishError("%s doesn't say which shot it was rendered in (render.json "
-                           "has no scene), so it can't be published."
-                           % info.get("version", os.path.basename(info.get("folder", ""))))
-    return shot_of(info["scene"], ctx.get("h_root") or pub.get_root(pub.H_DRIVE))
-
-
     is_partial = partial(info)
     if not os.path.isfile(movie_path(info)) or info.get("movie_frames", frames) != frames:
         # A stopped render's movie is made now, from the frames it has.
@@ -1011,7 +1012,6 @@ def version_ctx(info, ctx=None):
         result["warnings"].append(
             "The ShotGrid shot %s has no %s task, so this Version isn't on a task "
             "(staff: add a %s task to the shot)." % (ctx["shot"], TASK, TASK))
-    ctx = version_ctx(info, ctx)
 
     copy_to_h(info, result["dest"])
     info["published"] = {"at": _now(), "by": ctx["login"], "dest": result["dest"], "frames": frames}

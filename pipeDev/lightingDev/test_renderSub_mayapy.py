@@ -293,7 +293,7 @@ for _ in range(3):
     # it publishes to its own shot, on H and in ShotGrid.
     other_work = os.path.join(scratch, "RST_TST", "maya", "sequences", "SEQ010", "SEQ010_020",
                               "scenes", "lighting", "tester")
-    os.makedirs(other_work)
+    os.makedirs(other_work, exist_ok=True)
     other_ctx = rs.shot_of(os.path.join(other_work, "light_001.ma"), h_root)
     asked_for = []
     moved = rs.publish(other_ctx, info["folder"], shotgrid=sg,

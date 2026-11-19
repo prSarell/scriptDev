@@ -347,6 +347,12 @@ class RenderSubUI(object):
             # went) shows as interrupted, ready to publish what finished.
             info = v["info"] = api.settle(dict(v["info"], folder=v["path"]), running) \
                 if v["info"].get("status") == api.RENDERING else v["info"]
+            watched = running and os.path.normcase(os.path.normpath(running)) == \
+                os.path.normcase(os.path.normpath(v["path"]))
+            if info.get("how") == api.FLOW and not watched and _flow():
+                # Cloud frames that came back while renderSub wasn't watching
+                # (Maya closed, Cancel, or downloaded from the Job Monitor).
+                info = v["info"] = _flow().catch_up(dict(info, folder=v["path"]))
             total = len(info.get("frames", []))
             if info.get("status") in api.STOPPED and "frames" in info:
                 count = "%d of %d frame(s)" % (len(api.finished_frames(dict(info, folder=v["path"]))), total)
@@ -365,12 +371,6 @@ class RenderSubUI(object):
         index = cmds.textScrollList(self.w["versions"], q=True, selectIndexedItem=True)
         if not index:
             cmds.warning("renderSub: pick a version in the list first.")
-            watched = running and os.path.normcase(os.path.normpath(running)) == \
-                os.path.normcase(os.path.normpath(v["path"]))
-            if info.get("how") == api.FLOW and not watched and _flow():
-                # Cloud frames that came back while renderSub wasn't watching
-                # (Maya closed, Cancel, or downloaded from the Job Monitor).
-                info = v["info"] = _flow().catch_up(dict(info, folder=v["path"]))
             return None
         return self._versions[index[0] - 1]
 
