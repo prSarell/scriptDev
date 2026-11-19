@@ -9,7 +9,7 @@ SHELF_NAME = "mpLighting"
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_camera", "pipeEnv",
                 "renderSub_api", "renderSub_flow", "renderSub_ui",
-                "renderPresets_api", "renderPresets_ui")
+                "renderPresets_api", "renderPresets_ui", "backdropCard")
 
 
 def _command(module, call):
@@ -35,5 +35,15 @@ BUTTONS = [
                    "other shot of the film.",
         "icon": "iconRenderPresets.png",
         "command": _command("renderPresets_ui", "show"),
+    },
+    {
+        "label": "Backdrop",
+        "tooltip": "Backdrop Card: turn the selected free image plane(s) into a renderable "
+                   "card with the same image, size and world position. Unlit, seen by the "
+                   "camera only (no shadows, reflections or bounce light). The image plane "
+                   "is hidden, not deleted; run it again to rebuild the card. An image from "
+                   "another project is copied into this project's sourceimages/backdrops.",
+        "icon": "iconBackdropCard.png",
+        "command": _command("backdropCard", "convert"),
     },
 ]
