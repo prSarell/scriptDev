@@ -30,10 +30,18 @@ MODE_LABELS = (("shot", "Whole shot"),
                ("custom", "Custom range"), ("step", "Every Nth frame"), ("list", "Frame list"))
 TICK_MS = 2000
 
+# Every mpLighting shelf click reloads this module (shelf_config
+# RELOAD_ORDER), so the queue, its timer and the quit job carry over a
+# reload. Starting them afresh forgot every render running or waiting:
+# nothing finished them or started the next (2026-11-20, a night's queue).
+_OLD_QUEUE = globals().get("_QUEUE")
 _QUEUE = api.RenderQueue()     # every render running or waiting, any shot
-_TIMER = None
+if _OLD_QUEUE is not None:
+    _QUEUE.jobs, _QUEUE.waiting = _OLD_QUEUE.jobs, _OLD_QUEUE.waiting
+del _OLD_QUEUE
+_TIMER = globals().get("_TIMER")
 _UI = None
-_QUIT_JOB = None
+_QUIT_JOB = globals().get("_QUIT_JOB")
 
 
 def _flow():
@@ -804,8 +812,14 @@ def _start_timer():
     from PySide6 import QtCore
     if _TIMER is None:
         _TIMER = QtCore.QTimer()
-        _TIMER.timeout.connect(_on_tick)
+        _TIMER.timeout.connect(_tick)
     _TIMER.start(TICK_MS)
+
+
+def _tick():
+    """The timer's slot. It looks _on_tick up each time, so after a reload
+    the kept timer runs the new code."""
+    _on_tick()
 
 
 def _stop_timer():

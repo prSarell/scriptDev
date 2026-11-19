@@ -743,14 +743,26 @@ def settle(info, running_folder=None):
     running = [running_folder] if isinstance(running_folder, str) else (running_folder or [])
     if any(_same(r, info["folder"]) for r in running):
         return info
-    if info.get("status") == QUEUED:
-        return finish_render(info, None, interrupted=True)
     if in_cloud(info):
         return info         # in the cloud: it carries on with Maya closed (renderSub_flow)
     here = (info.get("where") or {}).get("machine") == where()["machine"]
     if here and info.get("pid") not in (None, os.getpid()) and _alive(info["pid"]):
-        return info         # another Maya or Render.exe on this machine has it
+        return info         # another Maya (its queue) or Render.exe on this machine has it
+    if info.get("status") == RENDERING and info.get("how") == BATCH \
+            and log_completed(info) and not missing_frames(info):
+        return finish_render(info, 0)   # Render.exe finished with nothing watching it
     return finish_render(info, None, interrupted=True)
+
+
+def log_completed(info):
+    """True when the render log says Maya's batch render reached the end
+    ("Scene <path> completed.")."""
+    try:
+        with open(os.path.join(info["folder"], LOG_NAME), errors="replace") as f:
+            return any(line.startswith("Scene ") and line.rstrip().endswith(" completed.")
+                       for line in f)
+    except (IOError, OSError):
+        return False
 
 
 def in_cloud(info):

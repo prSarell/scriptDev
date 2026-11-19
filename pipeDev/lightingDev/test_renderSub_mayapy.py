@@ -258,6 +258,26 @@ check("... the half-written frame doesn't count: two of four finished",
       rs.finished_frames(gone) == [1001, 1002] and gone["missing"] == [1003, 1004] and rs.partial(gone))
 check("... RV is shown only the finished frames",
       rs.rv_media(gone) == [os.path.join(gone["folder"], "%s.1001-1002#.exr" % gone["prefix"])])
+# 2026-11-20: Render.exe finished every frame overnight with nothing left
+# watching it (the queue was lost), so render.json still said rendering.
+whole = rs.plan_render(ctx, scene, [1001, 1002], cam)
+for f, src in ((1001, 1001), (1002, 1003)):
+    shutil.copy2(rs.frame_path(info["folder"], info["prefix"], src), rs.frame_path(whole["folder"], whole["prefix"], f))
+ended = subprocess.Popen([sys.executable, "-c", "pass"]); ended.wait()
+rs.write_info(whole["folder"], dict(whole, status=rs.RENDERING, how=rs.BATCH, pid=ended.pid))
+with open(os.path.join(whole["folder"], rs.LOG_NAME), "w") as f:
+    f.write("Scene %s completed.\n" % scene)
+check("a batch render that finished unwatched (log says completed, every frame there) is done",
+      rs.settle(rs.read_info(whole["folder"]))["status"] == rs.DONE
+      and rs.read_info(whole["folder"])["missing"] == [])
+half = rs.plan_render(ctx, scene, [1001, 1002], cam)
+shutil.copy2(rs.frame_path(info["folder"], info["prefix"], 1001), rs.frame_path(half["folder"], half["prefix"], 1001))
+rs.write_info(half["folder"], dict(half, status=rs.RENDERING, how=rs.BATCH, pid=ended.pid))
+with open(os.path.join(half["folder"], rs.LOG_NAME), "w") as f:
+    f.write("Scene %s completed.\n" % scene)
+check("... with a frame missing it's still interrupted",
+      rs.settle(rs.read_info(half["folder"]))["status"] == rs.INTERRUPTED)
+rs.delete_version(whole["folder"]); rs.delete_version(half["folder"])
 check("rendered on another machine: interrupted too (its process can't be checked)",
       rs.settle(dict(cut, status=rs.RENDERING, pid=os.getpid() + 1,
                      where={"kind": "local", "machine": "ELSEWHERE"}), None)["status"] == rs.INTERRUPTED)
@@ -450,6 +470,28 @@ check("queue: the next ones wait, from any shot",
       and rs.read_info(b["folder"])["status"] == rs.QUEUED and q.place(c["folder"]) == 2)
 check("queue: a queued render isn't settled as interrupted while it waits",
       rs.settle(dict(rs.read_info(b["folder"]), folder=b["folder"]), q.folders())["status"] == rs.QUEUED)
+# 2026-11-20: another Maya opening the shot marked a render queued in a
+# Maya still open as interrupted. Its queue is that Maya's, not this one's.
+other_maya = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+check("queue: a render queued in another Maya still open is left alone",
+      rs.settle(dict(rs.read_info(b["folder"]), folder=b["folder"], pid=other_maya.pid))["status"] == rs.QUEUED)
+other_maya.kill(); other_maya.wait()
+check("... once that Maya has closed, it's interrupted",
+      rs.settle(dict(rs.read_info(b["folder"]), folder=b["folder"], pid=other_maya.pid))["status"]
+      == rs.INTERRUPTED)
+rs.write_info(b["folder"], dict(rs.read_info(b["folder"]), status=rs.QUEUED))
+# 2026-11-20: a shelf click reloads renderSub_ui (shelf_config RELOAD_ORDER),
+# which used to start an empty queue, so the running render was never
+# finished and the waiting ones never started.
+import importlib
+import renderSub_ui as ui
+ui._QUEUE.jobs, ui._QUEUE.waiting = list(q.jobs), list(q.waiting)
+importlib.reload(rs); importlib.reload(ui)
+check("queue: a shelf click (reloading renderSub) keeps the renders running and waiting",
+      [j.info["version"] for j in ui._QUEUE.jobs] == [j.info["version"] for j in q.jobs]
+      and [i["version"] for i in ui._QUEUE.waiting] == [b["version"], c["version"]]
+      and isinstance(ui._QUEUE, rs.RenderQueue))
+ui._QUEUE.jobs, ui._QUEUE.waiting = [], []
 check("queue: queued and running renders aren't pruned", not any(
     n in rs.prune(ctx, 0, q.folders()) for n in (a["version"], c["version"]))
       and os.path.isdir(a["folder"]) and os.path.isdir(c["folder"]))
