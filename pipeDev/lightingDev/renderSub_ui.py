@@ -196,14 +196,15 @@ class RenderSubUI(object):
             label="Render", h=40, c=lambda *_: self.render(),
             annotation="Saves the scene as its next version, copies it into the render's "
                        "folder and renders the copy. Another render can be started while "
-                       "this one runs, from any shot: batch renders wait their turn.")
+                       "this one runs: batch renders wait their turn.")
         self.w["status"] = cmds.text(label="", align="left")
         cmds.setParent(root)
 
-        self._frame("Render Queue (every shot)", root)
+        self._frame("Render Queue", root)
         self.w["queue"] = cmds.textScrollList(
             numberOfRows=4, allowMultiSelection=False,
-            annotation="Renders sent from this Maya. Background renders run one at a time "
+            annotation="This shot's renders sent from this Maya (Scout shows every shot's). "
+                       "Background renders run one at a time "
                        "in Scout's render service and carry on if Maya closes (open Scout to "
                        "pause, kill or restart them); cloud renders carry on in the cloud "
                        "once they've uploaded.")
@@ -213,22 +214,29 @@ class RenderSubUI(object):
         cmds.setParent(root)
 
         self._frame("Local Versions", root)
-        self.w["versions"] = cmds.textScrollList(numberOfRows=7, allowMultiSelection=False)
+        self.w["versions"] = cmds.textScrollList(
+            numberOfRows=7, allowMultiSelection=False,
+            annotation="Right-click: copy the picked version's render ID, find a render by "
+                       "its ID, or open Scout.")
+        # Right-click menu (user, 2026-11-20: Copy Render ID, Find Render and
+        # Scout moved off the buttons).
+        menu = cmds.popupMenu(parent=self.w["versions"], button=3)
+        self.w["copy_id"] = cmds.menuItem(
+            label="Copy Render ID", parent=menu, c=lambda *_: self.copy_id(),
+            annotation="Every render has its own ID (in render.json, on the ShotGrid "
+                       "Version and in each frame's EXR header).")
+        cmds.menuItem(label="Find Render...", parent=menu, c=lambda *_: self.find_render(),
+                      annotation="Find any render by its ID: on this computer, or published "
+                                 "on the H drive.")
+        cmds.menuItem(divider=True, parent=menu)
+        cmds.menuItem(label="Open Scout", parent=menu, c=lambda *_: open_scout(),
+                      annotation="Every render in the project, with pause, resume, kill and "
+                                 "restart for background renders, RV and publish.")
+        cmds.popupMenu(menu, e=True, postMenuCommand=lambda *_: self._version_menu())
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=1)
         cmds.button(label="Play in RV", h=26, c=lambda *_: self.play())
         cmds.button(label="Open Folder", h=26, c=lambda *_: self.open_folder())
         cmds.button(label="Delete", h=26, c=lambda *_: self.delete())
-        cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1)
-        cmds.button(label="Copy Render ID", h=26, c=lambda *_: self.copy_id(),
-                    annotation="Every render has its own ID (in render.json, on the ShotGrid "
-                               "Version and in each frame's EXR header). Copy the selected one's.")
-        cmds.button(label="Find Render...", h=26, c=lambda *_: self.find_render(),
-                    annotation="Find any render by its ID: on this computer, or published "
-                               "on the H drive.")
-        cmds.button(label="Scout", h=26, c=lambda *_: open_scout(),
-                    annotation="Scout: every render in the project, with pause, resume, kill "
-                               "and restart for background renders, RV and publish.")
         cmds.setParent("..")
         self._row("Keep newest")
         self.w["keep"] = cmds.intField(
@@ -454,6 +462,14 @@ class RenderSubUI(object):
                 label += "   [published]"
             cmds.textScrollList(self.w["versions"], e=True, append=label)
 
+    def _version_menu(self):
+        """Right-click menu: Copy Render ID names the picked version."""
+        index = cmds.textScrollList(self.w["versions"], q=True, selectIndexedItem=True)
+        v = self._versions[index[0] - 1] if index else None
+        cmds.menuItem(self.w["copy_id"], e=True, enable=bool(v),
+                      label="Copy Render ID (%s)" % v["name"] if v else
+                      "Copy Render ID (pick a version first)")
+
     def selected(self):
         index = cmds.textScrollList(self.w["versions"], q=True, selectIndexedItem=True)
         if not index:
@@ -564,9 +580,11 @@ class RenderSubUI(object):
 
     # ------------------------------------------------------------------ queue
     def show_queue(self):
-        """The Render Queue list: every render running or waiting, any shot."""
+        """The Render Queue list: this shot's renders running or waiting.
+        Other shots' are in Scout (user, 2026-11-20)."""
         selected = self._queue_selected()
-        self._queue_rows = [j.info for j in _QUEUE.jobs] + list(_QUEUE.waiting)
+        self._queue_rows = [i for i in [j.info for j in _QUEUE.jobs] + list(_QUEUE.waiting)
+                            if self._this_shot(i)]
         cmds.textScrollList(self.w["queue"], e=True, removeAll=True)
         for info in self._queue_rows:
             cmds.textScrollList(self.w["queue"], e=True,
@@ -576,12 +594,18 @@ class RenderSubUI(object):
             if selected and api._same(info["folder"], selected):
                 cmds.textScrollList(self.w["queue"], e=True, selectIndexedItem=n)
         cmds.button(self.w["cancel"], e=True, enable=bool(self._queue_rows))
-        batch = next((j for j in _QUEUE.jobs if j.info.get("how") == api.BATCH), None)
+        batch = next((j for j in _QUEUE.jobs if j.info.get("how") == api.BATCH
+                      and self._this_shot(j.info)), None)
         if batch:
             cmds.progressBar(self.w["progress"], e=True, maxValue=len(batch.info["frames"]),
                              progress=batch.frames_done())
         else:
             cmds.progressBar(self.w["progress"], e=True, maxValue=1, progress=0)
+
+    def _this_shot(self, info):
+        """Is this render the open shot's?"""
+        return bool(self.ctx) and info.get("shot") == self.ctx["shot"] \
+            and info.get("film", self.ctx.get("film")) == self.ctx.get("film")
 
     def _queue_selected(self):
         index = cmds.textScrollList(self.w["queue"], q=True, selectIndexedItem=True)
@@ -590,15 +614,17 @@ class RenderSubUI(object):
 
     def tick(self):
         """Every TICK_MS while anything is in the queue: the list, and the
-        status line for the running batch render (else the newest job)."""
+        status line for this shot's running batch render (else its newest)."""
         self.show_queue()
-        job = next((j for j in _QUEUE.jobs if j.info.get("how") == api.BATCH), None) or \
-            (_QUEUE.jobs[-1] if _QUEUE.jobs else None)
+        jobs = [j for j in _QUEUE.jobs if self._this_shot(j.info)]
+        job = next((j for j in jobs if j.info.get("how") == api.BATCH), None) or \
+            (jobs[-1] if jobs else None)
         if job:
             cmds.text(self.w["status"], e=True, label="%s %s: %s" % (
                 job.info["shot"], job.info["version"], describe(job.info, job)))
-        elif _QUEUE.waiting:
-            cmds.text(self.w["status"], e=True, label="%d render(s) waiting" % len(_QUEUE.waiting))
+        elif any(self._this_shot(i) for i in _QUEUE.waiting):
+            cmds.text(self.w["status"], e=True, label="%d render(s) waiting" % sum(
+                self._this_shot(i) for i in _QUEUE.waiting))
 
     def report(self, info):
         """A render finished: the Watch before publishing window (or why it
@@ -706,6 +732,9 @@ class RenderSubUI(object):
                         "on the H drive (an ID that matches more than one render needs more "
                         "of it)." % rid)
         _say(api.describe_render(entry))
+
+    def delete(self):
+        """Delete the picked local version from scratch (not while it renders)."""
         v = self.selected()
         if not v:
             return

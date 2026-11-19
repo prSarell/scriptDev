@@ -506,6 +506,29 @@ check("queue: a shelf click (reloading renderSub) keeps the renders running and 
       and [i["version"] for i in ui._QUEUE.waiting] == [b["version"], c["version"]]
       and isinstance(ui._QUEUE, rs.RenderQueue))
 ui._QUEUE.jobs, ui._QUEUE.waiting = [], []
+
+# 2026-11-20 (user): the Render Queue shows only the open shot (Scout has
+# every shot); Delete in Local Versions works again (cb06d86 had lost it).
+win = ui.RenderSubUI()
+win.ctx = ctx
+check("window: the Render Queue keeps the open shot's renders, not other shots'",
+      win._this_shot(a) and not win._this_shot(dict(a, shot="SEQ999_010"))
+      and not win._this_shot(dict(a, film="OTHER_FILM")))
+check("window: Copy Render ID, Find Render, Delete and the right-click menu are there",
+      all(callable(getattr(win, n, None))
+          for n in ("copy_id", "find_render", "delete", "_version_menu")))
+gone = rs.plan_render(ctx, scene, [1001], cam)
+rs.finish_render(gone, 1)
+win.selected = lambda: {"name": gone["version"], "path": gone["folder"],
+                        "info": rs.read_info(gone["folder"])}
+win.refresh = lambda: None
+_confirm = cmds.confirmDialog
+cmds.confirmDialog = lambda *a, **k: "Delete"
+try:
+    win.delete()
+finally:
+    cmds.confirmDialog = _confirm
+check("window: Delete removes the picked local version", not os.path.isdir(gone["folder"]))
 check("queue: queued and running renders aren't pruned", not any(
     n in rs.prune(ctx, 0, q.folders()) for n in (a["version"], c["version"]))
       and os.path.isdir(a["folder"]) and os.path.isdir(c["folder"]))
