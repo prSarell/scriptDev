@@ -55,6 +55,10 @@ SCRIPTS = [
     ("pipeDev/lightingDev", "renderPresets_api.py"),
     ("pipeDev/lightingDev", "renderPresets_ui.py"),
     ("pipeDev/lightingDev", "backdropCard.py"),
+    ("pipeDev/scoutDev", "scout_api.py"),
+    ("pipeDev/scoutDev", "scout_service.py"),
+    ("pipeDev/scoutDev", "scout_worker.py"),
+    ("pipeDev/scoutDev", "scout_ui.py"),
 ]
 SHELF_DIR = os.path.join(REPO, "shelfDev", "mpPipe")
 # Every shelf the package installs (2026-10-23: mpLayout added; 2026-10-30:

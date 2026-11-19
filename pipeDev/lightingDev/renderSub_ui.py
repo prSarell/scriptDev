@@ -7,8 +7,10 @@ Shelf (mpLighting):
 
 The renders running and queued live at module level (_QUEUE, any shot), so
 closing and reopening the window, or opening another shot, picks them up
-again; the renders never depend on the window. Batch renders stop when Maya
-closes, and the next Maya says so at startup (user, 2026-11-19).
+again; the renders never depend on the window. Batch renders go to Scout's
+render service (pipeDev/scoutDev, user 2026-11-20), so they carry on when
+Maya closes; without Scout installed this Maya runs them and they stop when
+it closes, and the next Maya says so at startup (user, 2026-11-19).
 """
 
 import os
@@ -51,6 +53,28 @@ def _flow():
         return renderSub_flow
     except Exception:
         return None
+
+
+def _scout():
+    """scout_api (Scout's render service runs the batch renders, so they
+    carry on when Maya closes), or None when Scout isn't installed: then
+    this Maya runs them itself (RenderQueue)."""
+    try:
+        import scout_api
+        return scout_api if scout_api.available() else None
+    except Exception:
+        return None
+
+
+def open_scout():
+    scout = _scout()
+    if not scout:
+        return _say("Scout isn't installed with this pipe.")
+    try:
+        scout.launch_window()
+    except Exception as e:
+        return _say("Scout didn't open: %s" % e)
+    cmds.inViewMessage(amg="Opening <hl>Scout</hl>...", pos="topCenter", fade=True)
 
 
 def _flow_available():
@@ -179,8 +203,9 @@ class RenderSubUI(object):
         self._frame("Render Queue (every shot)", root)
         self.w["queue"] = cmds.textScrollList(
             numberOfRows=4, allowMultiSelection=False,
-            annotation="Renders running or waiting in this Maya. Batch renders run one at a "
-                       "time and stop if Maya closes; cloud renders carry on in the cloud "
+            annotation="Renders sent from this Maya. Background renders run one at a time "
+                       "in Scout's render service and carry on if Maya closes (open Scout to "
+                       "pause, kill or restart them); cloud renders carry on in the cloud "
                        "once they've uploaded.")
         self.w["progress"] = cmds.progressBar(maxValue=1, height=14)
         self.w["cancel"] = cmds.button(label="Cancel Selected", h=26, enable=False,
@@ -194,13 +219,16 @@ class RenderSubUI(object):
         cmds.button(label="Open Folder", h=26, c=lambda *_: self.open_folder())
         cmds.button(label="Delete", h=26, c=lambda *_: self.delete())
         cmds.setParent("..")
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1)
         cmds.button(label="Copy Render ID", h=26, c=lambda *_: self.copy_id(),
                     annotation="Every render has its own ID (in render.json, on the ShotGrid "
                                "Version and in each frame's EXR header). Copy the selected one's.")
         cmds.button(label="Find Render...", h=26, c=lambda *_: self.find_render(),
                     annotation="Find any render by its ID: on this computer, or published "
                                "on the H drive.")
+        cmds.button(label="Scout", h=26, c=lambda *_: open_scout(),
+                    annotation="Scout: every render in the project, with pause, resume, kill "
+                               "and restart for background renders, RV and publish.")
         cmds.setParent("..")
         self._row("Keep newest")
         self.w["keep"] = cmds.intField(
@@ -446,7 +474,8 @@ class RenderSubUI(object):
         if not camera:
             return _say("There's no camera to render through.")
         how = self.how()
-        if how == api.SEQUENCE and _QUEUE.batch_running():
+        if how == api.SEQUENCE and (_QUEUE.batch_running()
+                                    or (_scout() and _scout().queued_folders())):
             return _say("A batch render is using this computer. Render in the background "
                         "instead (it waits its turn), or wait for it.")
         try:
@@ -482,6 +511,8 @@ class RenderSubUI(object):
                     self.refresh_versions()
                     raise api.PublishError("Flow Render didn't take the job:\n%s" % e)
                 _remember_cloud()
+            elif _scout():
+                _QUEUE.add(_scout().ScoutJob.submit(info))
             else:
                 _QUEUE.add_batch(info)
         except (api.PublishError, OSError, RuntimeError) as e:
@@ -490,6 +521,7 @@ class RenderSubUI(object):
         print("renderSub: %s %s is render %s" % (info["shot"], info["version"], info["render_id"]))
         cmds.inViewMessage(amg="renderSub: saved as <hl>%s</hl>; %s %s." % (
             os.path.basename(scene), info["version"],
+            "sent to Scout" if info.get("scout") else
             "queued" if info["status"] == api.QUEUED else "started"),
             pos="topCenter", fade=True)
         self.tick()
@@ -857,6 +889,10 @@ def describe(info, job=None):
     """What a render in the queue is doing, in a few words."""
     job = job or _QUEUE.job(info["folder"])
     total = len(info["frames"])
+    if info.get("scout") and info.get("status") == api.QUEUED:
+        return "batch: waiting in Scout"
+    if info.get("status") == api.PAUSED:
+        return "batch: paused in Scout"
     if info.get("status") == api.QUEUED:
         return "batch: waiting (%s in line)" % _ordinal(_QUEUE.place(info["folder"]) or 1)
     if info.get("how") == api.FLOW:

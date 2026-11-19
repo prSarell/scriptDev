@@ -8,7 +8,7 @@ SHELF_NAME = "mpLighting"
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_camera", "pipeEnv",
-                "renderSub_api", "renderSub_flow", "renderSub_ui",
+                "renderSub_api", "renderSub_flow", "scout_api", "renderSub_ui",
                 "renderPresets_api", "renderPresets_ui", "backdropCard")
 
 
@@ -27,6 +27,15 @@ BUTTONS = [
                    "the H drive and the movie to ShotGrid.",
         "icon": "iconRenderSub.png",
         "command": _command("renderSub_ui", "show"),
+    },
+    {
+        "label": "Scout",
+        "tooltip": "Scout: every render in a project in one window, outside Maya. Pause, "
+                   "resume, kill or restart background renders, load frames in RV and "
+                   "publish. Its render service runs renderSub's background renders, so "
+                   "they carry on when Maya closes.",
+        "icon": "iconScout.png",
+        "command": _command("scout_api", "launch_window"),
     },
     {
         "label": "Presets",

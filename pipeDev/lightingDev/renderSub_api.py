@@ -66,9 +66,10 @@ FLOW = "flow"        # Flow Render, Autodesk's cloud (renderSub_flow.py)
 RENDERING, DONE, CANCELLED, FAILED, INTERRUPTED = (
     "rendering", "done", "cancelled", "failed", "interrupted")
 STOPPED = (CANCELLED, FAILED, INTERRUPTED)
-# QUEUED: a batch render waiting for the one before it (RenderQueue).
-QUEUED = "queued"
-ACTIVE = (RENDERING, QUEUED)
+# QUEUED: a batch render waiting for the one before it (RenderQueue, or
+# Scout's render service). PAUSED: Scout has suspended its Render.exe.
+QUEUED, PAUSED = "queued", "paused"
+ACTIVE = (RENDERING, QUEUED, PAUSED)
 MAYA_CLOSED = "Maya was closed"
 
 
@@ -543,7 +544,8 @@ def render_command(info):
             "-proj", info["project"],
             "-rd", folder, "-im", info["prefix"],
             "-of", IMAGE_FORMAT, "-fnc", "name.#.ext", "-pad", str(PADDING),
-            "-seq", seq_string(info["frames"]),
+            # render_frames: what's left when Scout restarts a stopped render.
+            "-seq", seq_string(info.get("render_frames") or info["frames"]),
             "-x", str(w), "-y", str(h),
             # Without an Arnold batch licence Arnold aborts; render with its
             # watermark instead and say so (see watermarked()).
@@ -1127,6 +1129,8 @@ class RenderQueue(object):
             info = job.info
             if info.get("how") == FLOW and in_cloud(info):
                 continue            # the cloud has it; its frames still come back
+            if getattr(job, "carries_on", False):
+                continue            # Scout's render service has it, not this Maya
             if info.get("how") == BATCH and job.poll() is None:
                 job.cancel()
             info["stopped_why"] = MAYA_CLOSED
