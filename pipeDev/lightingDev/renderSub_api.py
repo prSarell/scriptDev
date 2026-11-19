@@ -556,9 +556,11 @@ def render_command(info):
 
 
 # ---------------------------------------------------------------------------
-# The scene: versioned up, and a copy rendered (user, 2026-11-19: "render
-# saves a copy for sure"; "save and version up the file it is rendering from
-# and not just save over")
+# The scene: versioned up when it has changes, and a copy rendered (user,
+# 2026-11-19: "render saves a copy for sure"; "save and version up the file
+# it is rendering from and not just save over"; 2026-11-20: "version up if
+# there's a change to the file and a save is needed" - an unchanged scene
+# renders as it is, so re-renders don't pile up working files)
 # ---------------------------------------------------------------------------
 
 _NUMBERED = re.compile(r"^(.*?)(\d+)$")
@@ -592,6 +594,24 @@ def save_version_up():
     cmds.file(rename=path.replace("\\", "/"))
     cmds.file(save=True, type=kind)
     return os.path.normpath(cmds.file(query=True, sceneName=True))
+
+
+def needs_save(changed=False):
+    """True when the open scene has changes to save (or renderSub just
+    changed it, e.g. switched the renderer to Arnold)."""
+    return bool(changed or cmds.file(query=True, modified=True)
+                or not os.path.isfile(cmds.file(query=True, sceneName=True) or ""))
+
+
+def scene_for_render(changed=False):
+    """The file to render: the open scene versioned up when it needs a save,
+    else the saved file as it is. Returns (path, saved)."""
+    scene = cmds.file(query=True, sceneName=True)
+    if not scene:
+        raise PublishError("Save the scene first: renderSub renders the saved file.")
+    if needs_save(changed):
+        return save_version_up(), True
+    return os.path.normpath(scene), False
 
 
 def copy_scene(info):

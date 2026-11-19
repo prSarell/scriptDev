@@ -449,6 +449,20 @@ check("save_version_up: saved as the next version and carries on in it",
       and os.path.normpath(cmds.file(q=True, sceneName=True)) == saved
       and os.path.isfile(scene))
 
+# --- ...but only when there's a change to save (user, 2026-11-20) ----------
+before = sorted(os.listdir(work))
+same, did_save = rs.scene_for_render()
+check("no changes: renders the saved file as it is, no new version",
+      not did_save and same == saved and sorted(os.listdir(work)) == before)
+cmds.polyCube()
+again, did_save = rs.scene_for_render()
+check("a change: saved as the next version",
+      did_save and os.path.basename(again) == "light_009.ma" and os.path.isfile(again)
+      and not cmds.file(q=True, modified=True))
+check("renderSub changed the scene (Arnold): versioned up too",
+      rs.scene_for_render(changed=True)[1]
+      and os.path.basename(cmds.file(q=True, sceneName=True)) == "light_010.ma")
+
 # --- the render queue: any shot, batch renders one at a time ----------------
 class FakeBatch(object):
     started = []

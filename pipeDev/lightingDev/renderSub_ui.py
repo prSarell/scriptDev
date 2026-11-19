@@ -481,17 +481,19 @@ class RenderSubUI(object):
         try:
             frames = self.frames()
             changed = api.ensure_arnold()
-            next_name = os.path.basename(api.version_up_path(cmds.file(query=True, sceneName=True)))
-            if changed or cmds.file(query=True, modified=True):
+            # A scene with changes is saved as its next version and the
+            # artist carries on in it; an unchanged one renders as it is
+            # (user, 2026-11-20).
+            if api.needs_save(changed) and cmds.file(query=True, sceneName=True):
+                next_name = os.path.basename(
+                    api.version_up_path(cmds.file(query=True, sceneName=True)))
                 if cmds.confirmDialog(
                         title="renderSub",
                         message="Save the scene as %s and render it?" % next_name,
                         button=["Save and Render", "Cancel"], defaultButton="Save and Render",
                         cancelButton="Cancel", dismissString="Cancel") != "Save and Render":
                     return
-            # Every render has its own version of the working file (user,
-            # 2026-11-19); the artist carries on in it.
-            scene = api.save_version_up()
+            scene, saved = api.scene_for_render(changed)
             self.refresh()
             keep = cmds.intField(self.w["keep"], q=True, value=True)
             lost = api.prune(self.ctx, keep - 1, _QUEUE.folders()) if keep > 0 else []
@@ -519,8 +521,9 @@ class RenderSubUI(object):
             return _say(str(e))
         _watch_quit()
         print("renderSub: %s %s is render %s" % (info["shot"], info["version"], info["render_id"]))
-        cmds.inViewMessage(amg="renderSub: saved as <hl>%s</hl>; %s %s." % (
-            os.path.basename(scene), info["version"],
+        cmds.inViewMessage(amg="renderSub: %s <hl>%s</hl>; %s %s." % (
+            "saved as" if saved else "no changes, rendering", os.path.basename(scene),
+            info["version"],
             "sent to Scout" if info.get("scout") else
             "queued" if info["status"] == api.QUEUED else "started"),
             pos="topCenter", fade=True)
