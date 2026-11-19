@@ -23,13 +23,15 @@ can turn up in any shot.
     <H>/<FILM>/maya/studioLibrary/show/scout/keyframe/face/pose/
     <H>/<FILM>/maya/studioLibrary/sequences/EAP_010/EAP_010_010/scout/mocap/body/motion/
 
-And every asset's Substance Painter folder (spec §3f, DECIDED 2026-11-19),
-assets only, mirroring maya/assets. They stay empty on the H drive: they're
+And every asset's and shot's Substance Painter folder (spec §3f, DECIDED
+2026-11-19), mirroring maya/assets and maya/sequences. They stay empty on
+the H drive: they're
 there so the Project Tool's Update Scratch copies them down. Painter work
 lives on scratch only; its textures reach the H drive through the Maya
 model publish.
 
     <H>/<FILM>/substancePainter/assets/environment/hillShed/
+    <H>/<FILM>/substancePainter/sequences/SEQ010/SEQ010_120/
 
 Run (dry run first; --apply to build):
     python h_sync.py --h-root "G:/H" --film NWF_SHF
@@ -72,9 +74,10 @@ WORK_FOLDERS = ("model", "rig", "lookDev")
 # And every shot's scenes\layout\, anim\, fx\ and lighting\ (user, 2026-10-28).
 # Same as publishTool_api.SHOT_WORK_FOLDERS.
 SHOT_WORK_FOLDERS = ("layout", "anim", "fx", "lighting")
-# <film>/substancePainter/assets/<type>/<asset>/ for every asset with a Maya
-# folder (user, 2026-11-19: "assets only for now"). The per-artist folder
-# inside is left to the desktop tool, later.
+# <film>/substancePainter/assets/<type>/<asset>/ and
+# sequences/<SEQ>/<SHOT>/ for every asset and shot with a Maya folder (user,
+# 2026-11-19: "we do need shot folders for substance not just assets"). The
+# per-artist folder inside is left to the desktop tool, later.
 SUBSTANCE = "substancePainter"
 
 
@@ -194,7 +197,7 @@ def plan_sync(h_root, film, shots, assets):
     maya_dir = os.path.join(h_root, film, "maya")
     build, skipped, expected = [], [], set()
     work = []           # working folders of every asset/shot that has/gets a folder
-    substance = []      # Substance Painter folders of every asset that has/gets one
+    substance = []      # Substance Painter folders of every asset/shot that has/gets one
     worked_on = []      # (sequence, shot) of every shot that has/gets a folder
     for shot in sorted(shots, key=lambda s: s["code"]):
         if REFERENCE_SHOT.search(shot["code"]):
@@ -210,6 +213,9 @@ def plan_sync(h_root, film, shots, assets):
             build.append(("shot", shot["code"], folder))
         work += [os.path.join(folder, "scenes", w) for w in SHOT_WORK_FOLDERS
                  if not os.path.isdir(os.path.join(folder, "scenes", w))]
+        painter = os.path.join(h_root, film, SUBSTANCE, "sequences", shot["sequence"], shot["code"])
+        if not os.path.isdir(painter):
+            substance.append(painter)
     for asset in sorted(assets, key=lambda a: a["code"].lower()):
         if not asset["type"]:
             # Can't tell which type folder it belongs in, so nothing is
@@ -335,7 +341,7 @@ def apply_sync(h_root, film, plan, log=print):
         log("  built  %d working folder(s)" % made)
     made = 0
     for folder in plan.get("substance") or []:
-        # Only for an asset whose Maya folder exists (built above or before).
+        # Only for an asset/shot whose Maya folder exists (built above or before).
         maya_folder = os.path.join(h_root, film, "maya", os.path.relpath(
             folder, os.path.join(h_root, film, SUBSTANCE)))
         if not os.path.isdir(maya_folder):
@@ -369,8 +375,8 @@ def report(plan, log=print):
         log("Working folders to add (%d): assets' scenes\\%s; shots' scenes\\%s"
             % (len(plan["work"]), ", ".join(WORK_FOLDERS), ", ".join(SHOT_WORK_FOLDERS)))
     if plan.get("substance"):
-        log("Substance Painter asset folders to add (%d): %s\\assets\\<type>\\<asset>"
-            % (len(plan["substance"]), SUBSTANCE))
+        log("Substance Painter folders to add (%d): %s\\assets\\<type>\\<asset>, "
+            "%s\\sequences\\<SEQ>\\<SHOT>" % (len(plan["substance"]), SUBSTANCE, SUBSTANCE))
 
 
 def films_on(h_root):

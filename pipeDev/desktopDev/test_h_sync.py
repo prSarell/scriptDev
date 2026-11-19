@@ -95,10 +95,12 @@ check("work: second run adds none, people's folders left alone",
       and os.path.isdir(os.path.join(backpack, "scenes", "rig", "anna")))
 # -- Substance Painter asset folders (user, 2026-11-19) ----------------------
 painter = os.path.join(H, film, "substancePainter", "assets")
-check("substance: every asset with a Maya folder got one, nothing for shots",
+painter_seq = os.path.join(H, film, "substancePainter", "sequences")
+check("substance: every asset and shot with a Maya folder got one",
       os.path.isdir(os.path.join(painter, "prop", "backpack"))
       and os.path.isdir(os.path.join(painter, "environment", "scoutsHouse"))
-      and not os.path.exists(os.path.join(H, film, "substancePainter", "sequences")))
+      and sorted(os.listdir(os.path.join(painter_seq, "SEQ010"))) == ["SEQ010_010", "SEQ010_020"])
+check("substance: none for reference or sequence-less shots", os.listdir(painter_seq) == ["SEQ010"])
 check("substance: none for Graphic or untyped assets",
       sorted(os.listdir(painter)) == ["character", "environment", "prop"])
 os.makedirs(os.path.join(painter, "prop", "backpack", "anna"))

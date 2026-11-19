@@ -166,6 +166,7 @@ NWF_SHF\                                 <- film folder (organising only)
     shotgridMovs\
   substancePainter\
     assets\<type>\<asset>\               <- mirrors maya\assets; empty on H (see below)
+    sequences\<SEQ>\<SHOT>\              <- mirrors maya\sequences; empty on H
   toonBoom\                              <- empty, structure TBD
   tvPaint\                               <- empty, structure TBD
   unreal\                                <- empty, structure TBD
@@ -915,9 +916,11 @@ The tools are developed side by side:
     which files it uses) stays on the table, as does everything else
     about storage.
   - **Substance Painter folders (DECIDED 2026-11-19, user):**
-    - Assets only for now ("no assets only for now"):
-      `<film>\substancePainter\assets\<type>\<asset>\`, mirroring
-      `maya\assets`. h_sync builds one for every asset with a Maya folder.
+    - Assets and shots ("we do need shot folders for substance not just
+      assets", replacing "assets only for now" the same day):
+      `<film>\substancePainter\assets\<type>\<asset>\` and
+      `sequences\<SEQ>\<SHOT>\`, mirroring `maya\`. h_sync builds one for
+      every asset and shot with a Maya folder.
     - Painter works **on scratch only**. The folders exist on H only so
       the Project Tool's Update Scratch copies them down; nothing from
       Painter is published on its own. "Any textures that get published
