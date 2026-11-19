@@ -934,10 +934,14 @@ The tools are developed side by side:
       (mesh, `.spp`); export preset and naming; a shared Painter shelf.
     - OPEN: the `.spp` is never on H, so it's lost if scratch is, and
       nobody else can pick up the texturing. Fine for now?
-    - OPEN: the model publish vs the LookDev publish. The spec says the
-      model carries placeholder textures and LookDev carries render
-      textures (above and "Build by department"). Which publish carries
-      Painter's textures?
+    - DECIDED 2026-11-19: Painter textures "initially come from modeling
+      then go to look dev". The model publish carries the first set; the
+      LookDev artist builds from that publish, takes the textures on, and
+      the LookDev publish carries the render set.
+    - OPEN: if LookDev keeps painting, they need the modeler's `.spp`,
+      which is only on the modeler's scratch. Publish the `.spp` with the
+      model (in its version folder on H)? Are the model's Painter textures
+      full resolution or the low-res placeholders above?
   - SUGGESTION from the user (on hold): put textures in `sourceimages`, in
     a structure that mirrors the assets folder. Before choosing a folder
     layout, look closely at how Substance Painter exports shaders and
