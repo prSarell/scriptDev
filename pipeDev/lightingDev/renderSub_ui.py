@@ -186,6 +186,14 @@ class RenderSubUI(object):
         cmds.button(label="Open Folder", h=26, c=lambda *_: self.open_folder())
         cmds.button(label="Delete", h=26, c=lambda *_: self.delete())
         cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
+        cmds.button(label="Copy Render ID", h=26, c=lambda *_: self.copy_id(),
+                    annotation="Every render has its own ID (in render.json, on the ShotGrid "
+                               "Version and in each frame's EXR header). Copy the selected one's.")
+        cmds.button(label="Find Render...", h=26, c=lambda *_: self.find_render(),
+                    annotation="Find any render by its ID: on this computer, or published "
+                               "on the H drive.")
+        cmds.setParent("..")
         self._row("Keep newest")
         self.w["keep"] = cmds.intField(
             value=cmds.optionVar(q=KEEP_VAR) if cmds.optionVar(exists=KEEP_VAR) else DEFAULT_KEEP,
@@ -471,6 +479,7 @@ class RenderSubUI(object):
         except (api.PublishError, OSError, RuntimeError) as e:
             return _say(str(e))
         _watch_quit()
+        print("renderSub: %s %s is render %s" % (info["shot"], info["version"], info["render_id"]))
         cmds.inViewMessage(amg="renderSub: saved as <hl>%s</hl>; %s %s." % (
             os.path.basename(scene), info["version"],
             "queued" if info["status"] == api.QUEUED else "started"),
@@ -624,7 +633,36 @@ class RenderSubUI(object):
         if path and os.path.isdir(path):
             os.startfile(path)
 
-    def delete(self):
+    def copy_id(self):
+        v = self.selected()
+        if not v:
+            return
+        rid = v["info"].get("render_id")
+        if not rid:
+            return _say("%s has no render ID." % v["name"])
+        from PySide6 import QtWidgets
+        QtWidgets.QApplication.clipboard().setText(rid)
+        print("renderSub: %s is render %s (copied)" % (v["name"], rid))
+        cmds.inViewMessage(amg="Copied render ID <hl>%s</hl>" % rid, pos="midCenter", fade=True)
+
+    def find_render(self):
+        """Where is the render with this ID, and how does it stand?"""
+        if cmds.promptDialog(title="Find Render", message="Render ID (or the start of one):",
+                             button=["Find", "Cancel"], defaultButton="Find",
+                             cancelButton="Cancel", dismissString="Cancel") != "Find":
+            return
+        rid = cmds.promptDialog(query=True, text=True).strip()
+        if not rid:
+            return
+        entry = api.find_render(rid)
+        if not entry:
+            h_root = pub.get_root(pub.H_DRIVE)
+            entry = api.find_published(rid, h_root) if h_root else None
+        if not entry:
+            return _say("No render with ID %s on this computer's scratch drive or published "
+                        "on the H drive (an ID that matches more than one render needs more "
+                        "of it)." % rid)
+        _say(api.describe_render(entry))
         v = self.selected()
         if not v:
             return

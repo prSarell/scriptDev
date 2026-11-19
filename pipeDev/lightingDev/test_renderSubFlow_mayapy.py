@@ -55,6 +55,7 @@ class FakeJob(object):
     def generateExportFiles(self):
         self.exported_prefix = cmds.getAttr("defaultRenderGlobals.imageFilePrefix")
         self.exported_size = (cmds.getAttr("defaultResolution.width"), cmds.getAttr("defaultResolution.height"))
+        self.exported_stamp = cmds.getAttr("defaultArnoldDriver.customAttributes[%d]" % rs.ID_INDEX)
         return True
     def isFailed(self): return self.failed
     def isFinished(self): return self.finished
@@ -82,6 +83,18 @@ class FakeQueue(object):
 class FakeSubmitModule(object):
     @staticmethod
     def incrementCurrentExportProcessCounter(): pass
+
+
+def fake_exr(path, render_id):
+    """Just an EXR header carrying a render ID (all exr_attribute reads)."""
+    import struct
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    value, z = render_id.encode(), bytes(1)
+    with open(path, "wb") as out:
+        out.write(bytes([0x76, 0x2f, 0x31, 0x01]) + struct.pack("<I", 2))
+        out.write(b"compression" + z + b"compression" + z + struct.pack("<I", 1) + z)
+        out.write(rs.ID_ATTR.encode() + z + b"string" + z + struct.pack("<I", len(value)) + value)
+        out.write(z)
 
 
 def download(folder, info, frames, aovs=("beauty", "N_noice")):
@@ -120,6 +133,11 @@ check("the uploaded copy has renderSub's frame name and size",
 check("... and the artist's own render settings are put back",
       cmds.getAttr("defaultRenderGlobals.imageFilePrefix") == "myShot"
       and not cmds.file(q=True, modified=True))
+check("the uploaded copy carries the render ID for every frame's EXR header, then it's taken off",
+      fj.exported_stamp == "STRING %s %s" % (rs.ID_ATTR, info["render_id"])
+      and rs.ID_INDEX not in (cmds.getAttr("defaultArnoldDriver.customAttributes", multiIndices=True) or []))
+check("Flow Render's upload queue names the job with the shot, version and render ID",
+      fj.job_name == "%s %s (%s)" % (info["shot"], info["version"], info["render_id"]))
 fj.pending = True
 check("behind another upload in Flow Render's queue: says it's waiting (2026-11-19)",
       job.poll() is None and "waiting for the upload before it" in job.describe())
@@ -199,6 +217,22 @@ caught = flow.catch_up(rs.read_info(zipped.info["folder"]))
 check("a zip saved from the Job Monitor into the version folder: unzipped into place, zip gone",
       caught["status"] == rs.DONE and len(rs.frame_files(caught)) == 2 and not os.path.exists(zip_path)
       and os.path.isdir(os.path.join(zipped.info["folder"], "beauty")))
+
+# frames somewhere else entirely (2026-11-19, SEQ010_170 v005): found by the ID in
+# their EXR headers, moved in with their AOV folders; another render's left alone
+lost_id = sent([1001, 1002])
+lost_id.cancel(); lost_id.finish()
+where_ = os.path.join(shot_dir, "images", "someDownload", "job_1234")
+for aov in ("beauty", "N_noice"):
+    for f in (1001, 1002):
+        fake_exr(rs.frame_path(os.path.join(where_, aov), lost_id.info["prefix"], f), lost_id.info["render_id"])
+other = rs.frame_path(os.path.join(where_, "beauty"), "SEQ010_010_tester_render_v099", 1001)
+fake_exr(other, "R20260101-000000-SEQ010_010-0000")
+caught = flow.catch_up(rs.read_info(lost_id.info["folder"]))
+check("frames that landed anywhere in the shot are found by render ID and finish the version",
+      caught["status"] == rs.DONE and len(rs.frame_files(caught)) == 2
+      and os.path.isfile(rs.frame_path(os.path.join(lost_id.info["folder"], "N_noice"), lost_id.info["prefix"], 1002))
+      and os.path.isfile(other))
 
 half = sent([1001, 1002])
 half.cancel(); half.finish()

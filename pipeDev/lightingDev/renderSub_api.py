@@ -146,7 +146,8 @@ def local_versions(ctx):
     found = []
     for n in reversed(version_numbers(ctx["local"], ctx["login"])):
         path = os.path.join(ctx["local"], version_name(ctx, n))
-        found.append({"name": os.path.basename(path), "path": path, "info": read_info(path)})
+        info = ensure_render_id(path, read_info(path))
+        found.append({"name": os.path.basename(path), "path": path, "info": info})
     return found
 
 
@@ -161,6 +162,220 @@ def read_info(folder):
 def write_info(folder, info):
     with open(os.path.join(folder, INFO_NAME), "w") as f:
         json.dump(info, f, indent=2)
+    if info.get("render_id"):
+        write_ledger(dict(info, folder=folder))
+
+
+# ---------------------------------------------------------------------------
+# Render IDs (user, 2026-11-19: "give every render a unique render id so we
+# can find and track this stuff"; file names stay as they are). The ID is in
+# render.json, the shot's history, the ShotGrid Version's note, and the
+# header of every EXR the render writes (Arnold driver custom attribute), so
+# a frame that turns up anywhere can be told whose it is. A small ledger on
+# the scratch drive (one file per render) says where each one is; H isn't
+# used for it (PIPE_RULES 3: nothing saves to H except Publish), and a
+# published render's render.json on H carries its ID anyway.
+# ---------------------------------------------------------------------------
+
+ID_ATTR = "renderSub/render_id"      # the EXR header attribute
+ID_INDEX = 900                       # driver.customAttributes[] slot renderSub uses
+LEDGER = ("data", "renderSub", "renders")    # under <scratch>\<film>\maya\
+
+
+def new_render_id(shot, when=None):
+    """R20261119-171454-SEQ010_170-9f3a: when it was planned, the shot, and
+    a random tag, so it is never reused (version numbers can be)."""
+    when = when or datetime.now()
+    return "R%s-%s-%s" % (when.strftime("%Y%m%d-%H%M%S"), shot, os.urandom(2).hex())
+
+
+def ensure_render_id(folder, info):
+    """Give a version made before render IDs one (from when it started), and
+    save it. Returns the info."""
+    if info and not info.get("render_id") and info.get("shot"):
+        try:
+            when = datetime.fromisoformat(info.get("started") or "")
+        except ValueError:
+            when = None
+        info["render_id"] = new_render_id(info["shot"], when)
+        try:
+            write_info(folder, info)
+        except (IOError, OSError):
+            pass
+    return info
+
+
+def ledger_dir(info):
+    """<scratch>\\<film>\\maya\\data\\renderSub\\renders\\ for the render's
+    film (scratch root from the scene), else beside the shot."""
+    root = pipeEnv.root_of(info.get("scene") or "") if info.get("scene") else None
+    if root and info.get("film"):
+        return os.path.join(root, info["film"], "maya", *LEDGER)
+    return os.path.join(info.get("project") or info["folder"], *LEDGER)
+
+
+LEDGER_KEYS = ("render_id", "shot", "seq", "film", "login", "version", "folder", "scene",
+               "department", "camera", "size", "how", "where", "status", "started", "finished",
+               "missing")
+
+
+def write_ledger(info):
+    """The render's line in the ledger: what it is, where its folder is and
+    how it stands. Never fails a render."""
+    entry = dict((k, info.get(k)) for k in LEDGER_KEYS)
+    entry["frames"] = len(info.get("frames") or [])
+    entry["range"] = seq_string(info["frames"]) if info.get("frames") else ""
+    entry["published"] = info.get("published")
+    entry["flow"] = info.get("flow")
+    entry["updated"] = _now()
+    try:
+        folder = ledger_dir(info)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, info["render_id"] + ".json"), "w") as f:
+            json.dump(entry, f, indent=2)
+    except (IOError, OSError, KeyError):
+        pass
+
+
+def ledger_folders(roots=None):
+    """Every film's ledger folder on the given scratch roots (default: the
+    open scene's scratch root and the pipe's $PIPE_SCRATCH)."""
+    if not roots:
+        roots = [pipeEnv.root_of(cmds.file(query=True, sceneName=True) or ""), pipeEnv.current()]
+    found = []
+    for root in [r for r in roots if r]:
+        for path in glob.glob(os.path.join(glob.escape(root), "*", "maya", *LEDGER)):
+            if os.path.isdir(path) and not any(_same(path, f) for f in found):
+                found.append(path)
+    return found
+
+
+def read_ledger(roots=None):
+    """[entry], newest first, from every ledger on the roots."""
+    entries = []
+    for folder in ledger_folders(roots):
+        for path in glob.glob(os.path.join(glob.escape(folder), "R*.json")):
+            try:
+                with open(path) as f:
+                    entries.append(json.load(f))
+            except (IOError, OSError, ValueError):
+                pass
+    return sorted(entries, key=lambda e: e.get("render_id") or "", reverse=True)
+
+
+def find_render(render_id, roots=None):
+    """The ledger entry for an ID (a unique start of one is enough), with
+    "frames_found" counted from its folder, or None."""
+    render_id = render_id.strip()
+    hits = [e for e in read_ledger(roots) if (e.get("render_id") or "").startswith(render_id)]
+    if len(hits) != 1:
+        return None
+    entry = hits[0]
+    info = read_info(entry.get("folder") or "")
+    entry["frames_found"] = len(frame_files(dict(info, folder=entry["folder"]))) if info else 0
+    return entry
+
+
+def describe_render(entry):
+    """Lines for the artist about a ledger entry or published render.json."""
+    total = entry.get("frames")
+    total = len(total) if isinstance(total, list) else total
+    lines = ["Render %s" % entry.get("render_id"),
+             "%s %s, %s, from %s" % (entry.get("shot"), entry.get("version"),
+                                     entry.get("login"), department_label(entry.get("department"))),
+             "Status: %s (%s, %s)" % (entry.get("status"), HOW_LABELS.get(entry.get("how"),
+                                                                          entry.get("how")),
+                                      (entry.get("where") or {}).get("machine", "?")),
+             "Started %s%s" % (entry.get("started"), ", finished %s" % entry["finished"]
+                               if entry.get("finished") else "")]
+    if "frames_found" in entry:
+        lines.append("%s of %s frame(s) in its folder" % (entry["frames_found"], total))
+    lines.append(("On the H drive: " if entry.get("on_h") else "Folder: ") + (entry.get("folder") or "?"))
+    pub_ = entry.get("published")
+    if pub_:
+        lines.append("Published %s to %s%s" % (
+            pub_.get("at"), pub_.get("dest"),
+            " (ShotGrid Version %s)" % pub_["sg_version_id"] if pub_.get("sg_version_id") else ""))
+    elif not entry.get("on_h"):
+        lines.append("Not published yet.")
+    return "\n".join(lines)
+
+
+def find_published(render_id, h_root):
+    """A published render on H with this ID (a unique start is enough):
+    {"render_id", "shot", "version", "folder", "published", ...} from its
+    render.json, or None. Only reads H."""
+    render_id = render_id.strip()
+    pattern = os.path.join(glob.escape(h_root), "*", "maya", "sequences", "*", "*", "images",
+                           DEPARTMENT, "*", "*", INFO_NAME)
+    hits = []
+    for path in glob.glob(pattern):
+        info = read_info(os.path.dirname(path))
+        if (info.get("render_id") or "").startswith(render_id):
+            hits.append(dict(info, folder=os.path.dirname(path), on_h=True))
+    return hits[0] if len(hits) == 1 else None
+
+
+def exr_attribute(path, name=ID_ATTR):
+    """A string attribute from an EXR's (first) header, or None. Reads only
+    the header, so it's quick on big frames."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"\x76\x2f\x31\x01":
+                return None
+            f.read(4)                                   # version and flags
+            for _ in range(200):
+                attr = _cstring(f)
+                if not attr:
+                    return None
+                kind = _cstring(f)
+                size = int.from_bytes(f.read(4), "little")
+                value = f.read(size)
+                if attr == name:
+                    return value.split(b"\0")[0].decode("utf-8", "replace") if kind == "string" else None
+    except (IOError, OSError):
+        return None
+    return None
+
+
+def _cstring(f, limit=256):
+    out = b""
+    while len(out) < limit:
+        c = f.read(1)
+        if not c or c == b"\0":
+            break
+        out += c
+    return out.decode("ascii", "replace")
+
+
+_VERSION_DIR = re.compile(r"_%s_v\d{3}$" % CODE)
+
+
+def frames_with_id(render_id, folders, depth=4):
+    """EXRs under the folders whose header carries this render ID. Version
+    folders are skipped (their frames are theirs), which keeps a search of
+    a shot's images\\ quick."""
+    found = []
+    for top in folders:
+        if not os.path.isdir(top):
+            continue
+        for root, dirs, names in os.walk(top):
+            dirs[:] = [d for d in dirs if not _VERSION_DIR.search(d)]
+            if os.path.relpath(root, top).count(os.sep) >= depth:
+                dirs[:] = []
+            for n in names:
+                if n.lower().endswith(".exr"):
+                    path = os.path.join(root, n)
+                    if exr_attribute(path) == render_id:
+                        found.append(path)
+    return sorted(found)
+
+
+def id_mel(render_id):
+    """MEL that stamps the render ID into every Arnold driver's EXR header
+    (Render.exe -preRender: the batch render's scene copy)."""
+    return ('for ($d in `ls -type aiAOVDriver`) setAttr -type "string" '
+            '($d + ".customAttributes[%d]") "STRING %s %s";' % (ID_INDEX, ID_ATTR, render_id))
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +548,8 @@ def render_command(info):
             # Without an Arnold batch licence Arnold aborts; render with its
             # watermark instead and say so (see watermarked()).
             "-ai:alf", "false", "-ai:lve", "1",
-            "-log", os.path.join(folder, LOG_NAME),
+            "-log", os.path.join(folder, LOG_NAME)] + (
+            ["-preRender", id_mel(info["render_id"])] if info.get("render_id") else []) + [
             scene_to_render(info)]
 
 
@@ -404,6 +620,7 @@ def plan_render(ctx, scene_path, frames, camera, percent=100, how=BATCH, departm
     folder = next_version(ctx)
     os.makedirs(folder)
     info = {
+        "render_id": new_render_id(ctx["shot"]),
         "shot": ctx["shot"], "seq": ctx["seq"], "film": ctx["film"], "login": ctx["login"],
         "department": department or department_of(scene_path),
         "version": os.path.basename(folder), "folder": folder,
@@ -607,7 +824,8 @@ def record_timing(info):
     t = info.get("timing") if "timing" in info else timing(info)
     if not t or t["done"] < 1:
         return
-    entry = {"version": info["version"], "login": info["login"], "at": _now(),
+    entry = {"render_id": info.get("render_id"),
+             "version": info["version"], "login": info["login"], "at": _now(),
              "where": info.get("where") or where(), "how": info.get("how", BATCH),
              "size": info["size"],
              "frames": t["done"], "per_frame": round(t["per_frame"], 2),
@@ -701,6 +919,12 @@ class _SequenceSettings(object):
         chosen = set(cmds.listRelatives(info["camera"], shapes=True, fullPath=True, type="camera") or [])
         for shape in cmds.ls(type="camera", long=True) or []:
             self.values[shape + ".renderable"] = int(shape in chosen)
+        # The render ID in every frame's EXR header (see Render IDs).
+        self.stamps = {}
+        if info.get("render_id"):
+            for driver in cmds.ls(type="aiAOVDriver") or []:
+                self.stamps["%s.customAttributes[%d]" % (driver, ID_INDEX)] = "STRING %s %s" % (
+                    ID_ATTR, info["render_id"])
         self.saved = {}
 
     def __enter__(self):
@@ -708,11 +932,22 @@ class _SequenceSettings(object):
         for attr, value in self.values.items():
             self.saved[attr] = cmds.getAttr(attr)
             _set(attr, value)
+        self.saved_stamps = {}
+        for plug, value in self.stamps.items():
+            node = plug.split(".")[0]
+            had = ID_INDEX in (cmds.getAttr(node + ".customAttributes", multiIndices=True) or [])
+            self.saved_stamps[plug] = cmds.getAttr(plug) if had else None
+            cmds.setAttr(plug, value, type="string")
         return self
 
     def __exit__(self, *exc):
         for attr, value in self.saved.items():
             _set(attr, value)
+        for plug, value in self.saved_stamps.items():
+            if value is None:
+                cmds.removeMultiInstance(plug, b=True)
+            else:
+                cmds.setAttr(plug, value, type="string")
         cmds.file(modified=self.modified)
         return False
 
@@ -1288,7 +1523,8 @@ def publish(ctx, folder, notes="", lookup=find_shot_and_task, shotgrid=None, run
 
     note = ("Render %s from %s: %d frame(s) (%s), camera %s, %dx%d (%d%%)\n"
             "Frames on the H drive:\n%s\n%s") % (
-        info["version"], department_label(info.get("department")), len(frames), seq_string(frames),
+        "%s (render ID %s)" % (info["version"], info["render_id"]) if info.get("render_id")
+        else info["version"], department_label(info.get("department")), len(frames), seq_string(frames),
         info["camera"].split("|")[-1], info["size"][0], info["size"][1], info["percent"],
         result["dest"], scene_note(info, result["dest"]))
     if is_partial:

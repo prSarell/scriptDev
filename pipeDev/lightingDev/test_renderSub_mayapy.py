@@ -112,6 +112,13 @@ check("progress counts the finished frames", job.frames_done() == 3)
 check("only the asked-for frames rendered (no fallback to the scene's range)",
       len(glob.glob(os.path.join(info["folder"], "*.exr"))) == 3)
 print("INFO Arnold licence: %s" % ("none, watermarked" if info["watermarked"] else "licensed"))
+check("every render gets its own render ID (date, time, shot, random tag)",
+      info["render_id"].startswith("R") and "-SEQ010_010-" in info["render_id"])
+check("batch render: the render ID is in every frame's EXR header (Render.exe -preRender)",
+      all(rs.exr_attribute(rs.frame_path(info["folder"], info["prefix"], f)) == info["render_id"]
+          for f in (1001, 1003, 1005)))
+check("file names are left as they were (no ID in them)",
+      not any(info["render_id"] in n for n in os.listdir(info["folder"])))
 
 # --- render times ------------------------------------------------------------
 check("the render records where it ran (this computer)",
@@ -196,6 +203,11 @@ check("sequence render: the scene's render settings are put back",
       cmds.getAttr("defaultRenderGlobals.imageFilePrefix") == "myShot"
       and cmds.getAttr("defaultResolution.width") == 160 and not cmds.getAttr(cam_shape + ".renderable"))
 check("sequence render: the scene isn't left 'unsaved' by the render", not cmds.file(q=True, modified=True))
+check("sequence render: the render ID is in the EXR header too",
+      rs.exr_attribute(rs.frame_path(seq_info["folder"], seq_info["prefix"], 1002)) == seq_info["render_id"])
+check("... and the scene's own driver attributes are left as they were (no ID slot left behind)",
+      rs.ID_INDEX not in (cmds.getAttr("defaultArnoldDriver.customAttributes", multiIndices=True) or []))
+check("two renders never share an ID", seq_info["render_id"] != info["render_id"])
 check("sequence render: recorded as one, for the estimates",
       rs.read_history(shot_dir)[-1]["how"] == rs.SEQUENCE)
 stopped = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam, percent=25, how=rs.SEQUENCE)
@@ -289,7 +301,8 @@ if has_rvio:
           args[:3] == ("Shot", 7, dest) and kwargs["task_id"] == 3
           and kwargs["movie_path"].startswith(dest))
     check("the artist's notes come first in the ShotGrid note",
-          kwargs["notes"].startswith("first light\n\n---\nRender tester_render_v001 from Animation: 3 frame(s)"))
+          kwargs["notes"].startswith("first light\n\n---\nRender tester_render_v001 (render ID %s) from "
+                                     "Animation: 3 frame(s)" % info["render_id"]))
     check("marked published locally, with the ShotGrid id",
           rs.read_info(info["folder"])["published"]["sg_version_id"] == 99)
     again = rs.publish(ctx, info["folder"], lookup=lookup, shotgrid=sg)
@@ -318,6 +331,36 @@ if has_rvio:
 stash = tempfile.mkdtemp(prefix="rs_frames_")      # real EXRs for the AOV checks (prune deletes v001)
 for f in (1001, 1003, 1005):
     shutil.copy2(rs.frame_path(info["folder"], info["prefix"], f), rs.frame_path(stash, "f", f))
+
+# --- render IDs: the ledger, Find Render and frames found by ID -------------------
+ledger = rs.ledger_dir(info)
+check("the ledger is on the scratch drive under the film, one file per render",
+      ledger == os.path.join(scratch, "RST_TST", "maya", "data", "renderSub", "renders")
+      and os.path.isfile(os.path.join(ledger, info["render_id"] + ".json")))
+entry = rs.find_render(info["render_id"][:-2], roots=[scratch])
+check("Find Render: by ID (or a unique start of one), with its status and frames",
+      entry and entry["version"] == info["version"] and entry["status"] == rs.DONE
+      and entry["frames_found"] == 3 and entry["published"])
+check("Find Render: an ID that matches several renders needs more of it",
+      rs.find_render("R", roots=[scratch]) is None)
+check("the ledger keeps up with render.json (published, ShotGrid id)",
+      entry["published"]["sg_version_id"] == 99)
+found_h = rs.find_published(info["render_id"], h_root)
+check("Find Render: a published render is found on H too (read only)",
+      found_h and found_h["on_h"] and found_h["version"] == info["version"]
+      and "Published" in rs.describe_render(entry) and info["render_id"] in rs.describe_render(found_h))
+check("the shot's history names the render ID", any(e.get("render_id") == seq_info["render_id"]
+                                                     for e in rs.read_history(shot_dir)))
+stray = tempfile.mkdtemp(prefix="rs_stray_")
+shutil.copy2(rs.frame_path(info["folder"], info["prefix"], 1003), os.path.join(stray, "x.1003.exr"))
+shutil.copy2(rs.frame_path(seq_info["folder"], seq_info["prefix"], 1002), os.path.join(stray, "y.1002.exr"))
+check("frames are found anywhere by the ID in their header, never another render's",
+      rs.frames_with_id(info["render_id"], [stray]) == [os.path.join(stray, "x.1003.exr")])
+check("a file that isn't an EXR has no ID", rs.exr_attribute(rs.history_path(shot_dir)) is None)
+shutil.rmtree(stray)
+check("Render.exe's stamp is MEL for every Arnold driver", "ls -type aiAOVDriver" in rs.id_mel("R1")
+      and "customAttributes[%d]" % rs.ID_INDEX in rs.id_mel("R1"))
+
 
 # --- prune ------------------------------------------------------------------------
 for _ in range(3):
@@ -450,6 +493,15 @@ check("next Maya: the stopped renders are warned about once, the cloud one remem
       warned == lines and rs.read_jobs() == {"stopped": [], "cloud": [cloud_up.info["folder"]]}
       and rs.warn_stopped_renders() == [])
 shutil.rmtree(prefs)
+
+old = rs.plan_render(ctx, scene, [1001], cam)
+legacy = dict(rs.read_info(old["folder"])); legacy.pop("render_id")
+with open(os.path.join(old["folder"], rs.INFO_NAME), "w") as f:
+    import json; json.dump(legacy, f)
+listed = [v for v in rs.local_versions(ctx) if v["path"] == old["folder"]][0]
+check("a version made before render IDs gets one when it's listed (kept after)",
+      listed["info"].get("render_id", "").startswith("R")
+      and rs.read_info(old["folder"])["render_id"] == listed["info"]["render_id"])
 
 shutil.rmtree(stash); shutil.rmtree(scratch, onerror=_writable); shutil.rmtree(h_root, onerror=_writable)
 print("\n%d/%d passed" % (sum(ok), len(ok)))

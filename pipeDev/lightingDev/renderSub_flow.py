@@ -245,7 +245,44 @@ def collect(info):
             os.rmdir(default)               # only when nothing else is in it
         except OSError:
             pass
+    if info.get("render_id") and len(api.frame_files(info)) < len(info["frames"]):
+        _by_id(info)
     return api.frame_files(info)
+
+
+def search_folders(info):
+    """Where a cloud render's frames may land when Flow Render ignores the
+    download folder: the shot's project (images\\, its own download folder)
+    and the artist's Downloads."""
+    project = info.get("project") or ""
+    found = [os.path.join(project, "images"), os.path.join(project, FLOW_DEFAULT_FOLDER),
+             os.path.join(os.path.expanduser("~"), "Downloads")]
+    return [f for f in found if f and os.path.isdir(f)]
+
+
+def _by_id(info):
+    """Frames carrying this render's ID in their EXR header, found anywhere
+    in search_folders, move into the version (an AOV's subfolder kept). A
+    frame of any other render has another ID, so it's never taken."""
+    folder = os.path.normcase(os.path.normpath(info["folder"]))
+    for path in api.frames_with_id(info["render_id"], search_folders(info)):
+        if os.path.normcase(os.path.normpath(path)).startswith(folder + os.sep):
+            continue                        # already in the version
+        parent_dir = os.path.dirname(path)
+        parent = os.path.basename(parent_dir)
+        # An AOV layout (<somewhere>\beauty\, <somewhere>\N_noice\...) keeps
+        # its subfolder; a flat download goes in the version itself.
+        in_aovs = parent == api.BEAUTY or os.path.isdir(
+            os.path.join(os.path.dirname(parent_dir), api.BEAUTY))
+        sub = parent if in_aovs else ""
+        target = os.path.join(info["folder"], sub, os.path.basename(path))
+        if os.path.exists(target):
+            continue
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.move(path, target)
+        except OSError:
+            pass
 
 
 def _settled(info):
@@ -318,6 +355,8 @@ class FlowJob(object):
         sfr.incrementCurrentExportProcessCounter()
         manager = EQM.instance()
         job = manager.createNewJob()
+        if info.get("render_id"):       # shown in Flow Render's upload queue
+            job.job_name = "%s %s (%s)" % (info["shot"], info["version"], info["render_id"])
         job.renderLayer = cmds.editRenderLayerGlobals(query=True, currentRenderLayer=True)
         job.exportMode = (EXPORT_MAYA_USD if cmds.pluginInfo("mayaUsdPlugin", query=True, registered=True)
                           else EXPORT_ARNOLD_USD)
