@@ -107,7 +107,9 @@ class ScoutWindow(QtWidgets.QMainWindow):
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        # Several can be picked, to delete them together; the other buttons
+        # act on one.
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -130,6 +132,19 @@ class ScoutWindow(QtWidgets.QMainWindow):
             b.clicked.connect(call)
             buttons.addWidget(b)
             self.buttons[label] = b
+        buttons.addSpacing(16)
+        for label, call, tip in (
+                ("Delete...", self.delete_selected,
+                 "Delete the picked renders from scratch and take them off the list "
+                 "(Delete key). Anything published stays on the H drive and ShotGrid."),
+                ("Clear Deleted", self.clear_deleted,
+                 "Take renders already deleted from scratch off the list.")):
+            b = QtWidgets.QPushButton(label)
+            b.setToolTip(tip)
+            b.clicked.connect(call)
+            buttons.addWidget(b)
+            self.buttons[label] = b
+        QtGui.QShortcut(QtGui.QKeySequence.Delete, self.table, self.delete_selected)
         layout.addLayout(buttons)
 
         self.details = QtWidgets.QPlainTextEdit()
@@ -242,8 +257,7 @@ class ScoutWindow(QtWidgets.QMainWindow):
         return True
 
     def show_rows(self):
-        keep = self.selected_row()
-        keep_id = keep.get("render_id") if keep else None
+        keep_ids = set(r.get("render_id") for r in self.selected_rows())
         self.shown = [r for r in self.rows if self._visible(r)]
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.shown))
@@ -263,17 +277,26 @@ class ScoutWindow(QtWidgets.QMainWindow):
                     if info.get("watermarked"):
                         item.setToolTip("Rendered with Arnold's watermark (no batch licence)")
                 self.table.setItem(n, c, item)
+        selection = QtCore.QItemSelection()
         for n, row in enumerate(self.shown):
-            if keep_id and row.get("render_id") == keep_id:
-                self.table.selectRow(n)
+            if row.get("render_id") in keep_ids:
+                selection.select(self.table.model().index(n, 0),
+                                 self.table.model().index(n, len(COLUMNS) - 1))
+        self.table.selectionModel().select(selection, QtCore.QItemSelectionModel.ClearAndSelect)
         self.table.blockSignals(False)
         self.table.resizeColumnsToContents()
         self.show_selected()
 
-    def selected_row(self):
-        rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
+    def selected_rows(self):
+        model = self.table.selectionModel()
         shown = getattr(self, "shown", [])
-        return shown[rows[0].row()] if rows and rows[0].row() < len(shown) else None
+        picked = sorted(i.row() for i in model.selectedRows()) if model else []
+        return [shown[n] for n in picked if n < len(shown)]
+
+    def selected_row(self):
+        """The picked render, when exactly one is picked."""
+        rows = self.selected_rows()
+        return rows[0] if len(rows) == 1 else None
 
     def show_selected(self):
         row = self.selected_row()
@@ -282,6 +305,9 @@ class ScoutWindow(QtWidgets.QMainWindow):
             self.buttons[action].setEnabled(action in allowed)
         for label in ("Open Folder", "Copy Render ID", "Show Log"):
             self.buttons[label].setEnabled(bool(row))
+        self.buttons["Delete..."].setEnabled(bool(self.selected_rows()))
+        self.buttons["Clear Deleted"].setEnabled(
+            any(not r["exists"] for r in getattr(self, "rows", [])))
         if not row:
             self.details.setPlainText("")
             return
@@ -390,6 +416,57 @@ class ScoutWindow(QtWidgets.QMainWindow):
         if row and row.get("render_id"):
             QtWidgets.QApplication.clipboard().setText(row["render_id"])
             self.status.showMessage("Copied %s" % row["render_id"], 3000)
+
+    def delete_selected(self, ask=True):
+        """Delete the picked renders from scratch and the list (user,
+        2026-11-20: "remove or clear unwanted renders"). Running ones are
+        left, with why."""
+        rows = self.selected_rows()
+        if not rows:
+            return
+        project = self.project.currentData()
+        can = [r for r in rows if not api.why_not_delete(r)]
+        refused = [api.why_not_delete(r) for r in rows if api.why_not_delete(r)]
+        if not can:
+            return QtWidgets.QMessageBox.warning(self, TITLE, "\n".join(refused))
+        names = ["%s %s" % (r.get("shot"), r.get("version")) for r in can]
+        lost = [r for r in can if r["exists"] and r["frames_done"] and not r.get("published")
+                and not (r.get("info") or {}).get("published")]
+        text = "Delete %d render(s) from scratch?\n\n%s" % (
+            len(can), "\n".join(names[:12]) + ("\n...and %d more" % (len(names) - 12)
+                                               if len(names) > 12 else ""))
+        if lost:
+            text += "\n\n%d of them were never published: their frames will be gone." % len(lost)
+        text += "\n\nAnything published stays on the H drive and ShotGrid."
+        if refused:
+            text += "\n\nLeft alone:\n" + "\n".join(refused)
+        if ask and QtWidgets.QMessageBox.question(self, TITLE, text) != QtWidgets.QMessageBox.Yes:
+            return
+        problems = []
+        for r in can:
+            try:
+                api.delete_render(project, r)
+            except api.ScoutError as e:
+                problems.append(str(e))
+        self.table.clearSelection()
+        self.refresh()
+        self.status.showMessage("Deleted %d render(s)." % (len(can) - len(problems)), 5000)
+        if problems:
+            QtWidgets.QMessageBox.warning(self, TITLE, "\n\n".join(problems))
+
+    def clear_deleted(self, ask=True):
+        """Take renders already gone from scratch off the list."""
+        gone = [r for r in self.rows if not r["exists"]]
+        if not gone:
+            return
+        if ask and QtWidgets.QMessageBox.question(
+                self, TITLE, "Take %d render(s) already deleted from scratch off the list?"
+                % len(gone)) != QtWidgets.QMessageBox.Yes:
+            return
+        project = self.project.currentData()
+        for r in gone:
+            api.forget(project, r)
+        self.refresh()
 
     def show_log(self):
         row = self.selected_row()

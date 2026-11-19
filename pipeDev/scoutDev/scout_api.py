@@ -43,6 +43,7 @@ import json
 import glob
 import time
 import uuid
+import shutil
 import subprocess
 
 import renderSub_api as rs
@@ -462,6 +463,49 @@ def project_renders(film_folder):
         row["actions"] = actions(info) if info else []
         rows.append(row)
     return sorted(rows, key=lambda r: r.get("render_id") or "", reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Removing unwanted renders (user, 2026-11-20)
+# ---------------------------------------------------------------------------
+
+def why_not_delete(row):
+    """None when the render can go, else why not (it's still rendering,
+    waiting, paused, or its frames are still coming back from the cloud)."""
+    info = row.get("info") or {}
+    if not row.get("exists"):
+        return None
+    if info.get("status") in rs.ACTIVE and not stale(row):
+        if rs.in_cloud(info):
+            return "%s is rendering in the cloud: its frames are still coming back." % row["version"]
+        return "%s is still %s: Kill it first." % (row["version"], info["status"])
+    return None
+
+
+def delete_render(film_folder, row):
+    """Delete a render's folder from scratch (its frames, movie and scene
+    copy) and take it off the list. Anything published stays on H and
+    ShotGrid. Raises ScoutError when it can't go."""
+    why = why_not_delete(row)
+    if why:
+        raise ScoutError(why)
+    folder = row.get("folder")
+    if row.get("exists") and folder and os.path.isdir(folder):
+        try:
+            shutil.rmtree(folder)
+        except OSError as e:
+            raise ScoutError("Couldn't delete %s (a file in it is open, e.g. in RV?):\n%s"
+                             % (row["version"], e))
+    forget(film_folder, row)
+
+
+def forget(film_folder, row):
+    """Take a render off the list (its ledger entry), leaving any files."""
+    if row.get("render_id"):
+        try:
+            os.remove(os.path.join(ledger_of(film_folder), row["render_id"] + ".json"))
+        except OSError:
+            pass
 
 
 def _here(info):

@@ -23,6 +23,12 @@ import scout_api as api
 import scout_service
 ok = []
 def check(label, cond): ok.append(bool(cond)); print("PASS" if cond else "FAIL", label)
+def refuses(call, *args):
+    try:
+        call(*args)
+    except api.ScoutError:
+        return True
+    return False
 def wait_for(cond, timeout=20.0, step=None):
     end = time.time() + timeout
     while time.time() < end:
@@ -220,9 +226,36 @@ check("a render nothing runs any more is stale; settling it records it done",
 check("a render queued in a live service isn't stale",
       not api.stale(dict(row, info=dict(row["info"], status=rs.QUEUED, pid=os.getpid()))))
 
+# --- removing unwanted renders (user, 2026-11-20) ------------------------------
+def row_of(info):
+    return ([r for r in api.project_renders(film) if rs._same(r["folder"], info["folder"])]
+            or [None])[0]
+busy = rs.plan_render(ctx, scene, [1001], cam)
+rs.write_info(busy["folder"], dict(rs.read_info(busy["folder"]), status=rs.QUEUED, pid=os.getpid()))
+check("delete: a render still queued or rendering is refused, with why",
+      "Kill it first" in (api.why_not_delete(row_of(busy)) or "")
+      and refuses(api.delete_render, film, row_of(busy)) and os.path.isdir(busy["folder"]))
+check("delete: a render rendering in the cloud is refused",
+      "cloud" in (api.why_not_delete(dict(row_of(busy), info=dict(
+          row_of(busy)["info"], how=rs.FLOW, status=rs.RENDERING,
+          flow={"state": "in the cloud"}))) or "x"))
+rs.finish_render(rs.read_info(busy["folder"]), 1)
+api.delete_render(film, row_of(lost))
+check("delete: a finished render's folder and list entry are gone",
+      not os.path.isdir(lost["folder"]) and row_of(lost) is None)
+b_row = [r for r in api.project_renders(film) if r["version"] == b["version"]][0]
+api.delete_render(film, b_row)
+check("delete: a render already gone from scratch just comes off the list",
+      not [r for r in api.project_renders(film) if r["version"] == b["version"]])
+
 # The window runs in plain mayapy, as Scout does (Maya's standalone makes a
 # Qt application that can't show widgets).
 api.write_settings({"projects": [film], "project": film, "filter": "all"})
+# Two unwanted renders to delete together, and one already gone from scratch.
+x, y, z = [rs.plan_render(ctx, scene, [1001], cam) for _ in range(3)]
+for r in (x, y, z):
+    rs.finish_render(rs.read_info(r["folder"]), 1)
+shutil.rmtree(z["folder"])
 window_py = os.path.join(os.environ["SCOUT_HOME"], "window_check.py")
 with open(window_py, "w") as f:
     f.write("""import sys, json
@@ -236,18 +269,45 @@ win.table.selectRow(0)
 out.update(found=win.table.rowCount(), details=win.details.toPlainText(),
            enabled=[a for a, _, _ in scout_ui.BUTTONS if win.buttons[a].isEnabled()])
 win.timer.stop()
+# Pick two renders and delete them together; then clear the deleted ones.
+win.search.setText("")
+from PySide6 import QtCore
+pick = QtCore.QItemSelection()
+for n, r in enumerate(win.shown):
+    if r["render_id"] in sys.argv[2:4]:
+        pick.select(win.table.model().index(n, 0), win.table.model().index(n, 1))
+win.table.selectionModel().select(pick, QtCore.QItemSelectionModel.ClearAndSelect
+                                  | QtCore.QItemSelectionModel.Rows)
+win.refresh()
+out["kept"] = sorted(r["render_id"] for r in win.selected_rows())
+out["delete_on"] = win.buttons["Delete..."].isEnabled()
+win.delete_selected(ask=False)
+out["clear_on"] = win.buttons["Clear Deleted"].isEnabled()
+win.clear_deleted(ask=False)
+out["left"] = [r["render_id"] for r in win.rows]
+out["clear_after"] = win.buttons["Clear Deleted"].isEnabled()
 print("RESULT " + json.dumps(out))
 """)
 env = dict(os.environ, MAYA_SKIP_USERSETUP_PY="1")
-shown = subprocess.run([sys.executable, window_py, a["render_id"]], capture_output=True, text=True,
-                       env=env, timeout=300).stdout
+before_window = len(api.project_renders(film))
+shown = subprocess.run([sys.executable, window_py, a["render_id"], x["render_id"], y["render_id"]],
+                       capture_output=True, text=True, env=env, timeout=300).stdout
 import json
 shown = json.loads(([l[7:] for l in shown.splitlines() if l.startswith("RESULT ")] or ["{}"])[0])
 check("window: opens on the project and lists its renders",
-      rs._same(shown.get("project") or "", film) and shown.get("rows") == len(api.project_renders(film)))
+      rs._same(shown.get("project") or "", film) and shown.get("rows") == before_window)
 check("window: find by render ID; a done render's buttons are RV and Publish",
       shown.get("found") == 1 and shown.get("enabled") == [api.RV, api.PUBLISH]
       and a["render_id"] in shown.get("details", ""))
+check("window: two picked renders stay picked through a refresh",
+      shown.get("kept") == sorted([x["render_id"], y["render_id"]]) and shown.get("delete_on"))
+check("window: Delete removes both picked renders, folders and all",
+      not os.path.isdir(x["folder"]) and not os.path.isdir(y["folder"])
+      and not set([x["render_id"], y["render_id"]]) & set(shown.get("left", ["?"]))
+      and a["render_id"] in shown.get("left", []))
+check("window: Clear Deleted takes renders already gone off the list",
+      shown.get("clear_on") and z["render_id"] not in shown.get("left", [z["render_id"]])
+      and shown.get("clear_after") is False)
 
 # --- publish runs in its own mayapy, and refuses what it should ----------------
 empty = tempfile.mkdtemp(prefix="scout_nothing_")
