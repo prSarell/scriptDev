@@ -32,6 +32,7 @@ import json
 import glob
 import time
 import shutil
+import struct
 import platform
 import subprocess
 from datetime import datetime
@@ -702,11 +703,112 @@ def frame_files(info):
     return [p for p in paths if os.path.isfile(p)]
 
 
+# OpenEXR: scanlines per chunk for each compression (NONE, RLE, ZIPS, ZIP,
+# PIZ, PXR24, B44, B44A, DWAA, DWAB).
+_EXR_LINES = {0: 1, 1: 1, 2: 1, 3: 16, 4: 32, 5: 16, 6: 32, 7: 32, 8: 32, 9: 256}
+_EXR_SEEN = {}
+
+
+def exr_complete(path):
+    """True when every block of an EXR is on disk, False when it was cut
+    short (a crash or shutdown mid-write: user, 2026-11-20 "often the last
+    frame of a crashed render is corrupt"), None when it can't tell (deep,
+    multi-part or mip-mapped files). Reads the header and the chunk offset
+    table: OpenEXR writes the table as zeros and fills it in when the file
+    closes, so a file never closed has offsets of 0, and one cut short has
+    offsets (or its last chunk) past its end."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return False
+    key = (os.path.normcase(path), stat.st_size, stat.st_mtime)
+    if key not in _EXR_SEEN:
+        if len(_EXR_SEEN) > 2000:
+            _EXR_SEEN.clear()
+        _EXR_SEEN[key] = _exr_complete(path, stat.st_size)
+    return _EXR_SEEN[key]
+
+
+def _exr_complete(path, size):
+    try:
+        with open(path, "rb") as f:
+            buf = f.read(1 << 16)
+            if len(buf) < 8:
+                return False                    # made, nothing written yet
+            if buf[:4] != b"\x76\x2f\x31\x01":
+                return None                     # not an EXR: can't tell
+            flags = struct.unpack_from("<I", buf, 4)[0]
+            if flags & 0x1800:                  # deep, multi-part
+                return None
+            pos, attrs = 8, {}
+            while True:
+                while buf.find(b"\0", pos) < 0 or len(buf) < pos + 1024:
+                    more = f.read(len(buf))     # a long header: read on
+                    if not more:
+                        break
+                    buf += more
+                end = buf.find(b"\0", pos)
+                if end < 0:
+                    return False
+                name, pos = buf[pos:end], end + 1
+                if not name:
+                    break                       # end of the header
+                end = buf.find(b"\0", pos)
+                if end < 0 or end + 5 > len(buf):
+                    return False
+                pos = end + 1
+                n = struct.unpack_from("<i", buf, pos)[0]
+                pos += 4
+                if n < 0 or pos + n > len(buf):
+                    if pos + n > size:
+                        return False
+                    buf += f.read(pos + n - len(buf) + 1024)
+                attrs[name] = buf[pos:pos + n]
+                pos += n
+            xmin, ymin, xmax, ymax = struct.unpack("<4i", attrs[b"dataWindow"])
+            w, h = xmax - xmin + 1, ymax - ymin + 1
+            if flags & 0x200:                   # tiled
+                tx, ty, mode = struct.unpack("<IIB", attrs[b"tiles"])
+                if mode & 0xF:
+                    return None                 # mip- or rip-mapped
+                count, chunk_head = -(-w // tx) * -(-h // ty), 20
+            else:
+                lines = _EXR_LINES.get(attrs[b"compression"][0])
+                if not lines:
+                    return None
+                count, chunk_head = -(-h // lines), 8
+            table_end = pos + 8 * count
+            if table_end > size:
+                return False
+            f.seek(pos)
+            offsets = struct.unpack("<%dQ" % count, f.read(8 * count))
+            if any(o < table_end or o + chunk_head > size for o in offsets):
+                return False
+            last = max(offsets)
+            f.seek(last + chunk_head - 4)
+            data = struct.unpack("<i", f.read(4))[0]
+            return 0 <= data and last + chunk_head + data <= size
+    except (OSError, KeyError, IndexError, struct.error):
+        return False
+
+
+def _frame_files(info, frame):
+    """A frame's EXR in every AOV folder (just the beauty when there are
+    no AOV folders)."""
+    folder = info["folder"]
+    name = os.path.basename(frame_path(folder, info["prefix"], frame))
+    found = [os.path.join(folder, d, name) for d in sorted(os.listdir(folder))
+             if os.path.isfile(os.path.join(folder, d, name))]
+    return found or [beauty_path(info, frame)]
+
+
 def finished_frames(info):
     """The frames that rendered whole, in render order. A render that
     stopped early (STOPPED) may have left its last frame half-written:
     Arnold makes the EXR when the frame starts (a power cut left a 4 KB
-    file, 2026-11-13). That last file counts if it's at least half the
+    file, 2026-11-13), and a crash mid-write leaves one cut short. That
+    last frame counts only if its EXR (in every AOV folder) is complete
+    (exr_complete). Where that can't be told: if it's at least half the
     usual size of the others; with nothing to compare it to, only an
     in-Maya cancel (which stops between frames) keeps it."""
     present = [(f, beauty_path(info, f)) for f in info["frames"]]
@@ -714,7 +816,12 @@ def finished_frames(info):
     if not present or info.get("status") not in STOPPED:
         return [f for f, _ in present]
     rest, (last, path) = present[:-1], present[-1]
-    if rest:
+    checks = [exr_complete(p) for p in _frame_files(info, last)]
+    if False in checks:
+        whole = False
+    elif checks and None not in checks:
+        whole = True
+    elif rest:
         sizes = sorted(os.path.getsize(p) for _, p in rest)
         whole = os.path.getsize(path) >= sizes[len(sizes) // 2] * 0.5
     else:

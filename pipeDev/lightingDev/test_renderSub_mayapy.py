@@ -434,6 +434,35 @@ check("stopped AOV render: half-written last frame left out of every AOV folder"
       os.path.join("N_noice", "%s.1002.exr" % cut_aov["prefix"]) in names
       and not any(n.endswith(".1003.exr") for n in names))
 
+# A crash mid-write leaves the last frame cut short but big (user, 2026-11-20:
+# "often the last frame of a crashed render is corrupt"): its EXR's own
+# chunk table says so.
+real = rs.frame_path(stash, "f", 1001)
+cut = os.path.join(stash, "cut.exr")
+with open(real, "rb") as src, open(cut, "wb") as dst:
+    dst.write(src.read(int(os.path.getsize(real) * 0.9)))
+check("EXR check: a whole frame is complete, one cut short (90%) isn't",
+      rs.exr_complete(real) is True and rs.exr_complete(cut) is False)
+with open(cut, "wb") as dst:
+    dst.write(open(real, "rb").read()[:4096])
+check("EXR check: a frame Arnold only started (its header) isn't complete",
+      rs.exr_complete(cut) is False)
+crash = rs.plan_render(ctx, scene, [1001, 1002, 1003], cam)
+for sub in ("beauty", "N_noice"):
+    os.makedirs(os.path.join(crash["folder"], sub))
+    for f in (1001, 1002, 1003):
+        shutil.copy2(real, rs.frame_path(os.path.join(crash["folder"], sub), crash["prefix"], f))
+crash["status"] = rs.INTERRUPTED
+check("crashed render: a whole last frame counts", rs.finished_frames(crash) == [1001, 1002, 1003])
+last_aov = rs.frame_path(os.path.join(crash["folder"], "N_noice"), crash["prefix"], 1003)
+with open(real, "rb") as src, open(last_aov, "wb") as dst:
+    dst.write(src.read(int(os.path.getsize(real) * 0.9)))
+check("crashed render: a last frame cut short in any AOV folder doesn't count, "
+      "isn't published and is rendered again by a restart",
+      rs.finished_frames(crash) == [1001, 1002]
+      and not any(n.endswith(".1003.exr") for n in rs._published_files(crash))
+      and [f for f in crash["frames"] if f not in rs.finished_frames(crash)] == [1003])
+
 # --- the working file is versioned up on every render (user, 2026-11-19) ---
 check("version up: the next number", os.path.basename(rs.version_up_path(
     os.path.join(work, "NFW_SEQ010_170_001.ma"))) == "NFW_SEQ010_170_002.ma")
