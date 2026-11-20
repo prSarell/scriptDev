@@ -64,9 +64,9 @@ folder = out.folder_of(plan["dest"])
 stem = "rock_scout_model_v001"
 check("exports folder beside the .ma: rock_scout_model_v001_exports",
       os.path.isdir(folder) and os.path.basename(folder) == stem + "_exports")
-check("ABC, USDZ, FBX, OBJ written", all(os.path.isfile(os.path.join(folder, stem + e))
-                                       for e in (".abc", ".usdz", ".fbx", ".obj", ".mtl")))
-check("recorded for the ShotGrid note", len(plan["outputs_written"]) == 4)
+check("ABC, USD + USDZ, FBX, OBJ written", all(os.path.isfile(os.path.join(folder, stem + e))
+                                             for e in (".abc", ".usd", ".usdz", ".fbx", ".obj", ".mtl")))
+check("recorded for the ShotGrid note", len(plan["outputs_written"]) == 5)
 check("USDZ carries the texture", any(n.endswith("moss.png") for n in
                                       zipfile.ZipFile(os.path.join(folder, stem + ".usdz")).namelist()))
 check("FBX embeds the texture", b"moss.png" in open(os.path.join(folder, stem + ".fbx"), "rb").read()

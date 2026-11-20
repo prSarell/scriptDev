@@ -8,7 +8,7 @@ SHELF_NAME = "mpModel"
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_textures", "publishTool_env", "pipeEnv",
-                "buildTool_api", "modelTool_convert")
+                "buildTool_api", "modelTool_convert", "modelTool_usd", "modelTool_usd_ui")
 
 
 def _command(module, call):
@@ -27,5 +27,22 @@ BUTTONS = [
                    "Asset scenes only.",
         "icon": "iconModelConvert.png",
         "command": _command("modelTool_convert", "run"),
+    },
+    {
+        "label": "USD Hierarchy",
+        "tooltip": "USD Hierarchy: builds geo > render / proxy for publishing the model as "
+                   "USD (Publish puts it in <asset>_model_GRP, the USD's top prim). Moves "
+                   "what's picked into render (the meshes that render) or proxy (a light "
+                   "stand-in), where it is in the world.",
+        "icon": "iconModelUsdHierarchy.png",
+        "command": _command("modelTool_usd_ui", "show_hierarchy"),
+    },
+    {
+        "label": "USD Names",
+        "tooltip": "USD Names: name what's picked (<asset>_<part>_GEO, groups <part>_GRP) "
+                   "and fix names that would clash or break the convention before a USD "
+                   "publish: duplicates, namespaces, missing _GEO / _GRP, shape names.",
+        "icon": "iconModelUsdNames.png",
+        "command": _command("modelTool_usd_ui", "show_names"),
     },
 ]

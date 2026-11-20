@@ -9,8 +9,14 @@ to another program (e.g. Unreal) on its own:
 
     <asset>\\scenes\\<login>\\<published name>_exports\\
         <published name>.abc        geometry, one frame, world space, UVs
-        <published name>.usdz       USD with UsdPreviewSurface materials,
-                                    textures packed inside
+        <published name>.usd        USD with UsdPreviewSurface materials,
+                                    textures in textures\\ beside it
+                                    (relative paths); the top prim is the
+                                    default prim, kind component, and
+                                    geo|render / geo|proxy get their USD
+                                    purpose (user, 2026-11-20; see
+                                    modelTool_usd)
+        <published name>.usdz       the same, textures packed inside
         <published name>.fbx        textures embedded
         <published name>.obj/.mtl   + textures\\ (copies, .mtl points there).
                                     OBJ only carries Maya's basic shaders
@@ -40,7 +46,7 @@ FORMATS = [("ABC", "abc"), ("USD", "usd"), ("FBX", "fbx"), ("OBJ", "obj")]
 FORMAT_KEYS = [key for _, key in FORMATS]
 LABELS = dict((key, label) for label, key in FORMATS)
 PLUGINS = {"abc": "AbcExport", "usd": "mayaUsdPlugin", "fbx": "fbxmaya", "obj": "objExport"}
-EXTENSIONS = {"abc": ".abc", "usd": ".usdz", "fbx": ".fbx", "obj": ".obj"}
+EXTENSIONS = {"abc": ".abc", "usd": ".usd", "fbx": ".fbx", "obj": ".obj"}   # USD: + .usdz
 FOLDER_SUFFIX = "_exports"
 REMEMBER = ("data", "publish", "outputs.json")
 
@@ -158,9 +164,65 @@ def _abc(roots, path, textures):
 
 
 def _usd(roots, path, textures):
+    """A plain .usd with its textures copied to textures\\ beside it, and
+    the same packed as one .usdz (user, 2026-11-20: ".usd + .usdz")."""
     cmds.select(roots, replace=True)
     cmds.mayaUSDExport(file=path.replace("\\", "/"), selection=True,
                        shadingMode="useRegistry", convertMaterialsTo=["UsdPreviewSurface"])
+    finish_usd(path, textures)
+    from pxr import Sdf, UsdUtils
+    usdz = os.path.splitext(path)[0] + ".usdz"
+    if not UsdUtils.CreateNewUsdzPackage(Sdf.AssetPath(path.replace("\\", "/")),
+                                         usdz.replace("\\", "/")) or not os.path.isfile(usdz):
+        raise PublishError("the .usdz package wasn't made")
+    return [usdz]
+
+
+# The model's USD layout (user, 2026-11-20; modelTool_usd builds it):
+#   <asset>_model_GRP   default prim, kind component
+#     geo
+#       render          purpose render: the meshes that render
+#       proxy           purpose proxy: an optional light stand-in
+#     mtl               materials (the exporter writes them)
+USD_PURPOSES = (("geo", "render", "render"), ("geo", "proxy", "proxy"))
+
+
+def finish_usd(path, textures):
+    """What mayaUSDExport leaves out: the top prim as the default prim and a
+    component (what USD tools expect of an asset), render/proxy purposes,
+    and texture paths relative to the file (textures\\<name>, copied from
+    textures, file name -> real path) so the folder works anywhere."""
+    from pxr import Usd, UsdGeom, Kind, Sdf
+    stage = Usd.Stage.Open(path.replace("\\", "/"))
+    tops = list(stage.GetPseudoRoot().GetChildren())
+    if tops:
+        stage.SetDefaultPrim(tops[0])
+        if len(tops) == 1:
+            Usd.ModelAPI(tops[0]).SetKind(Kind.Tokens.component)
+    for top in tops:
+        for group, child, purpose in USD_PURPOSES:
+            prim = top.GetChild(group).GetChild(child) if top.GetChild(group) else None
+            if prim and prim.IsA(UsdGeom.Imageable):
+                UsdGeom.Imageable(prim).CreatePurposeAttr().Set(purpose)
+    folder = os.path.join(os.path.dirname(path), "textures")
+    for prim in stage.Traverse():
+        for attr in prim.GetAttributes():
+            if attr.GetTypeName() != Sdf.ValueTypeNames.Asset:
+                continue
+            value = attr.Get()
+            if not value or not value.path:
+                continue
+            name = os.path.basename(value.path.replace("\\", "/"))
+            src = textures.get(name) or value.resolvedPath or value.path
+            if not src or not os.path.isfile(src):
+                continue
+            if not os.path.isdir(folder):
+                os.makedirs(folder)
+            target = os.path.join(folder, name)
+            if not os.path.isfile(target):
+                shutil.copy2(src, target)
+            attr.Set(Sdf.AssetPath("./textures/" + name))
+    stage.GetRootLayer().Save()
 
 
 def _fbx(roots, path, textures):
@@ -194,7 +256,9 @@ def _obj(roots, path, textures):
             if src and os.path.isfile(src):
                 if not os.path.isdir(folder):
                     os.makedirs(folder)
-                shutil.copy2(src, os.path.join(folder, os.path.basename(src)))
+                target = os.path.join(folder, os.path.basename(src))
+                if not os.path.isfile(target):      # the USD may have copied it (read-only)
+                    shutil.copy2(src, target)
                 line = "%stextures/%s\n" % (match.group(1), os.path.basename(src))
             lines.append(line)
     with open(mtl, "w") as f:
@@ -225,14 +289,14 @@ def write(plan, roots):
             for key in formats:
                 path = os.path.join(folder, stem + EXTENSIONS[key])
                 try:
-                    WRITERS[key](roots, path, real.files)
+                    extra = WRITERS[key](roots, path, real.files) or []
                 except Exception as e:
                     raise PublishError("The %s export failed, so nothing was published: %s"
                                        % (LABELS[key], e))
                 if not os.path.isfile(path):
                     raise PublishError("The %s export wrote nothing, so nothing was "
                                        "published." % LABELS[key])
-                plan["outputs_written"].append(path)
+                plan["outputs_written"] += [path] + list(extra)
         for dirpath, _, names in os.walk(folder):
             for name in names:
                 api._lock(os.path.join(dirpath, name))

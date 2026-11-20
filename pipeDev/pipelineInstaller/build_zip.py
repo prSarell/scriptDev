@@ -49,6 +49,8 @@ SCRIPTS = [
     ("pipeDev/projectDev", "projectTool_ui.py"),
     ("pipeDev/layoutDev", "layoutTool_env.py"),
     ("pipeDev/modelDev", "modelTool_convert.py"),
+    ("pipeDev/modelDev", "modelTool_usd.py"),
+    ("pipeDev/modelDev", "modelTool_usd_ui.py"),
     ("pipeDev/lightingDev", "renderSub_api.py"),
     ("pipeDev/lightingDev", "renderSub_ui.py"),
     ("pipeDev/lightingDev", "renderSub_flow.py"),
