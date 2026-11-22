@@ -189,6 +189,29 @@ check("remove text with *: every number taken out, the group left",
       and cmds.objExists("field_GRP"))
 check("remove text: refuses * on its own", refuses(usd.remove_text, [mix], "**"))
 
+# --- renumber, top to bottom in the Outliner (user 2026-11-23) ---------------
+new_scene()
+field = cmds.group(empty=True, name="field_GRP")
+for name in ("grassB_017102_GEO", "grassB_0251_GEO", "grassB_03_GEO", "rock_0610_GEO",
+             "grassB_051402_GEO"):
+    cmds.parent(cmds.polyPlane(name=name)[0], field)
+cmds.reorder("|field_GRP|grassB_03_GEO", front=True)        # the Outliner's order, not names
+cmds.polyCube(name="grassB_001_GEO")                         # not picked: its number is skipped
+done = usd.renumber([field])
+kids = cmds.listRelatives(field, children=True)
+check("renumber: from 000, top to bottom in the Outliner, a taken number skipped",
+      kids == ["grassB_000_GEO", "grassB_002_GEO", "grassB_003_GEO", "rock_000_GEO",
+               "grassB_004_GEO"])
+check("renumber: the group keeps its name, shapes follow, the other mesh untouched",
+      cmds.objExists("|field_GRP") and cmds.objExists("|grassB_001_GEO")
+      and cmds.listRelatives("|field_GRP|grassB_004_GEO", shapes=True) == ["grassB_004_GEOShape"])
+cmds.reorder("|field_GRP|grassB_004_GEO", front=True)
+done = usd.renumber(["|field_GRP|grassB_004_GEO", "|field_GRP|grassB_000_GEO"], below=False)
+check("renumber two picked: they swap 000 and 004 by Outliner order, no clash",
+      cmds.listRelatives(field, children=True)[:2] == ["grassB_000_GEO", "grassB_004_GEO"]
+      and len(done) == 2)
+check("renumber: refuses with nothing to number", refuses(usd.renumber, []))
+
 # --- imported models: namespaces (user 2026-11-23) ---------------------------
 new_scene()
 cmds.namespace(add="imp"); cmds.namespace(add="imp:deep")

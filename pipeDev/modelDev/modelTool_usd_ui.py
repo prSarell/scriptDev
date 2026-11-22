@@ -192,10 +192,19 @@ class NamesWindow(object):
                                "part to remove.")
         cmds.setParent("..")
         self.w["text_preview"] = cmds.text(label="", align="left")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                       columnAttach=[(1, "both", 0), (2, "both", 4)])
+        cmds.button(label="Renumber 000, 001, ...", height=28,
+                    command=lambda *_: self.renumber(),
+                    annotation="Numbers the picked meshes (or the meshes under the picked "
+                               "groups) again from 000, top to bottom in the Outliner: "
+                               "grassB_017102_GEO -> grassB_000_GEO. Each name numbered on "
+                               "its own.")
         cmds.button(label="Strip Namespaces", height=28, command=lambda *_: self.strip(),
                     annotation="Off what's picked and everything under it. With nothing "
                                "picked: every namespace in the scene (materials too), not "
                                "references. A name already taken gets the next number.")
+        cmds.setParent("..")
         cmds.separator(height=8, style="in")
         cmds.text(label="Names to fix before a USD publish (click one to select it):",
                   align="left")
@@ -282,6 +291,25 @@ class NamesWindow(object):
         else:
             cmds.inViewMessage(amg="Renamed <hl>%d</hl>." % len(done),
                                pos="topCenter", fade=True)
+        self.preview_text()
+        self.check()
+
+    def renumber(self):
+        picked = _selection()
+        if not picked:
+            return _say("Pick the meshes, or the group they're in, to number.")
+        try:
+            cmds.undoInfo(openChunk=True, chunkName="USD Names")
+            cmds.waitCursor(state=True)
+            done = usd.renumber(picked, self._below())
+        except PublishError as e:
+            return _say(str(e))
+        finally:
+            cmds.waitCursor(state=False)
+            cmds.undoInfo(closeChunk=True)
+        cmds.inViewMessage(amg="Renumbered <hl>%d</hl>%s." % (
+            len(done), ": %s ... %s" % (done[0][1], done[-1][1]) if done else ""),
+            pos="topCenter", fade=True)
         self.preview_text()
         self.check()
 

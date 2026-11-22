@@ -31,7 +31,8 @@ Imported models (user 2026-11-23): strip_namespaces() takes namespaces off
 what's picked and everything under it (nothing picked: every namespace the
 scene owns, materials too); remove_text() takes text an import added
 (_TypeGrassColor03_, or _TypeGrassColor*_ for any number) out of the
-picked names and the names under them.
+picked names and the names under them; renumber() numbers the picked
+meshes again from 000, top to bottom in the Outliner.
 
 Asset scenes only (the asset's name comes from the scene's folder). No UI
 here (modelTool_usd_ui), so it can be tested under mayapy.
@@ -550,3 +551,78 @@ def remove_text(nodes, text, below=True, dry_run=False):
             _rename(uuid, "%s:%s" % (space, new) if space else new)
         done.append((old, "%s:%s" % (space, new) if space else new))
     return done, skipped
+
+
+def _outliner_order(nodes):
+    """{path: position} for nodes, top to bottom as the Outliner shows
+    them (each parent before its children, children in their order)."""
+    roots = []
+    for node in nodes:
+        root = "|" + node.lstrip("|").split("|")[0]
+        if root not in roots:
+            roots.append(root)
+    world = cmds.ls(assemblies=True, long=True) or []
+    roots.sort(key=lambda r: world.index(r) if r in world else len(world))
+    order = {}
+    stack = list(reversed(roots))
+    while stack:
+        node = stack.pop()
+        order[node] = len(order)
+        kids = cmds.listRelatives(node, children=True, fullPath=True, type="transform") or []
+        stack.extend(reversed(kids))
+    return order
+
+
+def _stem(name):
+    """grassB_017102_GEO -> ('grassB', '_GEO'): the name without its
+    numbers at the end, and its suffix."""
+    suffix = re.search(r"_(GEO|GRP)$", name, flags=re.IGNORECASE)
+    suffix = suffix.group(0) if suffix else ""
+    stem = name[:len(name) - len(suffix)] if suffix else name
+    return re.sub(r"[_0-9]+$", "", stem), suffix
+
+
+def renumber(nodes, below=True):
+    """Number the picked meshes again, 000, 001, ... top to bottom in the
+    Outliner (user 2026-11-23): grassB_017102_GEO, grassB_0251_GEO, ... ->
+    grassB_000_GEO, grassB_001_GEO, ... Each name (grassB, rock, ...) is
+    numbered on its own; more digits when there are over 1000. With below,
+    the meshes under a picked group (the group keeps its name); without,
+    exactly what's picked. A number something else in the scene has is
+    skipped. Shapes follow, a namespace stays. Returns [(old, new)]."""
+    targets = _targets(nodes, below)
+    if below:
+        targets = [n for n in targets if _kind(n) == "geo"]
+    else:
+        targets = [n for n in targets if _kind(n)]
+    if not targets:
+        raise PublishError("Pick the meshes (or their group) to number.")
+    order = _outliner_order(targets)
+    targets.sort(key=lambda n: order.get(n, len(order)))
+    sets = {}
+    for node in targets:
+        stem, suffix = _stem(_bare(_short(node)))
+        if stem and not stem[0].isdigit():
+            sets.setdefault((stem, suffix), []).append(node)
+    taken = _taken(ignore=targets)
+    plan = []
+    for (stem, suffix), group in sets.items():
+        width = max(3, len(str(len(group) - 1)))
+        n = 0
+        for node in group:
+            while "%s_%0*d%s" % (stem, width, n, suffix) in taken:
+                n += 1
+            plan.append((_uuid(node), "%s_%0*d%s" % (stem, width, n, suffix)))
+            n += 1
+    # Two passes: a new name may still be another picked one's old name.
+    olds = {}
+    for i, (uuid, new) in enumerate(plan):
+        olds[uuid] = _short(_path(uuid))
+        cmds.rename(_path(uuid), "%s__renumber%d" % (olds[uuid], i))
+    done = []
+    for uuid, new in plan:
+        space = _namespace(olds[uuid])
+        _rename(uuid, "%s:%s" % (space, new) if space else new)
+        if olds[uuid] != _short(_path(uuid)):
+            done.append((olds[uuid], _short(_path(uuid))))
+    return done
