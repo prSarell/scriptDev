@@ -27,6 +27,11 @@ the same name, a namespace, a missing _GEO / _GRP or asset prefix, shape
 nodes not named after their transform. A Maya default name (pCube1,
 group3) is listed but left for the artist to name.
 
+Imported models (user 2026-11-23): strip_namespaces() takes namespaces off
+what's picked and everything under it (nothing picked: every namespace the
+scene owns, materials too); remove_text() takes text an import added
+(_TypeGrassColor03_) out of the picked names and the names under them.
+
 Asset scenes only (the asset's name comes from the scene's folder). No UI
 here (modelTool_usd_ui), so it can be tested under mayapy.
 """
@@ -372,3 +377,163 @@ def fix(asset=None, found=None):
         if old != new:
             done.append((old, new))
     return done
+
+
+# ---------------------------------------------------------------------------
+# Namespaces and unwanted text from imported models (user 2026-11-23)
+# ---------------------------------------------------------------------------
+
+def _namespace(name):
+    """'a:b:node' -> 'a:b' ('' in the root namespace)."""
+    return name.rpartition(":")[0]
+
+
+def _renamable(node):
+    return not cmds.referenceQuery(node, isNodeReferenced=True) and \
+        not (cmds.lockNode(node, query=True, lock=True) or [False])[0]
+
+
+def _targets(nodes, below=True):
+    """The picked transforms (a shape counts as its transform) and, with
+    below, every transform under them; parents first. Referenced or
+    locked nodes and Maya's startup cameras are left out."""
+    picked = []
+    for node in cmds.ls(nodes, long=True) or []:
+        if not cmds.objectType(node, isAType="transform"):
+            node = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
+        if not node:
+            continue
+        found = [node]
+        if below:
+            found += cmds.listRelatives(node, allDescendents=True, fullPath=True,
+                                        type="transform") or []
+        picked += [n for n in found if n not in picked]
+    picked = [n for n in picked if _renamable(n) and not _default_camera(n)]
+    return sorted(picked, key=lambda p: (p.count("|"), p))
+
+
+def _own_namespaces():
+    """The scene's namespaces that aren't Maya's (UI, shared) or a
+    reference's, deepest first: ':a:b' before ':a'."""
+    refs = set()
+    for ref in cmds.file(query=True, reference=True) or []:
+        try:
+            refs.add(":" + cmds.referenceQuery(ref, namespace=True).lstrip(":"))
+        except RuntimeError:
+            pass
+    spaces = cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True,
+                                absoluteName=True) or []
+    own = [s for s in spaces if s not in (":UI", ":shared")
+           and not any(s == r or s.startswith(r + ":") for r in refs)]
+    return sorted(own, key=lambda s: -s.count(":"))
+
+
+def _remove_empty(spaces):
+    """Remove the namespaces left empty (and parents emptied with them)."""
+    removed = []
+    todo = set()
+    for space in spaces:
+        while space and space != ":":
+            todo.add(":" + space.lstrip(":"))
+            space = space.rpartition(":")[0]
+    for space in sorted(todo, key=lambda s: -s.count(":")):
+        if cmds.namespace(exists=space) and not cmds.namespaceInfo(space, listNamespace=True):
+            cmds.namespace(removeNamespace=space)
+            removed.append(space.lstrip(":"))
+    return removed
+
+
+def strip_namespaces(nodes=None):
+    """Take namespaces off. With nodes: those (and everything under them)
+    and their shapes. With none: every node in every namespace of the
+    scene's own (materials too; references are left alone). A transform
+    whose name someone else has gets the next number. Namespaces left
+    empty are removed. Returns (renamed [(old, new)], namespaces removed)."""
+    if nodes:
+        dag = _targets(nodes)
+        spaces = []
+    else:
+        spaces = _own_namespaces()
+        members = []
+        for space in spaces:
+            members += cmds.namespaceInfo(space, listOnlyDependencyNodes=True,
+                                          dagPath=True) or []
+        dag = set(cmds.ls(members, long=True, transforms=True) or [])
+        for shape in cmds.ls(members, long=True, shapes=True) or []:
+            dag.update(cmds.listRelatives(shape, parent=True, fullPath=True) or [])
+        dag = sorted((n for n in dag if _renamable(n) and not _default_camera(n)),
+                     key=lambda p: (p.count("|"), p))
+    dag = [n for n in dag if ":" in _short(n) or any(
+        ":" in _short(s) for s in cmds.listRelatives(n, shapes=True, fullPath=True) or [])]
+    uuids = [_uuid(n) for n in dag]
+    taken = _taken(ignore=dag)
+    done = []
+    for uuid in uuids:
+        old = _short(_path(uuid))
+        spaces.append(_namespace(old))
+        new = _free(_bare(old), taken) if ":" in old else old
+        taken.add(new)
+        _rename(uuid, new)
+        if old != new:
+            done.append((old, new))
+    # What's left: intermediate shapes (meshOrig) and, with nothing picked,
+    # materials and every other node in those namespaces.
+    left = []
+    for uuid in uuids:
+        left += cmds.listRelatives(_path(uuid), shapes=True, fullPath=True) or []
+    if not nodes:
+        for space in _own_namespaces():
+            left += cmds.namespaceInfo(space, listOnlyDependencyNodes=True,
+                                       dagPath=True) or []
+    for uuid in [_uuid(n) for n in left if ":" in _short(n) and _renamable(n)]:
+        node = cmds.ls(uuid, long=True)[0]
+        old = _short(node)
+        spaces.append(_namespace(old))
+        new = cmds.rename(node, ":" + _bare(old))       # Maya numbers a taken one
+        done.append((old, _short(new)))
+    return done, _remove_empty([s for s in spaces if s])
+
+
+def remove_from(name, text):
+    """name without text (every time it's in it), the gap left as one _:
+    grassB_TypeGrassColor03_0610_GEO less TypeGrassColor03 ->
+    grassB_0610_GEO."""
+    if not text:
+        return name
+    name = re.sub(r"_+", "_", name.replace(text, "_")).strip("_")
+    return name
+
+
+def remove_text(nodes, text, below=True, dry_run=False):
+    """Take text out of the names of what's picked (and, with below,
+    everything under it); shapes follow their transform and a namespace
+    stays. A name someone else has gets the next number. Names that would
+    be left empty or start with a digit are skipped. Returns (renamed
+    [(old, new)], skipped [(name, why)]); dry_run only says what would
+    happen."""
+    text = (text or "").strip()
+    if not text:
+        raise PublishError("Type (or paste) the text to take out of the names.")
+    picked = [n for n in _targets(nodes, below) if text in _bare(_short(n))]
+    if not picked:
+        raise PublishError("None of the picked names has \"%s\" in it." % text)
+    taken = _taken(ignore=picked)
+    done, skipped = [], []
+    for uuid in [_uuid(n) for n in picked]:
+        node = _path(uuid)
+        old = _short(node)
+        new = remove_from(_bare(old), text)
+        stem = re.sub(r"_?(GEO|GRP)$", "", new, flags=re.IGNORECASE)
+        if not stem:
+            skipped.append((old, "nothing would be left of the name"))
+            continue
+        if new[0].isdigit():
+            skipped.append((old, "it would start with a digit (%s)" % new))
+            continue
+        new = _free(new, taken)
+        taken.add(new)
+        space = _namespace(old)
+        if not dry_run:
+            _rename(uuid, "%s:%s" % (space, new) if space else new)
+        done.append((old, "%s:%s" % (space, new) if space else new))
+    return done, skipped

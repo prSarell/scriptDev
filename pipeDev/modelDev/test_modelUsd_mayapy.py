@@ -136,6 +136,78 @@ left = usd.problems()
 check("after fix only the default name is left",
       [f["name"] for f in left] == ["pSphere1"] and "pSphere1" not in done)
 
+# --- imported models: unwanted text (user 2026-11-23) ------------------------
+check("remove_from: the gap left as one _",
+      usd.remove_from("grassB_TypeGrassColor03_0610_GEO", "_TypeGrassColor03_")
+      == "grassB_0610_GEO"
+      and usd.remove_from("grassB_TypeGrassColor03TypeGrassColor03_0610_GEO",
+                          "TypeGrassColor03") == "grassB_0610_GEO")
+new_scene()
+JUNK = "_TypeGrassColor03_"
+grass = cmds.group(empty=True, name="grass_TypeGrassColor03_GRP")
+blades = [cmds.parent(cmds.polyPlane(name="grassB%s%04d_GEO" % (JUNK, 610 + i))[0], grass)[0]
+          for i in range(3)]
+cmds.polyCube(name="grassB_0611_GEO")                        # already has one of the names
+digit = cmds.parent(cmds.polyPlane(name="TypeGrassColor03_9_GEO")[0], grass)[0]
+plain = cmds.polyCube(name="rock%s01_GEO" % JUNK)[0]          # not picked
+before = sorted(cmds.ls(dag=True))
+done, skipped = usd.remove_text([grass], JUNK, dry_run=True)
+check("remove text, dry run: says what would happen, renames nothing",
+      len(done) == 4 and sorted(cmds.ls(dag=True)) == before)
+done, skipped = usd.remove_text([grass], "TypeGrassColor03")
+names = set(n.split("|")[-1] for n in cmds.ls(dag=True))
+check("remove text: the group and everything under it",
+      {"grass_GRP", "grassB_0610_GEO", "grassB_0612_GEO"} <= names
+      and not any("TypeGrass" in n for n in names if n.startswith("grass")))
+check("remove text: a name someone else has gets the next number",
+      "grassB_0611_GEO" in names and "grassB_061101_GEO" in names)
+check("remove text: shapes follow their transform",
+      cmds.listRelatives("grassB_0610_GEO", shapes=True) == ["grassB_0610_GEOShape"])
+check("remove text: a name left starting with a digit is skipped",
+      [s[0] for s in skipped] == ["TypeGrassColor03_9_GEO"])
+check("remove text: what isn't picked is left", cmds.objExists(plain))
+g2 = cmds.group(empty=True, name="clump_TypeX_GRP")
+cmds.parent(cmds.polyCube(name="blade_TypeX_GEO")[0], g2)
+usd.remove_text([g2], "_TypeX", below=False)
+check("remove text: only the picked one, not what's under it",
+      cmds.objExists("clump_GRP") and cmds.objExists("blade_TypeX_GEO"))
+check("remove text: refuses no text, or no picked name with it",
+      refuses(usd.remove_text, [g2], " ") and refuses(usd.remove_text, [g2], "nothere"))
+
+# --- imported models: namespaces (user 2026-11-23) ---------------------------
+new_scene()
+cmds.namespace(add="imp"); cmds.namespace(add="imp:deep")
+top = cmds.group(empty=True, name="imp:tree_GRP")
+trunk = cmds.parent(cmds.polyCylinder(name="imp:deep:trunk_GEO")[0], top)[0]
+cmds.polyCube(name="trunk_GEO")                               # already has the name
+mat = cmds.shadingNode("lambert", asShader=True, name="imp:barkMat")
+other = cmds.polyCube(name="imp:rock_GEO")[0]                 # not picked
+done, removed = usd.strip_namespaces(["|imp:tree_GRP"])
+names = set(n.split("|")[-1] for n in cmds.ls(dag=True))
+check("strip picked: the group and everything under it, nested ones too",
+      "tree_GRP" in names and "trunk_GEO01" not in names and "trunk_GEO" in names
+      and any(n == "trunk01_GEO" for n in names))
+check("strip picked: shape renamed with it, the rest left",
+      cmds.listRelatives("|tree_GRP|trunk01_GEO", shapes=True) == ["trunk01_GEOShape"]
+      and cmds.objExists("imp:rock_GEO") and cmds.objExists("imp:barkMat"))
+check("strip picked: the emptied namespace is removed, a used one stays",
+      removed == ["imp:deep"] and cmds.namespace(exists=":imp"))
+done, removed = usd.strip_namespaces()
+check("strip with nothing picked: every own namespace, materials too",
+      cmds.objExists("|rock_GEO") and cmds.objExists("barkMat")
+      and not cmds.namespace(exists=":imp") and "imp" in removed)
+check("strip: nothing left to do", usd.strip_namespaces() == ([], []))
+# A referenced model's namespace is left alone.
+ref_file = os.path.join(work, "scenes", "ref_src.ma")
+new_scene(); cmds.polyCube(name="refBox_GEO")
+cmds.file(rename=ref_file); cmds.file(save=True, type="mayaAscii")
+new_scene()
+cmds.file(ref_file, reference=True, namespace="refd")
+cmds.namespace(add="mine"); cmds.polyCube(name="mine:own_GEO")
+done, removed = usd.strip_namespaces()
+check("strip: a reference's namespace is left alone",
+      cmds.objExists("refd:refBox_GEO") and cmds.objExists("|own_GEO") and removed == ["mine"])
+
 # --- the publish: .usd + textures\ + .usdz -----------------------------------
 new_scene()
 png = os.path.join(work, "sourceimages", "wood.png")

@@ -148,7 +148,7 @@ class NamesWindow(object):
         if not asset:
             return
         self.asset = asset
-        cmds.window(NAMES_WINDOW, title="USD Names: %s" % asset, widthHeight=(440, 420))
+        cmds.window(NAMES_WINDOW, title="USD Names: %s" % asset, widthHeight=(460, 560))
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6, columnAttach=("both", 8))
         cmds.text(label="", height=2)
         cmds.text(align="left", label="Meshes:  %s_<part>_GEO        Groups:  <part>_GRP" % asset)
@@ -165,6 +165,35 @@ class NamesWindow(object):
         cmds.setParent("..")
         self.w["preview"] = cmds.text(label="", align="left")
         cmds.separator(height=8, style="in")
+
+        # Imported models: unwanted text and namespaces (user 2026-11-23).
+        cmds.text(label="Imported models: take out text an import added to the names",
+                  align="left")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                       columnAttach=[(1, "right", 4), (2, "both", 0), (3, "left", 4)])
+        cmds.text(label="Text")
+        self.w["text"] = cmds.textField(
+            placeholderText="e.g. _TypeGrassColor03_",
+            textChangedCommand=lambda *_: self.preview_text(),
+            enterCommand=lambda *_: self.remove_text(),
+            annotation="Every time it's in a name it comes out; the gap is left as one _.")
+        cmds.button(label="Remove", width=110, command=lambda *_: self.remove_text())
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                       columnAttach=[(1, "left", 30), (2, "both", 4)])
+        self.w["below"] = cmds.checkBox(label="and everything under the picked groups",
+                                        value=True,
+                                        changeCommand=lambda *_: self.preview_text())
+        cmds.button(label="Name to Field", width=110, command=lambda *_: self.name_to_field(),
+                    annotation="Puts the picked name in the Text field, to cut down to the "
+                               "part to remove.")
+        cmds.setParent("..")
+        self.w["text_preview"] = cmds.text(label="", align="left")
+        cmds.button(label="Strip Namespaces", height=28, command=lambda *_: self.strip(),
+                    annotation="Off what's picked and everything under it. With nothing "
+                               "picked: every namespace in the scene (materials too), not "
+                               "references. A name already taken gets the next number.")
+        cmds.separator(height=8, style="in")
         cmds.text(label="Names to fix before a USD publish (click one to select it):",
                   align="left")
         self.w["problems"] = cmds.textScrollList(numberOfRows=10, allowMultiSelection=True,
@@ -178,6 +207,7 @@ class NamesWindow(object):
                                "Maya's default names (pCube1) are left for you to name.")
         cmds.setParent("..")
         cmds.showWindow(NAMES_WINDOW)
+        cmds.scriptJob(event=["SelectionChanged", self.preview_text], parent=NAMES_WINDOW)
         self.preview()
         self.check()
 
@@ -199,6 +229,74 @@ class NamesWindow(object):
         cmds.inViewMessage(amg="Named <hl>%s</hl>" % ", ".join(n for _, n in done[:4]) +
                            (" and %d more" % (len(done) - 4) if len(done) > 4 else ""),
                            pos="topCenter", fade=True)
+        self.check()
+
+    def _text(self):
+        return cmds.textField(self.w["text"], query=True, text=True)
+
+    def _below(self):
+        return cmds.checkBox(self.w["below"], query=True, value=True)
+
+    def preview_text(self):
+        label = ""
+        text = self._text().strip()
+        picked = _selection()
+        if text and picked:
+            try:
+                done, skipped = usd.remove_text(picked, text, self._below(), dry_run=True)
+                label = "  %d name%s: %s -> %s" % (len(done), "" if len(done) == 1 else "s",
+                                                   done[0][0], done[0][1]) if done else ""
+                if skipped:
+                    label += "   (%d skipped)" % len(skipped)
+            except PublishError as e:
+                label = "  " + str(e)
+        elif text:
+            label = "  Pick the objects or groups first."
+        cmds.text(self.w["text_preview"], edit=True, label=label)
+
+    def name_to_field(self):
+        picked = _selection()
+        if not picked:
+            return _say("Pick an object whose name has the text in it.")
+        cmds.textField(self.w["text"], edit=True,
+                       text=picked[0].split("|")[-1].split(":")[-1])
+        self.preview_text()
+
+    def remove_text(self):
+        picked = _selection()
+        if not picked:
+            return _say("Pick the objects or groups to take the text out of.")
+        try:
+            cmds.undoInfo(openChunk=True, chunkName="USD Names")
+            done, skipped = usd.remove_text(picked, self._text(), self._below())
+        except PublishError as e:
+            return _say(str(e))
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        if skipped:
+            _say("Renamed %d. Left as they were:\n  %s" % (
+                len(done), "\n  ".join("%s: %s" % s for s in skipped[:15])))
+        else:
+            cmds.inViewMessage(amg="Renamed <hl>%d</hl>." % len(done),
+                               pos="topCenter", fade=True)
+        self.preview_text()
+        self.check()
+
+    def strip(self):
+        picked = _selection()
+        try:
+            cmds.undoInfo(openChunk=True, chunkName="USD Names")
+            done, removed = usd.strip_namespaces(picked or None)
+        except PublishError as e:
+            return _say(str(e))
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        if not done:
+            return _say("No namespaces on %s." % ("what's picked" if picked else
+                                                  "the scene's own nodes"))
+        cmds.inViewMessage(amg="Namespace off <hl>%d</hl>%s." % (
+            len(done), "; removed %s" % ", ".join(removed) if removed else ""),
+            pos="topCenter", fade=True)
         self.check()
 
     def check(self):
