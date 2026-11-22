@@ -173,10 +173,13 @@ class NamesWindow(object):
                        columnAttach=[(1, "right", 4), (2, "both", 0), (3, "left", 4)])
         cmds.text(label="Text")
         self.w["text"] = cmds.textField(
-            placeholderText="e.g. _TypeGrassColor03_",
+            placeholderText="e.g. _TypeGrassColor03_  or  _TypeGrassColor*_",
             textChangedCommand=lambda *_: self.preview_text(),
             enterCommand=lambda *_: self.remove_text(),
-            annotation="Every time it's in a name it comes out; the gap is left as one _.")
+            annotation="Every time it's in a name it comes out; the gap is left as one _. "
+                       "A * stands for any letters or digits up to the next _: "
+                       "_TypeGrassColor*_ takes out _TypeGrassColor03_, "
+                       "_TypeGrassColor003_, ...")
         cmds.button(label="Remove", width=110, command=lambda *_: self.remove_text())
         cmds.setParent("..")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,

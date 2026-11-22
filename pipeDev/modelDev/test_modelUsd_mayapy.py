@@ -173,6 +173,21 @@ check("remove text: only the picked one, not what's under it",
       cmds.objExists("clump_GRP") and cmds.objExists("blade_TypeX_GEO"))
 check("remove text: refuses no text, or no picked name with it",
       refuses(usd.remove_text, [g2], " ") and refuses(usd.remove_text, [g2], "nothere"))
+check("remove_from: * for any number or letters, up to the next _",
+      usd.remove_from("grassB_TypeGrassColor003_0610_GEO", "_TypeGrassColor*_")
+      == "grassB_0610_GEO"
+      and usd.remove_from("grassB_TypeGrassColor03TypeGrassColor03_0610_GEO",
+                          "TypeGrassColor*") == "grassB_0610_GEO"
+      and usd.remove_from("grassB_0610_GEO", "_TypeGrassColor*_") == "grassB_0610_GEO")
+new_scene()
+mix = cmds.group(empty=True, name="field_GRP")
+for n, code in enumerate(("03", "003", "12b")):
+    cmds.parent(cmds.polyPlane(name="grass%d_TypeGrassColor%s_GEO" % (n, code))[0], mix)
+done, skipped = usd.remove_text([mix], "_TypeGrassColor*_")
+check("remove text with *: every number taken out, the group left",
+      sorted(n for _, n in done) == ["grass0_GEO", "grass1_GEO", "grass2_GEO"]
+      and cmds.objExists("field_GRP"))
+check("remove text: refuses * on its own", refuses(usd.remove_text, [mix], "**"))
 
 # --- imported models: namespaces (user 2026-11-23) ---------------------------
 new_scene()

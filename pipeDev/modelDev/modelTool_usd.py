@@ -30,7 +30,8 @@ group3) is listed but left for the artist to name.
 Imported models (user 2026-11-23): strip_namespaces() takes namespaces off
 what's picked and everything under it (nothing picked: every namespace the
 scene owns, materials too); remove_text() takes text an import added
-(_TypeGrassColor03_) out of the picked names and the names under them.
+(_TypeGrassColor03_, or _TypeGrassColor*_ for any number) out of the
+picked names and the names under them.
 
 Asset scenes only (the asset's name comes from the scene's folder). No UI
 here (modelTool_usd_ui), so it can be tested under mayapy.
@@ -494,13 +495,24 @@ def strip_namespaces(nodes=None):
     return done, _remove_empty([s for s in spaces if s])
 
 
+def _pattern(text):
+    """The text as a pattern: a * stands for any letters or digits up to
+    the next _ (_TypeGrassColor*_ finds _TypeGrassColor03_ and
+    _TypeGrassColor003_)."""
+    return re.compile("[^_]*".join(re.escape(p) for p in text.split("*")))
+
+
+def has_text(name, text):
+    return bool(_pattern(text).search(name))
+
+
 def remove_from(name, text):
-    """name without text (every time it's in it), the gap left as one _:
-    grassB_TypeGrassColor03_0610_GEO less TypeGrassColor03 ->
-    grassB_0610_GEO."""
-    if not text:
+    """name without text (every time it's in it, * for any number or
+    letters), the gap left as one _: grassB_TypeGrassColor03_0610_GEO less
+    TypeGrassColor* -> grassB_0610_GEO."""
+    if not text.replace("*", ""):
         return name
-    name = re.sub(r"_+", "_", name.replace(text, "_")).strip("_")
+    name = re.sub(r"_+", "_", _pattern(text).sub("_", name)).strip("_")
     return name
 
 
@@ -512,9 +524,10 @@ def remove_text(nodes, text, below=True, dry_run=False):
     [(old, new)], skipped [(name, why)]); dry_run only says what would
     happen."""
     text = (text or "").strip()
-    if not text:
-        raise PublishError("Type (or paste) the text to take out of the names.")
-    picked = [n for n in _targets(nodes, below) if text in _bare(_short(n))]
+    if not text.replace("*", ""):
+        raise PublishError("Type (or paste) the text to take out of the names. A * stands "
+                           "for any number or letters (_TypeGrassColor*_).")
+    picked = [n for n in _targets(nodes, below) if has_text(_bare(_short(n)), text)]
     if not picked:
         raise PublishError("None of the picked names has \"%s\" in it." % text)
     taken = _taken(ignore=picked)
