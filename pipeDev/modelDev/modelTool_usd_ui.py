@@ -24,6 +24,64 @@ HIERARCHY_WINDOW = "modelToolUsdHierarchyWin"
 NAMES_WINDOW = "modelToolUsdNamesWin"
 
 
+HOW_TO_WINDOW = "modelToolUsdHowToWin"
+
+HIERARCHY_HOW_TO = """USD HIERARCHY
+
+Puts the model in the layout a USD publish needs:
+   geo
+      render    the meshes that render
+      proxy     an optional light stand-in
+Publish adds <asset>_model_GRP on top.
+
+1. Open the asset's scene (saved in its scenes folder).
+2. Click Build Hierarchy. With nothing selected, all geometry
+   outside geo goes into render.
+3. To place things yourself: select them, then Selected to Render
+   or Selected to Proxy. Nothing moves in the world.
+4. Check the list "Geometry outside geo" is empty (click a row to
+   select it). Refresh updates it.
+5. Next: USD Names, then Publish with USD ticked.
+
+Ctrl+Z undoes each button in one step."""
+
+NAMES_HOW_TO = """USD NAMES
+
+Names meshes <asset>_<part>_GEO and groups <part>_GRP, unique and
+USD-safe.
+
+Naming your own model
+1. Select meshes or groups, type a part name (seat, legL) and click
+   Name Selected. Several get 01, 02, ...
+2. Click Check Names; click a row to select that node.
+3. Click Fix All. Maya default names (pCube1) are left for you:
+   name those with step 1.
+
+Cleaning an imported model (do these first)
+1. Strip Namespaces: select the model's group (or nothing, for every
+   namespace in the scene, materials too). References are skipped.
+2. Remove text: select the group, click Name to Field and cut the
+   name down to the junk (e.g. _TypeGrassColor03_), or type it.
+   A * stands for any number: _TypeGrassColor*_. Check the preview
+   line, then click Remove.
+3. Renumber 000, 001, ...: select the group to number its meshes
+   again, top to bottom in the Outliner.
+4. Then Check Names and Fix All as above.
+
+The tick box "and everything under the picked groups" applies to
+Remove and Renumber. Ctrl+Z undoes each button in one step."""
+
+
+def _how_to(title, text):
+    """A small read-only window with a tool's how-to."""
+    if cmds.window(HOW_TO_WINDOW, exists=True):
+        cmds.deleteUI(HOW_TO_WINDOW)
+    cmds.window(HOW_TO_WINDOW, title="How To: " + title, widthHeight=(460, 440))
+    cmds.paneLayout()
+    cmds.scrollField(text=text, editable=False, wordWrap=False, font="fixedWidthFont")
+    cmds.showWindow(HOW_TO_WINDOW)
+
+
 def _say(message, title="USD"):
     cmds.confirmDialog(title=title, message=message, button=["OK"])
 
@@ -52,7 +110,7 @@ class HierarchyWindow(object):
     def build(self):
         if cmds.window(HIERARCHY_WINDOW, exists=True):
             cmds.deleteUI(HIERARCHY_WINDOW)
-        cmds.window(HIERARCHY_WINDOW, title="USD Hierarchy", widthHeight=(360, 330))
+        cmds.window(HIERARCHY_WINDOW, title="USD Hierarchy", widthHeight=(360, 340))
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6, columnAttach=("both", 8))
         cmds.text(label="", height=2)
         cmds.text(align="left", wordWrap=True, label=(
@@ -72,7 +130,12 @@ class HierarchyWindow(object):
         cmds.text(label="Geometry outside geo (not in the USD's layout):", align="left")
         self.w["left"] = cmds.textScrollList(numberOfRows=6, allowMultiSelection=True,
                                              selectCommand=lambda *_: self.pick())
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                       columnAttach=[(1, "both", 0), (2, "both", 4)])
         cmds.button(label="Refresh", height=24, command=lambda *_: self.refresh())
+        cmds.button(label="How To", height=24, width=80,
+                    command=lambda *_: _how_to("USD Hierarchy", HIERARCHY_HOW_TO))
+        cmds.setParent("..")
         cmds.showWindow(HIERARCHY_WINDOW)
         self.refresh()
 
@@ -148,7 +211,7 @@ class NamesWindow(object):
         if not asset:
             return
         self.asset = asset
-        cmds.window(NAMES_WINDOW, title="USD Names: %s" % asset, widthHeight=(460, 560))
+        cmds.window(NAMES_WINDOW, title="USD Names: %s" % asset, widthHeight=(460, 590))
         cmds.columnLayout(adjustableColumn=True, rowSpacing=6, columnAttach=("both", 8))
         cmds.text(label="", height=2)
         cmds.text(align="left", label="Meshes:  %s_<part>_GEO        Groups:  <part>_GRP" % asset)
@@ -218,6 +281,8 @@ class NamesWindow(object):
                                "the asset's name added, shapes named after their transform. "
                                "Maya's default names (pCube1) are left for you to name.")
         cmds.setParent("..")
+        cmds.button(label="How To", height=24,
+                    command=lambda *_: _how_to("USD Names", NAMES_HOW_TO))
         cmds.showWindow(NAMES_WINDOW)
         cmds.scriptJob(event=["SelectionChanged", self.preview_text], parent=NAMES_WINDOW)
         self.preview()
