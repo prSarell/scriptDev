@@ -972,7 +972,7 @@ def _build_asset(shot_dir, published, vid, replace=False):
         if not replace:
             raise BuildError(switch_message(published, to_usd=False))
         placement = cmds.xform(stage[0], query=True, worldSpace=True, matrix=True)
-        cmds.delete(stage[0])
+        remove_stage(stage[0])
         done.append("USD stage %s removed" % stage[0].split("|")[-1])
         entry = None    # the stage's USD isn't a Maya reference to repoint
     # Leftover unassigned shaders holding the asset's name (e.g. from an
@@ -2013,6 +2013,7 @@ USD_EXTENSIONS = (".usd", ".usda", ".usdc")
 USD_TEXTURES = "textures"           # beside the .usd (publishTool_outputs)
 USD_STAGE_SUFFIX = "_USD"           # grassB -> grassB_USD (transform), grassB_USDShape
 USD_KEY_ATTR = "pipe_buildKey"      # on the stage's transform: its manifest key
+USD_GROUP_ATTR = "pipe_usdGroup"    # on the stage's <asset>_model_GRP (usd_group)
 USD_RE = re.compile(r"^(?P<asset>.+)_(?P<login>[a-z0-9]+)_(?P<code>[A-Za-z]+)"
                     r"_v(?P<version>\d{3})\.usd[ac]?$", re.IGNORECASE)
 EXPORTS_SUFFIX = "_exports"         # publishTool_outputs.FOLDER_SUFFIX
@@ -2126,23 +2127,49 @@ def stage_of(published):
     return None
 
 
-def make_stage(name, key, file_path):
+def make_stage(name, key, file_path, group_name):
     """A USD stage reading file_path: <name>_USD with its shape, driven by
-    the scene's time, stamped with the asset's manifest key. Maya draws its
-    proxy purpose (if the model has one) and renders the render purpose.
-    The transform is a dagContainer only so the Outliner shows the pipe
-    icon (user 2026-11-24: "just for presentation"): no pipe stamp, not
-    locked, it behaves as a plain USD stage. cmds.delete on it takes the
-    shape with it, as wanted."""
+    the scene's time, stamped with the asset's manifest key, in its pipe
+    group (usd_group). Maya draws its proxy purpose (if the model has one)
+    and renders the render purpose. Returns the stage's transform."""
     load_usd_plugin()
-    transform = pub.make_pipe_group(name + USD_STAGE_SUFFIX)
-    cmds.setAttr(transform + ".iconName", pub.PIPE_ICON, type="string")
+    transform = cmds.createNode("transform", name=name + USD_STAGE_SUFFIX)
     shape = cmds.createNode(USD_SHAPE, name=transform + "Shape", parent=transform)
     cmds.connectAttr("time1.outTime", shape + ".time")
     cmds.setAttr(shape + ".filePath", file_path, type="string")
     cmds.addAttr(transform, longName=USD_KEY_ATTR, dataType="string")
     cmds.setAttr(transform + "." + USD_KEY_ATTR, key, type="string")
-    return cmds.ls(transform, long=True)[0]
+    return usd_group(cmds.ls(transform, long=True)[0], group_name)
+
+
+def usd_group(transform, group_name):
+    """Put a stage in its pipe group, <asset>_model_GRP (user 2026-11-24):
+    a dagContainer with the pipe icon, locked at the origin like a
+    published model's top group, so the Outliner shows it came through the
+    pipe. Presentation only: no pipe stamp, the stage under it stays a
+    plain USD stage (it moves; the group doesn't). Stages loaded before
+    this get their group the next time Build touches them. Returns the
+    stage transform's new path."""
+    parent = (cmds.listRelatives(transform, parent=True, fullPath=True) or [None])[0]
+    if parent and cmds.attributeQuery(USD_GROUP_ATTR, node=parent, exists=True):
+        return transform
+    matrix = cmds.xform(transform, query=True, worldSpace=True, matrix=True)
+    group = pub.make_pipe_group(group_name)
+    cmds.addAttr(group, longName=USD_GROUP_ATTR, attributeType="bool", defaultValue=True)
+    pub.finish_pipe_group(group)
+    transform = cmds.parent(transform, group)[0]
+    transform = cmds.ls(cmds.ls(transform, uuid=True)[0], long=True)[0]
+    cmds.xform(transform, worldSpace=True, matrix=matrix)
+    return transform
+
+
+def remove_stage(transform):
+    """Delete a stage and its pipe group (if nothing else was put in it)."""
+    parent = (cmds.listRelatives(transform, parent=True, fullPath=True) or [None])[0]
+    cmds.delete(transform)
+    if parent and cmds.attributeQuery(USD_GROUP_ATTR, node=parent, exists=True) \
+            and not cmds.listRelatives(parent, children=True):
+        pub.delete_pipe_group(parent)
 
 
 def _maya_references_of(shot_dir, published, entry):
@@ -2186,6 +2213,7 @@ def _build_usd(shot_dir, published, vid, replace=False):
     done = []
     if stage:
         transform, shape, written = stage
+        usd_group(transform, pub.pipe_group_name(published["asset"], published["code"]))
         if written != file_path:
             cmds.setAttr(shape + ".filePath", file_path, type="string")
             m = USD_RE.match(os.path.basename(_absolute(written)))
@@ -2206,7 +2234,7 @@ def _build_usd(shot_dir, published, vid, replace=False):
                 cmds.file(referenceNode=node, removeReference=True)
             done.append("Maya reference removed")
         transform = make_stage(namespace_for(published["asset"], published["code"]), key,
-                               file_path)
+                               file_path, pub.pipe_group_name(published["asset"], published["code"]))
         if placement:
             cmds.xform(transform, worldSpace=True, matrix=placement)
         done.append("%s loaded as a USD stage (%s)" % (label, transform.split("|")[-1]))

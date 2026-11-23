@@ -116,13 +116,16 @@ check("v002 has no USD: refused, saying to publish with USD ticked",
       "published without USD ticked" in refused(api.build_asset, shot_dir, grass, v2, usd=True))
 done, warning, replaced = api.build_asset(shot_dir, grass, v1, usd=True)
 stage = api.stage_of(grass)
-check("built as USD: a stage grassB_USD", stage and stage[0] == "|grassB_USD"
+check("built as USD: a stage grassB_USD", stage and stage[0] == "|grassB_model_GRP|grassB_USD"
       and "loaded as a USD stage" in done[-1] and not warning)
-check("... a dagContainer with the pipe icon, unlocked and unstamped (presentation only)",
-      cmds.nodeType("grassB_USD") == "dagContainer"
-      and cmds.getAttr("grassB_USD.iconName") == "iconPipeOutliner.png"
-      and not cmds.getAttr("grassB_USD.tx", lock=True)
-      and not api.pub.is_pipe_group("grassB_USD"))
+check("... in grassB_model_GRP: a dagContainer with the pipe icon, locked at the origin, unstamped",
+      cmds.nodeType("|grassB_model_GRP") == "dagContainer"
+      and cmds.getAttr("|grassB_model_GRP.iconName") == "iconPipeOutliner.png"
+      and cmds.getAttr("|grassB_model_GRP.tx", lock=True)
+      and not api.pub.is_pipe_group("|grassB_model_GRP"))
+check("... the stage itself a plain transform, free to move",
+      cmds.nodeType("|grassB_model_GRP|grassB_USD") == "transform"
+      and not cmds.getAttr("|grassB_model_GRP|grassB_USD.tx", lock=True))
 check("... reading the pulled .usd by $PIPE_SCRATCH path",
       stage[2].startswith("$" + pipeEnv.VAR + "/") and stage[2].endswith(
           "grassB_e131988_model_v001_exports/grassB_e131988_model_v001.usd"))
@@ -149,7 +152,7 @@ cmds.xform("grassB_USD", worldSpace=True, translation=(5, 0, -3))
 done, warning, replaced = api.build_asset(shot_dir, grass, v3, usd=True)
 stage = api.stage_of(grass)
 check("v003: the same stage now reads v003, where it was placed",
-      stage[0] == "|grassB_USD" and stage[2].endswith("grassB_e131988_model_v003.usd")
+      stage[0] == "|grassB_model_GRP|grassB_USD" and stage[2].endswith("grassB_e131988_model_v003.usd")
       and done == ["v001 -> v003 (e131988)"]
       and cmds.xform("grassB_USD", query=True, worldSpace=True, translation=True) == [5, 0, -3])
 check("... v001's .usd is offered for clearing", replaced and pub._same_path(replaced, pulled_usd))
@@ -191,7 +194,7 @@ check("as a Maya reference while it's a stage: refused unless asked",
       "is in this scene as a USD stage" in refused(api.build_asset, shot_dir, grass, v3))
 done, warning, replaced = api.build_asset(shot_dir, grass, v3, replace=True)
 check("replace: the stage goes, the .ma is referenced, placed where the stage was (on geo: the pipe group is locked)",
-      not api.stage_of(grass) and cmds.referenceQuery("grassB:grassB_model_GRP",
+      not api.stage_of(grass) and not cmds.objExists("|grassB_model_GRP") and cmds.referenceQuery("grassB:grassB_model_GRP",
                                                        isNodeReferenced=True)
       and [round(x, 3) for x in cmds.xform("grassB:geo", query=True,
                                            worldSpace=True, translation=True)] == [5, 0, -3])
