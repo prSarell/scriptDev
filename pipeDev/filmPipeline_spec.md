@@ -3034,6 +3034,7 @@ The tools are developed side by side:
         themselves; Claude shouldn't research or write it up unless asked.
         Design choices made now shouldn't close off a USD-centred
         pipeline later.
+        USD paths across storage: DECIDED 2026-11-23, §4f.
     - SUGGESTION (Claude's, not yet confirmed):
       - the film sets which boxes start ticked (`pipeline.json` on the H
         drive), because a teammate may need a format the publisher doesn't
@@ -3625,6 +3626,67 @@ Build until it's designed.
    - OPEN: is the rig built inside the shot scene, or in its own scene and
      brought in? (Claude: if it's in its own scene, treat it as an asset
      from the start, since there's no place for a shot rig's working file.)
+
+### 4f. USD paths across storage — DECIDED (2026-11-23)
+
+The user (2026-11-23), after the Maya USD tutorials (assembly with
+payloads and instances, shot layers per department): first settle how USD
+files find each other on every storage target (T7, SharePoint, server), on
+the current pipe. Proposal agreed: "yes, write it into the spec and test on
+the T7".
+
+- **Problem.** A USD shot is a chain of files: the shot's root layer, its
+  department sublayers, the environment assemblies they reference, the
+  models those payload, and the models' textures. Each link is a path
+  written inside a file. `$PIPE_SCRATCH` (§3i "Reference paths that work on
+  any drive") only works where Maya expands it; plain USD (and Unreal,
+  Blender, usdview) doesn't expand variables.
+- **Tested 2026-11-23** (Maya 2027, mayaUsd 0.37, mayapy, throwaway files):
+  model `.usd` in `publish\` → environment assembly (relative payload, 3
+  instanceable copies) → shot layout sublayer (relative reference) → shot
+  root layer.
+
+  | Test | Result |
+  |---|---|
+  | Film folder copied to another root (deeper, a space in a folder name), first one deleted | everything resolves, nothing unresolved |
+  | The same files opened by a network path (`//localhost/C$/...`) | the relative layers resolve |
+  | Maya's USD stage node (`mayaUsdProxyShape.filePath`) set to `$PIPE_SCRATCH/NWF_SHF/maya/.../shot.usd` | loads; the variable is kept in the saved `.ma` and works again on reopen |
+
+  Not yet tested: SharePoint/OneDrive (files-on-demand placeholders, long
+  "OneDrive - <org>" paths), a real server share (only this machine's own
+  `C$`), Windows' 260-character path limit with the pipe's deep folders,
+  and the T7 (2026-11-23: the T7 reported "Scan Needed" and its folders
+  couldn't be read, so the test waits on the drive).
+- **Decision.**
+  1. **Inside every USD file the pipe writes: relative paths only**, never
+     a drive letter and never a variable (`../../publish/...`,
+     `./textures/<name>` as the model USD already does). The spec rejected
+     relative paths for `.ma` references (§3i) because Maya resolves them
+     from the scene or project folder, which moves. USD resolves a path
+     from the file it's written in, and the pipe decides where every USD
+     file lives: published versions never move or change, and shot layers
+     go in a fixed `<shot>\usd\` folder that Build writes, not wherever a
+     student saves. Relative paths also work in Unreal, Blender and usdview
+     with nothing installed.
+  2. **`$PIPE_SCRATCH` only on the one Maya → USD link**: the USD stage node
+     in a shot `.ma`, set by the same before-open callback as references
+     today (`pipeEnv`). Nothing new to install.
+  3. **No Autodesk asset resolver** (`AdskAssetResolver` in mayaUsd 0.37):
+     nothing needs it, it would have to be installed and set up on every
+     machine (students' home machines too), and other software wouldn't
+     have it.
+  4. **A USD file only points inside its own film folder** (`publish\`, or
+     its shot's `usd\`), never across films or drives: the same rule
+     references follow today.
+  5. **Build pulls the whole chain.** Loading a shot's environment needs
+     every model it payloads and their textures; Build lists a USD file's
+     dependencies (`UsdUtils.ComputeAllDependencies`) and pulls those
+     versions into scratch's `publish\`, as it does for `.ma` references.
+- **Not decided here** (next, from the same tutorials): Scopes for
+  `geo` / `render` / `proxy` / `mtl`; variants (each formation its own model
+  publish plus a variant file?); fixed versions or always the latest inside
+  assemblies and shot layers; USD environments and shots (staged: export
+  only first, USD shots as a staff trial, after March 2027 for students).
 
 ## 5. Context: what the existing tools assume
 
