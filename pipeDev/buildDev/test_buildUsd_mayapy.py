@@ -118,6 +118,11 @@ done, warning, replaced = api.build_asset(shot_dir, grass, v1, usd=True)
 stage = api.stage_of(grass)
 check("built as USD: a stage grassB_USD", stage and stage[0] == "|grassB_USD"
       and "loaded as a USD stage" in done[-1] and not warning)
+check("... a dagContainer with the pipe icon, unlocked and unstamped (presentation only)",
+      cmds.nodeType("grassB_USD") == "dagContainer"
+      and cmds.getAttr("grassB_USD.iconName") == "iconPipeOutliner.png"
+      and not cmds.getAttr("grassB_USD.tx", lock=True)
+      and not api.pub.is_pipe_group("grassB_USD"))
 check("... reading the pulled .usd by $PIPE_SCRATCH path",
       stage[2].startswith("$" + pipeEnv.VAR + "/") and stage[2].endswith(
           "grassB_e131988_model_v001_exports/grassB_e131988_model_v001.usd"))

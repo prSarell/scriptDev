@@ -2129,9 +2129,14 @@ def stage_of(published):
 def make_stage(name, key, file_path):
     """A USD stage reading file_path: <name>_USD with its shape, driven by
     the scene's time, stamped with the asset's manifest key. Maya draws its
-    proxy purpose (if the model has one) and renders the render purpose."""
+    proxy purpose (if the model has one) and renders the render purpose.
+    The transform is a dagContainer only so the Outliner shows the pipe
+    icon (user 2026-11-24: "just for presentation"): no pipe stamp, not
+    locked, it behaves as a plain USD stage. cmds.delete on it takes the
+    shape with it, as wanted."""
     load_usd_plugin()
-    transform = cmds.createNode("transform", name=name + USD_STAGE_SUFFIX)
+    transform = pub.make_pipe_group(name + USD_STAGE_SUFFIX)
+    cmds.setAttr(transform + ".iconName", pub.PIPE_ICON, type="string")
     shape = cmds.createNode(USD_SHAPE, name=transform + "Shape", parent=transform)
     cmds.connectAttr("time1.outTime", shape + ".time")
     cmds.setAttr(shape + ".filePath", file_path, type="string")
