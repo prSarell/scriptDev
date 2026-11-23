@@ -72,6 +72,31 @@ box = cmds.polyCube(name="box")[0]
 check("add to proxy", usd.add([box], purpose=usd.PROXY) == ["|geo|proxy|box"])
 check("nothing left out", usd.left_out() == [])
 
+# A mesh picked in the viewport brings its groups (user 2026-11-23: the
+# tool had flattened them).
+new_scene()
+house = cmds.group(empty=True, name="house_GRP")
+walls = cmds.group(empty=True, name="walls_GRP", parent=house)
+wall = cmds.parent(cmds.polyCube(name="wallN")[0], walls)[0]
+roof = cmds.parent(cmds.polyCube(name="roof")[0], house)[0]
+cmds.move(5, 0, 0, house)
+moved = usd.add(["|house_GRP|walls_GRP|wallN", "|house_GRP|roof"])
+check("add a mesh inside groups: its whole top group comes, nesting kept",
+      moved == ["|geo|render|house_GRP"]
+      and cmds.objExists("|geo|render|house_GRP|walls_GRP|wallN")
+      and cmds.objExists("|geo|render|house_GRP|roof")
+      and world("|geo|render|house_GRP|walls_GRP|wallN") == [5, 0, 0])
+moved = usd.add(["|geo|render|house_GRP|roof"], purpose=usd.PROXY)
+check("inside geo, render to proxy: only what's picked moves",
+      moved == ["|geo|proxy|roof"] and cmds.objExists("|geo|render|house_GRP|walls_GRP|wallN"))
+check("no cameras or lights in geo", usd.strays() == [])
+shot = cmds.group(empty=True, name="set_GRP")
+cmds.parent(cmds.polyCube(name="crate")[0], shot)
+cmds.parent(cmds.camera(name="setCam")[0], shot)
+usd.add(["|set_GRP|crate"])
+check("a camera that came in with its group is listed",
+      [n.split("|")[-1] for n in usd.strays()] == ["setCam1"])
+
 new_scene()
 cmds.group(empty=True, name="render")
 check("build: refuses when something else is already called render",

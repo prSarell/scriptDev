@@ -38,7 +38,9 @@ Publish adds <asset>_model_GRP on top.
 2. Click Build Hierarchy. With nothing selected, all geometry
    outside geo goes into render.
 3. To place things yourself: select them, then Selected to Render
-   or Selected to Proxy. Nothing moves in the world.
+   or Selected to Proxy. A mesh brings its whole top group, so your
+   groups are kept (nest them as deep as you like). Nothing moves
+   in the world.
 4. Check the list "Geometry outside geo" is empty (click a row to
    select it). Refresh updates it.
 5. Next: USD Names, then Publish with USD ticked.
@@ -169,6 +171,16 @@ class HierarchyWindow(object):
         cmds.inViewMessage(amg="USD hierarchy built%s." % (
             "; <hl>%d</hl> moved into render" % len(moved) if moved else ""),
             pos="topCenter", fade=True)
+        self.warn_strays()
+
+    def warn_strays(self):
+        found = usd.strays()
+        if found:
+            _say("These cameras / lights came into geo with their group and don't belong "
+                 "in the model's USD. Move them out of geo:
+  %s"
+                 % "
+  ".join(n.split("|")[-1] for n in found[:15]))
 
     def add(self, purpose):
         picked = _selection()
@@ -186,6 +198,7 @@ class HierarchyWindow(object):
         self.refresh()
         cmds.inViewMessage(amg="<hl>%d</hl> moved into geo|%s." % (len(moved), purpose),
                            pos="topCenter", fade=True)
+        self.warn_strays()
 
 
 def show_hierarchy():

@@ -18,7 +18,8 @@ Gets a model ready to publish as USD. The layout and names are the user's
 
 Hierarchy (the USD Hierarchy button): build() makes geo|render|proxy at the
 world root; add() moves what's picked into render or proxy, where it was
-in the world. left_out() is the geometry still outside geo.
+in the world, with its whole top group (the artist's groups are kept and
+can nest as deep as they like under render). left_out() is the geometry still outside geo.
 
 Names (the USD Names button): name() names what's picked from a part name
 (chair_seat_GEO; several get 01, 02, ...); problems() finds the names that
@@ -163,15 +164,27 @@ def _topmost(nodes):
     return [n for n in picked if not any(n.startswith(o + "|") for o in picked if o != n)]
 
 
+def _whole_group(node):
+    """What moves when node is picked: outside geo, its top group (so a
+    mesh picked in the viewport brings its groups along, user 2026-11-23);
+    inside geo, just node."""
+    if node == "|geo" or node.startswith("|geo|"):
+        return node
+    return "|" + node.lstrip("|").split("|")[0]
+
+
 def add(nodes, purpose=RENDER):
     """Move nodes into geo|render (or geo|proxy), where they are in the
-    world. Builds the hierarchy first if it's missing. Returns the new
-    paths of what moved."""
+    world. Outside geo a picked node brings its whole top group, so the
+    artist's groups are kept; inside geo (render <-> proxy) only what's
+    picked moves. Builds the hierarchy first if it's missing. Returns the
+    new paths of what moved."""
     if purpose not in (RENDER, PROXY):
         raise ValueError(purpose)
     target = build()[purpose]
     moved = []
-    for node in _topmost(nodes):
+    picked = _topmost([_whole_group(n) for n in _topmost(nodes)])
+    for node in picked:
         if node in ("|geo", "|geo|render", "|geo|proxy"):
             continue
         if target.startswith(node + "|"):
@@ -182,6 +195,17 @@ def add(nodes, purpose=RENDER):
             continue                    # cameras, lights
         moved += cmds.parent(node, target) or []
     return [cmds.ls(m, long=True)[0] for m in moved]
+
+
+def strays():
+    """Cameras and lights inside geo (they came in with a group): they
+    don't belong in the model's USD."""
+    found = []
+    for node in cmds.listRelatives("|geo", allDescendents=True, fullPath=True,
+                                   type="transform") or [] if cmds.objExists("|geo") else []:
+        if _kind(node) is None and _shapes(node):
+            found.append(node)
+    return sorted(found)
 
 
 def left_out():
