@@ -21,6 +21,13 @@ If a rule here gets in the way of a fix, **stop and ask the project lead**
    something doesn't show up in Build, fix it where it was made (how it
    was published), or ask. Never widen or reshape the dropdowns to make it
    appear.
+   *Changed by the project lead, 2026-11-12:* "we need to be able to get
+   any asset from any shot or department if we need it." Add to list's
+   **Shot** side now lists the shots with something published by the
+   picked department: its camera (Layout or Animation, whichever published
+   it) and, for Animation, its Final caches. **+** adds all of them, a
+   row each. The dropdowns themselves (their layout, the department list)
+   are unchanged and still locked.
 
 ## Design rules (the pipe's backbone)
 

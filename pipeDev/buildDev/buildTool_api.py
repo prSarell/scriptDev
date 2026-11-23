@@ -709,6 +709,8 @@ def pull(shot_dir, published, vid):
         "source": source,
         "pulled": datetime.now().isoformat(timespec="seconds"),
     }
+    if published.get("from_shot"):         # another shot's cache (shot_items)
+        entry["from_shot"] = list(published["from_shot"])
     if published["code"] in LINKED_CODES:
         entry["link"] = link_rel_path(published["asset_type"], published["asset"],
                                       published["code"], os.path.splitext(dest)[1])
@@ -828,7 +830,7 @@ def scene_version(shot_dir, published):
     already in the scene alone unless the student picks another version
     (user, 2026-10-20: adding an asset must not rebuild the others)."""
     if published.get("kind") == "camera":
-        node, vid = shot_camera()
+        node, vid = shot_camera((published.get("from_shot") or (None, published["asset"]))[1])
         return (vid or "") if node else None
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
@@ -1187,13 +1189,113 @@ def _linked_entry(root, rel, path):
 # and locked (spec §3i "Cameras": camera and keys are stored separately)
 # ---------------------------------------------------------------------------
 
+# Another shot's camera or caches, built into any shot or asset (user,
+# 2026-11-12: "we need to be able to get any asset from any shot or
+# department if we need it", e.g. a shot camera in an environment to check
+# its layout). From Add to list's Shot side: Layout or Animation (whichever
+# published the camera, user: "cameras can be published by layout or
+# animation"), and Animation's Final caches. Entries carry 'from_shot':
+# (sequence, shot). The camera arrives as camera1 in its <shot>_cam_GRP,
+# like any shot camera (user, 2026-11-12: "we need to keep the camera name as
+# camera1 other wise it breaks my camera viewport switching shortcut"), so
+# whatever camera1 was there is renamed camera1_old: one camera1 at a time,
+# the last one built. A cache arrives as <shot>_<item>, beside the scene's own.
+
+OTHER_CAMERA_DIR = "assets/camera/shots"        # + /<shot>/cam.ma, camAnim.ma, camAnim.json
+CACHE_DEPARTMENT = "anim"                       # caches are Final Animation's
+
+
+def camera_files(published):
+    """{part: path in the shot or asset} for a camera entry: the fixed
+    names for the shot's own camera, a folder per shot for another's."""
+    shot = (published.get("from_shot") or (None, None))[1]
+    if not shot:
+        return CAMERA_FILES
+    return dict((part, "%s/%s/%s" % (OTHER_CAMERA_DIR, shot, rel.split("/")[-1]))
+                for part, rel in CAMERA_FILES.items())
+
+
+def _camera_published_from(map_path):
+    """'layout' or 'anim': the department that published a camera."""
+    mapping = _read_json(map_path) or {}
+    return mapping.get("published_from") or "layout"
+
+
+def shot_items(h_root, film, seq, shot, department):
+    """What a shot has published for a department, to build into another
+    shot or an asset: its camera, with only the versions that department
+    published, and for Animation its Final caches (renamed <shot>_<item>
+    so they sit beside the scene's own). [] for a department that publishes
+    nothing for shots. department None: everything, every camera version
+    (a list coming back with what was built)."""
+    found = []
+    for camera in list_shot_cameras(h_root, film, seq, shot):
+        vids = [v for v, f in camera["files"].items()
+                if department is None or _camera_published_from(f["map"]) == department]
+        if vids:
+            found.append(_finish(dict(
+                camera, from_shot=(seq, shot),
+                versions=dict((v, camera["versions"][v]) for v in vids),
+                info=dict((v, camera["info"][v]) for v in vids),
+                files=dict((v, camera["files"][v]) for v in vids))))
+    if department in (CACHE_DEPARTMENT, None):
+        for cache in list_shot_caches(h_root, film, seq, shot):
+            found.append(dict(cache, asset="%s_%s" % (shot, cache["asset"]),
+                              from_shot=(seq, shot)))
+    return found
+
+
+def _is_shot_dir(path):
+    """True for a shot's folder (…\\maya\\sequences\\<seq>\\<shot>)."""
+    try:
+        _, rel = pub.find_film_folder(path)
+    except Exception:
+        return False
+    return len(rel) >= 3 and rel[1:3] == ["maya", "sequences"]
+
+
+def build_other_camera(shot_dir, published, vid):
+    """Another shot's camera into this shot or asset: pulled into its own
+    folder, imported as camera1 in its <shot>_cam_GRP, locked. Whatever
+    camera1 the scene had (an asset's own, or the shot's camera) is renamed
+    camera1_old first, as when a shot camera is rebuilt: one camera1 at a
+    time. Into an asset the timeline takes that shot's range, so the move
+    can be scrubbed; a shot keeps its own. Returns (done, warning)."""
+    files = camera_files(published)
+    shot = published["from_shot"][1]
+    key = manifest_key(CAMERA_TYPE, published["asset"], CAMERA_CODE)
+    entry = read_manifest(shot_dir).get(key)
+    done = []
+    files_there = all(os.path.isfile(os.path.join(shot_dir, *r.split("/")))
+                      for r in files.values())
+    label = version_label(published, vid, mark_latest=False)
+    if not entry or entry_version_id(entry) != vid or not files_there:
+        pull_camera(shot_dir, published, vid)
+        done.append(("updated to %s" if entry else "pulled %s") % label)
+    in_asset = not _is_shot_dir(shot_dir)
+    current, current_vid = shot_camera(shot)
+    if current and current_vid == vid:
+        done.append("already up to date")
+    else:
+        for node in cmds.ls(CAMERA_NAME, long=True, type="transform") or []:
+            done.append("existing camera1 renamed %s" % _move_out_of_the_way(node))
+        info = published["info"][vid]
+        import_camera(shot_dir, info["version"], info["login"], files)
+        done.append("camera1 %s (from %s) imported and locked" % (label, shot))
+    if in_asset:
+        done += apply_camera_range(shot_dir, files)
+    return done, None
+
+
 def pull_camera(shot_dir, published, vid):
     """Copy one camera version's three files into the shot under fixed
-    names and record it in the manifest. Returns the camera file path."""
+    names (another shot's: in its own folder, camera_files) and record it
+    in the manifest. Returns the camera file path."""
     if vid not in published["files"]:
         raise BuildError("Camera %s of %s isn't on the H drive."
                          % (vid, published["asset"]))
-    for part, rel in CAMERA_FILES.items():
+    files = camera_files(published)
+    for part, rel in files.items():
         dest = os.path.join(shot_dir, *rel.split("/"))
         if not os.path.isdir(os.path.dirname(dest)):
             os.makedirs(os.path.dirname(dest))
@@ -1208,13 +1310,15 @@ def pull_camera(shot_dir, published, vid):
     manifest[key] = {
         "version": info["version"],
         "login": info["login"],
-        "file": CAMERA_FILES["camera"],
-        "extra_files": [CAMERA_FILES["keys"], CAMERA_FILES["map"]],
+        "file": files["camera"],
+        "extra_files": [files["keys"], files["map"]],
         "source": published["files"][vid]["camera"],
         "pulled": datetime.now().isoformat(timespec="seconds"),
     }
+    if published.get("from_shot"):
+        manifest[key]["from_shot"] = list(published["from_shot"])
     _write_manifest(shot_dir, manifest)
-    return os.path.join(shot_dir, *CAMERA_FILES["camera"].split("/"))
+    return os.path.join(shot_dir, *files["camera"].split("/"))
 
 
 def _is_camera_group(node):
@@ -1223,13 +1327,17 @@ def _is_camera_group(node):
             and cmds.getAttr("%s.%s" % (node, DEPT_STAMP)) == CAMERA_CODE)
 
 
-def shot_camera():
+def shot_camera(shot=None):
     """The built shot camera in the open scene: (camera1 transform, version
     id) or (None, None). It's camera1 inside a top-level camera group; the
     group's stamp says who published which version. A camera from before
-    the group (a top-level camera1) doesn't count, so a rebuild replaces it."""
+    the group (a top-level camera1) doesn't count, so a rebuild replaces it.
+    shot: only that shot's camera (its <shot>_cam_GRP), since another
+    shot's can be camera1 too (build_other_camera)."""
     for group in cmds.ls(assemblies=True, long=True) or []:
         camera = "%s|%s" % (group, CAMERA_NAME)
+        if shot and group.split("|")[-1] != "%s_cam_GRP" % shot:
+            continue
         if _is_camera_group(group) and cmds.objExists(camera):
             return camera, version_id(cmds.getAttr("%s.%s" % (group, BY_STAMP)),
                                       cmds.getAttr("%s.%s" % (group, VERSION_STAMP)))
@@ -1334,15 +1442,17 @@ def _drop_namespace(ns):
         cmds.namespace(removeNamespace=":" + ns, mergeNamespaceWithRoot=True)
 
 
-def import_camera(shot_dir, version, login):
+def import_camera(shot_dir, version, login, files=None):
     """Import the pulled camera group live (<shot>_cam_GRP > camera1 +
     camera1_DATA), connect its keys to the data node and lock it. The
     camera is driven 1:1 by the data node, so it behaves like a referenced
     camera with no reference path (user, 2026-10-20). The group's pipe
-    stamp says which version it is. Returns camera1's transform."""
-    cam_path = os.path.join(shot_dir, *CAMERA_FILES["camera"].split("/"))
-    keys_path = os.path.join(shot_dir, *CAMERA_FILES["keys"].split("/"))
-    with open(os.path.join(shot_dir, *CAMERA_FILES["map"].split("/")), "r") as f:
+    stamp says which version it is. files: another shot's camera
+    (camera_files). Returns camera1's transform."""
+    files = files or CAMERA_FILES
+    cam_path = os.path.join(shot_dir, *files["camera"].split("/"))
+    keys_path = os.path.join(shot_dir, *files["keys"].split("/"))
+    with open(os.path.join(shot_dir, *files["map"].split("/")), "r") as f:
         mapping = json.load(f)
     if mapping.get("format") != CAMERA_MAP_FORMAT:
         raise BuildError("This camera was published before cameras had a group. "
@@ -1381,7 +1491,10 @@ def import_camera(shot_dir, version, login):
 def build_camera(shot_dir, published, vid):
     """One click for the shot camera: pull (or update), then import it live
     as camera1 with its keys, locked. An existing camera1 is renamed
-    camera1_old first. Returns (done, warning)."""
+    camera1_old first. Another shot's camera: build_other_camera.
+    Returns (done, warning)."""
+    if published.get("from_shot"):
+        return build_other_camera(shot_dir, published, vid)
     key = manifest_key(CAMERA_TYPE, published["asset"], CAMERA_CODE)
     entry = read_manifest(shot_dir).get(key)
     done = []
@@ -1392,7 +1505,7 @@ def build_camera(shot_dir, published, vid):
         pull_camera(shot_dir, published, vid)
         done.append(("updated to %s" if entry else "pulled %s") % label)
 
-    current, current_vid = shot_camera()
+    current, current_vid = shot_camera(published["asset"])
     if current and current_vid == vid:
         done.append("already up to date")
         done += apply_camera_range(shot_dir)
@@ -1420,13 +1533,13 @@ def build_camera(shot_dir, published, vid):
     return done, None
 
 
-def apply_camera_range(shot_dir):
+def apply_camera_range(shot_dir, files=None):
     """The shot's frame range is the one its camera was published with
     (the map's start/end): set the playback and animation range to it
-    (user, 2026-10-26: SEQ010_160 built without its range). Returns what
-    was done, as lines."""
+    (user, 2026-10-26: SEQ010_160 built without its range). files: another
+    shot's camera (camera_files). Returns what was done, as lines."""
     try:
-        with open(os.path.join(shot_dir, *CAMERA_FILES["map"].split("/")), "r") as f:
+        with open(os.path.join(shot_dir, *(files or CAMERA_FILES)["map"].split("/")), "r") as f:
             mapping = json.load(f)
         start, end = int(mapping["start"]), int(mapping["end"])
     except (IOError, OSError, ValueError, KeyError, TypeError):

@@ -49,12 +49,19 @@ def find_tests(pattern=""):
     return sorted(tests)
 
 
+# mayapy runs the user's userSetup.py on start, and an installed mpPipe's
+# imports pipeEnv and publishTool_api from Maya's scripts folder. A test
+# importing them afterwards would get the installed copies, not the ones
+# being tested (found 2026-11-12), so tests start without it.
+TEST_ENV = dict(os.environ, MAYA_SKIP_USERSETUP_PY="1")
+
+
 def run(mayapy, path):
     start = time.time()
     try:
         proc = subprocess.run([mayapy, os.path.basename(path)], cwd=os.path.dirname(path),
                               capture_output=True, text=True, errors="replace",
-                              timeout=TIMEOUT)
+                              timeout=TIMEOUT, env=TEST_ENV)
         out = proc.stdout + proc.stderr
     except subprocess.TimeoutExpired:
         return False, "timed out after %ds" % TIMEOUT, time.time() - start

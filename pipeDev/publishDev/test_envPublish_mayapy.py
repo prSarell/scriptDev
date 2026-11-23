@@ -1,8 +1,9 @@
 # Environment publish (spec §4c, DECIDED 2026-10-21): published from a
 # shot's layout scene to an environment asset by its sets. landscape_SET
-# stays put and is cleaned up like a model; building_SET holds one
-# buildings group with a group per building (named freely, 2026-10-22),
-# transforms kept, a <group>_LOC per building; sky_SET keeps transforms, locked,
+# stays put and is cleaned up like a model; building_SET holds any groups /
+# objects (2026-11-12), transforms kept, no locators made (an artist's own
+# travel); a group named after its role is unpacked (no buildings|buildings);
+# sky_SET keeps transforms, locked,
 # its image travels; a one-frame .abc of landscape + buildings goes beside
 # the publish; the working scene is never changed. Built like the user's
 # SEQ010_140 environment_001.ma. ShotGrid and the playblast are stubbed.
@@ -115,14 +116,16 @@ check("no environment_SET: refused, explaining the sets", refused("no environmen
 scene = layout_scene()
 cmds.sets("environment|buildings|shed", add="landscape_SET")
 check("one thing in two roles: refused", refused("Each thing has one role"))
+# Any number of groups / objects in building_SET (user, 2026-11-12): no
+# longer refused.
 scene = layout_scene()
 cmds.sets("environment|buildings", remove="building_SET")
-cmds.sets("environment|buildings|shed", add="building_SET")
-check("building_SET holding a building, not the buildings group: refused",
-      refused("just one group called buildings"))
+cmds.sets(["environment|buildings|shed", "environment|buildings|oldBarn"], add="building_SET")
+check("building_SET holding buildings straight, not the buildings group: accepted",
+      sorted(env._short(b) for b in env.check_environment()[env.BUILDINGS]) == ["oldBarn", "shed"])
 scene = layout_scene()
 cmds.parent(cmds.polyCube(name="looseBox")[0], "environment|buildings")
-check("a loose mesh inside buildings (not in its own group): refused", refused("isn't a group"))
+check("a loose mesh inside buildings: accepted", env.check_environment()[env.BUILDINGS])
 check("nothing reached the H drive", not os.listdir(os.path.join(
     H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape", "scenes")))
 
@@ -147,7 +150,7 @@ check("read-only on H", not os.access(plan["dest"], os.W_OK))
 check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
 check("working scene unchanged (names, placements, history, sets, image path)", before == after)
 check("playblast showed the environment's things",
-      shown[-1] == ["ground", "imagePlanesky", "oldBarn", "shed"])
+      shown[-1] == ["buildings", "ground", "imagePlanesky"])
 check("warned: the sky image isn't in an asset's sourceimages",
       any("sourceimages" in w for w in plan.get("warnings", [])))
 check("building names are free: no warning for oldBarn (no such asset on H)",
@@ -157,8 +160,10 @@ cmds.file(new=True, force=True); cmds.file(plan["dest"], open=True, force=True)
 G = "scoutsHouseLandscape_model_GRP"
 check("top is the stamped pipe group (Modeling), locked", cmds.nodeType(G) == "dagContainer"
       and cmds.getAttr(G + ".pipe_department") == "model" and cmds.getAttr(G + ".tx", lock=True))
-check("laid out by role", sorted(cmds.listRelatives(G, children=True)) ==
-      ["buildings", "landscape", "locators", "sky"])
+check("laid out by role, no locators group made", sorted(cmds.listRelatives(G, children=True))
+      == ["buildings", "landscape", "sky"] and not cmds.ls(type="locator"))
+check("the buildings group was unpacked: buildings > shed, not buildings > buildings",
+      sorted(cmds.listRelatives(G + "|buildings", children=True)) == ["oldBarn", "shed"])
 check("nothing outside the pipe group (no original environment came along)",
       [a for a in cmds.ls(assemblies=True) if a not in ("persp", "top", "front", "side")]
       == [G] and not cmds.ls("pipeTmp_*", recursive=True))
@@ -175,20 +180,13 @@ check("landscape frozen and history gone, but still where it was",
 s = G + "|buildings|shed"
 check("building keeps its transforms", [round(v, 2) for v in cmds.getAttr(s + ".translate")[0]]
       == [-8759, 61, -64975] and round(cmds.getAttr(s + ".rotateY"), 2) == -9.67)
-loc = G + "|locators|shed_LOC"
-same = all(abs(a - b) < 1e-3 for a, b in zip(cmds.xform(loc, query=True, worldSpace=True, matrix=True),
-                                             cmds.xform(s, query=True, worldSpace=True, matrix=True)))
-check("shed_LOC sits exactly at the building's placement", cmds.objExists(loc) and same)
-check("each building has its own locator", sorted(cmds.listRelatives(G + "|locators")) ==
-      ["oldBarn_LOC", "shed_LOC"] and [round(v) for v in cmds.xform(
-          G + "|locators|oldBarn_LOC", query=True, worldSpace=True, translation=True)]
-      == [500, 0, -60000])
 k = G + "|sky|imagePlanesky"
 check("sky keeps its transforms, locked", round(cmds.getAttr(k + ".tx")) == -6700
       and cmds.getAttr(k + ".tx", lock=True) and cmds.getAttr(k + ".ry", lock=True))
 check("sets come with it, holding the copies",
       sorted(cmds.sets("environment_SET", query=True)) == ["building_SET", "landscape_SET", "sky_SET"]
-      and [n.split("|")[-1] for n in cmds.sets("building_SET", query=True)] == ["buildings"])
+      and sorted(n.split("|")[-1] for n in cmds.sets("building_SET", query=True))
+      == ["oldBarn", "shed"])
 check("... so the published layout passes the same check (can be published again)",
       sorted(env._short(b) for b in env.check_environment()[env.BUILDINGS])
       == ["oldBarn", "shed"])
@@ -199,8 +197,8 @@ check("sky image points at the publish's copy through $PIPE_SCRATCH",
 tex_dir = os.path.join(H, FILM, "maya", "assets", "environment", "scoutsHouseLandscape",
                        "sourceimages", "scout", "scoutsHouseLandscape_scout_model_v001")
 check("sky image copied to H for this version", os.path.isfile(os.path.join(tex_dir, "sky_blue_wispy_001.png")))
-check("stamp lists buildings and locators",
-      sorted(json.loads(cmds.getAttr(G + ".pipe_locators"))) == ["oldBarn_LOC", "shed_LOC"]
+check("stamp lists the buildings, and no locators",
+      json.loads(cmds.getAttr(G + ".pipe_locators")) == []
       and sorted(json.loads(cmds.getAttr(G + ".pipe_buildings"))) == ["oldBarn", "shed"])
 
 cmds.file(new=True, force=True)
@@ -209,7 +207,7 @@ cmds.AbcImport(env.cache_path(plan).replace("\\", "/"), mode="import")
 check("the cache holds the landscape and buildings, not the sky",
       cmds.objExists("ground") and cmds.objExists("pCube1") and not cmds.ls(type="imagePlane"))
 
-# -- Build: pulled with its cache; a real house snapped to the locator ----------
+# -- Build: pulled with its cache ----------------------------------------------
 published = [p for p in build.list_buildable(H, FILM) if p["asset"] == "scoutsHouseLandscape"]
 check("Build lists the environment publish, as Modeling", len(published) == 1
       and published[0]["code"] == "model")
@@ -220,35 +218,14 @@ check("pulled with its cache and its sky image",
       and os.path.isfile(os.path.join(build.texture_folder_of(dest), "sky_blue_wispy_001.png")))
 check("clearing that version takes the cache too", os.path.splitext(dest)[0] + ".abc"
       in build.version_files(dest))
-cmds.file(new=True, force=True)
-cmds.file(dest, reference=True, namespace="scoutsHouseLandscape_env")
-house = api.make_pipe_group("shed_model_GRP")          # a model publish's group: locked at 0,0,0
-cube = cmds.polyCube(name="shedModel")[0]
-cmds.parent(cube, house)
-api.finish_pipe_group(house)
-rloc = "scoutsHouseLandscape_env:shed_LOC"
-cmds.parent(house, cmds.ls(rloc, long=True)[0], relative=True)
-placed = cmds.xform(cmds.ls("shedModel", long=True)[0], query=True, worldSpace=True, translation=True)
-check("a published house parented under its locator lands at the placement, still locked",
-      [round(v) for v in placed] == [-8759, 61, -64975]
-      and cmds.getAttr(cmds.ls("shed_model_GRP", long=True)[0] + ".tx", lock=True))
 
 # -- A building group with no transforms (like environment_001.ma's shed):
-#    published, not refused; the locator comes from its pieces ---------------
+#    published, not refused, with nothing to say about it -------------------
 scene = layout_scene(pieces_moved=True)
-box = cmds.exactWorldBoundingBox("environment|buildings|shed")
 plan2 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
 check("no transforms on the building: still published", plan2["version"] == 2)
-check("... and the report says how its locator was placed",
-      any("shed has no transforms" in w and "-9.7" in w for w in plan2.get("warnings", [])))
+check("... with no warning about it", not any("no transforms" in w for w in plan2.get("warnings", [])))
 cmds.file(new=True, force=True); cmds.file(plan2["dest"], open=True, force=True)
-loc = G + "|locators|shed_LOC"
-t = cmds.xform(loc, query=True, worldSpace=True, translation=True)
-check("locator at the bottom-centre of the pieces",
-      abs(t[0] - (box[0] + box[3]) / 2) < 1e-2 and abs(t[1] - box[1]) < 1e-2
-      and abs(t[2] - (box[2] + box[5]) / 2) < 1e-2)
-check("... turned like the pieces", abs(cmds.xform(loc, query=True, worldSpace=True,
-                                                   rotation=True)[1] + 9.67) < 1e-2)
 check("... and the building itself is left as it was (group at 0, pieces placed)",
       cmds.getAttr(G + "|buildings|shed.translate")[0] == (0, 0, 0)
       and round(cmds.getAttr(G + "|buildings|shed|pCube1.translateX")) == -8759)
@@ -291,6 +268,56 @@ cmds.file(new=True, force=True); cmds.file(plan4["dest"], open=True, force=True)
 check("... and the published .ma is still clean (nothing outside the group)",
       [a for a in cmds.ls(assemblies=True) if a not in ("persp", "top", "front", "side")]
       == ["scoutsHouseLandscape_model_GRP"])
+# -- Groups inside groups, several groups in a set, a loose mesh and the
+#    artist's own locator (user, 2026-11-12: "could I add a group for sky
+#    scraper geo and a group for shopfront geo in the buildings folder?") ---
+scene = layout_scene()
+city = {"skyscrapers": ("towerA", "towerB"), "shopfronts": ("cafe", "bakery")}
+for category, names in sorted(city.items()):
+    grp = cmds.group(empty=True, name=category, parent="environment|buildings")
+    for i, name in enumerate(names):
+        b = cmds.group(empty=True, name=name, parent=grp)
+        cmds.parent(cmds.polyCube(name=name + "Box")[0], b)
+        cmds.setAttr(b + ".translate", 100 * i, 0, 200 * len(category))
+pin = cmds.spaceLocator(name="cafePin_LOC")[0]
+pin = cmds.parent(pin, "environment|buildings|shopfronts|cafe")[0]
+cmds.setAttr("environment|buildings|shopfronts|cafe|cafePin_LOC.translate", 3, 0, 4)
+cmds.sets(cmds.polyCube(name="kiosk")[0], add="building_SET")    # a mesh, straight in the set
+lamps = cmds.group(empty=True, name="lamps", parent="environment")
+cmds.parent(cmds.polyCylinder(name="lampPost")[0], "environment|lamps")
+cmds.sets("environment|lamps", add="building_SET")
+cmds.file(save=True, type="mayaAscii")
+plan5 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+check("several groups, nested groups, a loose mesh, a locator: published", plan5["version"] == 5)
+cmds.file(new=True, force=True); cmds.file(plan5["dest"], open=True, force=True)
+B = G + "|buildings"
+check("everything in building_SET came, side by side in buildings",
+      sorted(cmds.listRelatives(B, children=True))
+      == ["kiosk", "lamps", "oldBarn", "shed", "shopfronts", "skyscrapers"])
+check("... nested groups kept, with their transforms",
+      sorted(cmds.listRelatives(B + "|skyscrapers", children=True)) == ["towerA", "towerB"]
+      and [round(v) for v in cmds.getAttr(B + "|skyscrapers|towerB.translate")[0]]
+      == [100, 0, 2200])
+check("... the artist's locator published where it was, and on the stamp",
+      cmds.getAttr(B + "|shopfronts|cafe|cafePin_LOC.translate")[0] == (3, 0, 4)
+      and json.loads(cmds.getAttr(G + ".pipe_locators")) == ["cafePin_LOC"])
+check("... and it passes the check again (can be published again)",
+      sorted(env._short(b) for b in env.check_environment()[env.BUILDINGS])
+      == ["kiosk", "lamps", "oldBarn", "shed", "shopfronts", "skyscrapers"])
+
+# -- landscape_SET holding a group called landscape (fieldA, 2026-11-12):
+#    unpacked, no landscape|landscape -------------------------------------
+scene = layout_scene()
+cmds.sets("environment|landscape|ground", remove="landscape_SET")
+cmds.sets("environment|landscape", add="landscape_SET")
+cmds.file(save=True, type="mayaAscii")
+plan6 = api.publish(scene, H, SC, env.ENV_CODE, target=TARGET, frame_count=2)
+cmds.file(new=True, force=True); cmds.file(plan6["dest"], open=True, force=True)
+place = cmds.ls("snowLand_snowPlace", long=True)
+check("landscape group unpacked: landscape > ground, the placement still drives the projection",
+      cmds.listRelatives(G + "|landscape", children=True) == ["ground"]
+      and len(place) == 1 and place[0].startswith("|" + G + "|landscape|ground|")
+      and cmds.ls(cmds.listConnections("snowProj.placementMatrix")[0], long=True) == place)
 print("%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, files in os.walk(base):
     for f in files:

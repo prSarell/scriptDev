@@ -774,6 +774,23 @@ The tools are developed side by side:
     line says which namespaces were taken off. A whole-scene publish with
     namespaces is exported; a clean one is still copied. Name clashes
     while stripping get Maya's usual number (`lambert7` → `lambert8`).
+    **Superseded (review #7, 2026-10-30):** a clash refuses the publish
+    instead (a renamed DNA node breaks with no error). **2026-11-12
+    (DECIDED + built):** unassigned shaders don't count, since they're
+    never published (user: "the shaders connected to models in the scene
+    should be published 100% but if the shader is not connected to a mesh
+    of some description it can be excluded from the publish"). A real
+    clash still refuses, and the red popup offers **Fix Namespace
+    Clashes** (user: "can the pipe offer to correct the namespace clashes
+    for the student?"). The popup lists what it will do to the working
+    scene: animation curves that drive nothing are deleted (unlocked
+    first); anything in use, shaders on meshes included, is renamed with
+    its namespace folded in (`tuft_002:fieldA:lambert_ground` →
+    `tuft_002_fieldA_lambert_ground`), and the node it clashed with is never
+    touched. MetaHuman DNA nodes are left for the student. Empty namespaces
+    are removed; one Ctrl+Z undoes it. The student then publishes again.
+    A namespace clash never reaches a publish (user: "We don't want name
+    space clashes in publish").
   - **Build Shot always uses the clean namespace** (`backpack:`). An empty
     leftover namespace is removed first. One still holding nodes is
     explained ("already used in this scene by ..."), never turned into
@@ -1335,6 +1352,33 @@ The tools are developed side by side:
           thumbnail straight after the render (as shotSub). No movie (no RV,
           or RV signed out) = no publish, so ShotGrid never gets a blank
           review.
+        - **Flow Render (cloud) option (TRIAL, BUILT 2026-11-13).** The user:
+          "this might be a great option for students to handle test render
+          submissions during animation without locking them out of
+          machines"; "lets get it running so I can test it. If it turns out
+          to be to difficult to manage we will ditch it." Render on > Flow
+          Render (cloud), only where the Maya's Arnold has Flow Render
+          (Arnold for Maya 5.6.1+); signs in with Maya's own Autodesk
+          account (no separate Arnold account). Code all in
+          `lightingDev/renderSub_flow.py`; frames come back into the version
+          folder under renderSub's names, so review, partial publish and
+          Publish are unchanged. Estimates for the cloud are kept apart
+          (where kind `cloud`) and are turnaround times. Details and the
+          hand test: pipelineFollowUps.md "renderSub".
+        - **A render that stops early still publishes (DECIDED + BUILT
+          2026-11-13).** The user, after a power cut stopped SEQ010_160 v003
+          at frame 1040 of 1001-1181: "There are to many times when a render
+          might not finish for whatever reason. This shouldn't mean the
+          existing rendered frames can't be published." Cancelled, failed or
+          **interrupted** (still marked rendering in `render.json`, but its
+          process, saved as `pid`, is gone or it rendered on another machine)
+          renders publish the frames that finished. A stopped render's last
+          frame counts only if it's at least half the usual size (Arnold makes
+          the EXR when the frame starts, so a power cut leaves a header-only
+          stub); the stub stays on scratch. The movie is made at publish from
+          those frames, and the ShotGrid note starts "Partial render
+          (<status>): N of M frame(s) finished". Resuming into the same
+          version is not built.
         - **Watch before publishing (BUILT 2026-11-13).** The user: "a popup
           that asks the student to publish or cancel the renderSub after RV
           loads. So they can get their eyes on the frames before sending it
@@ -1557,6 +1601,27 @@ The tools are developed side by side:
         The table above is now only what Build into's department means for
         a shot's caches (Animation, Creature) and which list a shot keeps
         (one per department). Build into is unchanged.
+        **CHANGED by the user, 2026-11-12: another shot's camera and caches
+        can be built anywhere.** "we need to be able to get any asset from
+        any shot or department if we need it" (first case: a shot camera in
+        an environment asset, to check its layout); "cameras can be
+        published by layout or animation". Add to list's Shot side lists
+        the shots with something published by the picked department (Layout:
+        its Layout camera; Animation: its Animation camera and Final caches);
+        **+** adds all of them, a row each, ticked; untick what isn't
+        needed. Dropdown layout and departments unchanged. Built
+        (`buildTool_api.shot_items`, `build_other_camera`): the camera comes
+        in as **`camera1`** in its `<shot>_cam_GRP`, locked, files in
+        `assets\camera\shots\<shot>\` (user: "we need to keep the camera
+        name as camera1 other wise it breaks my camera viewport switching
+        shortcut"). Whatever `camera1` the scene had (an asset's own, or the
+        shot's camera) is renamed `camera1_old`, as for any camera rebuild:
+        one `camera1` at a time, the last one built; building the shot's own
+        camera again brings it back. Into an asset the timeline takes that
+        shot's range, a shot keeps its own. A cache comes in as `<shot>_<item>`
+        (`<shot>_<item>_cache:`), beside the scene's own. The place's record
+        says which shot each came from, so they come back on its list. A
+        whole-scene Modeling publish leaves shot cameras out.
         DECIDED 2026-10-28 (Claude's call, user: "this was a good call"):
         Layout/Animation also get models (props and set dressing published
         as models would otherwise be stuck), and don't get Creature
@@ -2586,6 +2651,42 @@ The tools are developed side by side:
                    its members swapped for the export and put back).
                    `publishTool_api._PublishSet`. The older notes below
                    about `controls_SET` are superseded.
+                 - **DECIDED + BUILT 2026-11-11 (user): sets by asset
+                   type.** "We need the same sets for an environment asset
+                   prop vehicle etc except there's no need for a
+                   face_controls_set and we don't need the body_
+                   descriptor." A **character** (type folder `character`)
+                   keeps `cache_SET` + `body_controls_SET` (+
+                   `face_controls_SET`). **Every other type** (environment,
+                   prop, vehicle...) needs `cache_SET` + **`controls_SET`**,
+                   no face set. Names in `rig_rules.py`
+                   (`CHARACTER_TYPES`, `CHARACTER_CONTROL_SETS`,
+                   `OTHER_CONTROL_SETS`, `control_sets_for()`).
+                   `check_control_sets(objects, asset_type)` takes the
+                   publish's asset type; a set with the other kind's name
+                   (e.g. `body_controls_SET` on a prop) is refused with
+                   "rename it to ...". A left-over face set on a prop is
+                   ignored. Found on grassBladeA (an environment asset with
+                   a rig): rig publishes of environment assets follow the
+                   ordinary rig rules; only Modeling becomes an environment
+                   publish.
+                 - **Rig Sets tool (BUILT 2026-11-11, user asked).** A
+                   button on the **mpRig** shelf (`rigDev/rigSets.py`)
+                   checks the open rig for the sets above (type from the
+                   scene's folder, or picked outside the pipe), shows each
+                   one's state and **offers to build the missing ones**
+                   from suggestions (cache: visible meshes in the top
+                   group that aren't blendshape targets; controls: an
+                   mGear / AS controls set, else visible curves named like
+                   controls, `rig_rules.CONTROL_NAMES`), after asking.
+                   Also Select Suggested, Make / Add from Selection, Rename
+                   a misnamed set; one undo. With the pipe installed it
+                   runs Publish's own rig checks for the verdict. This
+                   doesn't change "Publish never makes the sets": the
+                   rigger makes them, with the tool. mpRig ships to
+                   students, so the tool works without the pipe (built-in
+                   names kept equal to `rig_rules` by
+                   `test_rigSetsTool_mayapy.py`).
                  - **Names (DECIDED):** `controls_SET` >
                    `body_controls_SET`, `face_controls_SET`, plus any
                    custom sets the rigger adds inside `controls_SET`
@@ -3406,6 +3507,28 @@ models** (the backpack's rules). Environments need different ones.
     was), and the row is added. The Publish window also re-reads H's
     assets/shots on every refresh, so an asset made while it's open shows
     up. An override for publishing elsewhere stays parked (§4d).
+- **2026-11-12 changes (DECIDED + built), replacing the 2026-10-22 building
+  rule and the locator decisions above:**
+  - **Any number of groups in every role set.** `building_SET` no longer
+    has to hold one group called `buildings`: like `landscape_SET` and
+    `sky_SET` it takes any groups or objects, nested however the artist
+    likes (e.g. `buildings` > `skyscrapers` / `shopfronts` > each
+    building). Refused cases dropped: something else in `building_SET`,
+    a loose mesh inside `buildings`, two buildings with the same name.
+  - **Locators aren't part of the publish.** User: "the locator is about
+    locking a point in space for the building position. Lets remove this
+    as an essential part of the publish. Locators should still be able to
+    be published if required, but we don't need it to cause the publish to
+    fail." Publish no longer makes `<group>_LOC` or the `locators` group;
+    an artist's own locators inside the sets publish like anything else
+    and are listed on the `pipe_locators` stamp. Model's convert still
+    clears the `locators` group out of older publishes.
+  - **A group named after its role is unpacked.** If a role set holds a
+    group called `landscape` / `buildings` / `sky` (as Layout makes them)
+    with no transforms of its own, its contents go straight into the
+    publish's role group, so there's no `buildings|buildings` (fieldA's
+    `set_002` had `landscape|landscape`). A group like that with
+    transforms is kept as it is.
 
 ### 4b. Studio Library data (started 2026-10-21)
 

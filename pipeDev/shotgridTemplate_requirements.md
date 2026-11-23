@@ -55,6 +55,11 @@ built yet), **SUGGESTION** (not agreed), **OPEN**.
   Blocking, Final.
   - OPEN: what layout publishes besides the camera; whether a camera
     change after layout needs re-approval; who does layout.
+- **Done on NWF 2026-11-14:** every animated shot (75, not
+  `EAP_010_FULL_CUT`) also has **VFX** (FX step), **Compositing** (Comp
+  step) and **Lighting** (Light step) tasks, unassigned except VFX on
+  SEQ010_140 / SEQ010_160 (Christopher Jones). OPEN: whether these belong
+  in the RMIT templates too.
 - **For the RMIT templates:** drop the **Roto** and **Online** steps
   (user, 2026-10-19). Steps are shared by the whole ShotGrid site, so in
   practice that means hiding them in the template project's settings

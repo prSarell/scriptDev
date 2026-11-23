@@ -351,6 +351,16 @@ hand. One T7 session could cover most of it.
       Try it in a shot scene (refused) and with a `props_grp` already in the
       scene (refused). Open: should it work on rigs too (not now: models and
       environments only)?
+- [ ] **mpModel shelf, USD Hierarchy + USD Names** (built 2026-11-20;
+      imported-model clean-up added 2026-11-23, `modelTool_usd.py`, test
+      45/45 on 2025 + 2027, windows not yet driven in the GUI): import a
+      bought/downloaded model with a namespace and junk in its names
+      (`grassB_TypeGrassColor03_0610_GEO`). USD Names: pick its top group,
+      Name to Field, cut it down to `_TypeGrassColor03_`, check the preview
+      line, Remove; Strip Namespaces with the group picked, then with nothing
+      picked (materials lose theirs too; a referenced model keeps its own).
+      Ctrl+Z undoes each in one step. Then Build Hierarchy, Fix All, publish
+      with USD ticked and open the `.usdz`.
 - [ ] **shotSub / Jiffy shot data in the project's data folder** (built
       2026-10-30, for every student + the pipe): `<project>\scenes\<rel>` ->
       `<project>\data\shotgrid\<rel>` (shotSub + Jiffy SG link, publish log)
@@ -528,9 +538,22 @@ hand. One T7 session could cover most of it.
       assignments, so lookdev must be re-linked to cached meshes by name
       or by a per-mesh tag attribute (e.g. `pipe_look`) that Alembic does
       carry.
-- [ ] Confirm the **house-on-locator** workflow: parent the published
-      `<asset>_model_GRP` under its `_LOC` (it stays locked, at the
-      locator's placement). Tested headless.
+- [x] ~~Confirm the **house-on-locator** workflow~~: dropped 2026-11-12.
+      Publish no longer makes `_LOC` locators (spec §4c, 2026-11-12); an
+      artist who wants one adds their own, and it publishes as is.
+- [ ] Hand test in Maya: an environment with several groups (and groups
+      inside groups) in `building_SET` publishes, and an older publish
+      with a `locators` group still converts cleanly (Model).
+- [x] Hand test in Maya: fieldA `set_002` (grass imported twice) hits a
+      namespace clash, **Fix Namespace Clashes** clears it, and the
+      environment publishes (spec 2026-11-12, namespaces). Done 2026-11-12.
+- [ ] Hand test in Maya: Build > Add to list > **Shot** > Layout >
+      SEQ010 > SEQ010_160 > + > Build into the fieldA environment. The
+      camera arrives as `camera1` in `SEQ010_160_cam_GRP`, timeline set to
+      the shot's range, the viewport shortcut finds it. Then commit
+      (uncommitted 2026-11-12): Build work on a `pipe/` branch from `main`;
+      `PIPE_RULES.md` item 2 + `run_tests.py` (skips userSetup) on
+      `setup/contributors`.
 
 ## 5. Studio Library (spec §4b, built 2026-10-21)
 

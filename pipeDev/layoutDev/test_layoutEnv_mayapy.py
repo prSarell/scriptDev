@@ -41,7 +41,7 @@ cmds.parent(cmds.polyCube(name="shedBox")[0], shed)
 cmds.parent(cmds.imagePlane(name="skyPlane")[0], "|environment|sky")
 found = env.check_environment()
 check("filled in: passes the environment publish check",
-      [n.split("|")[-1] for n in found[env.BUILDINGS]] == ["shed"]
+      [n.split("|")[-1] for n in found[env.BUILDINGS]] == ["buildings"]
       and [n.split("|")[-1] for n in found[env.LANDSCAPE]] == ["landscape"]
       and [n.split("|")[-1] for n in found[env.SKY]] == ["sky"])
 

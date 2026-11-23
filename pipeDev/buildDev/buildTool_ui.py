@@ -54,7 +54,8 @@ pub = api.pub
 # buildTool_api.DEPARTMENTS). Old publishes stamped env aren't listed.
 TARGET_DEPARTMENTS = [(label, code, picker.ANY, True) for label, code in api.DEPARTMENTS]
 SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
-# Published for a shot itself, not an asset: they only build into it.
+# Published for a shot itself, not an asset: its own come with it, and
+# Add to list's Shot side brings another shot's (user, 2026-11-12).
 SHOT_ITEMS = ("camera", "cache")
 
 STATUS_TEXT = {
@@ -144,6 +145,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self._published = []     # everything on the H drive for the shot's film
         self._other_films = {}   # film -> list_published, for the picker
         self._shot_keys = {}     # (film, seq, shot) -> api.list_shot_keys
+        self._shot_items = {}    # (film, seq, shot, department) -> api.shot_items
         self._keys_src = None    # the shot the Keys dropdowns list (see _keys_source)
         self._rows = []          # the shot's list: published entries shown in the table
         self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
@@ -430,10 +432,16 @@ class BuildShotTab(QtWidgets.QWidget):
 
     def _items_for(self, film, code, kind):
         """Add to list's last two dropdowns: the assets with a publish for
-        that department (environments, for Environment)."""
+        that department (environments, for Environment), or on the Shot
+        side the shots with something published by it (its camera, its
+        caches), to build here (user, 2026-11-12: "any asset from any shot
+        or department")."""
         h_root = self._get_roots()[0]
         if not (h_root and os.path.isdir(h_root)):
             return []
+        if kind == picker.SHOT:
+            return [(seq, shot) for seq, shot in api.list_shots(h_root, film)
+                    if self._shot_items_for(film, seq, shot, code)]
         found = []
         for p in self._published_in(film):
             item = (p["asset_type"], p["asset"])
@@ -458,6 +466,53 @@ class BuildShotTab(QtWidgets.QWidget):
             found.append((place["group"], place["name"]))
         return found
 
+    def _shot_items_for(self, film, seq, shot, code):
+        """What a shot published for a department, to build here (camera,
+        caches; api.shot_items). The shot being built into gives its own
+        entries, so they're the same rows as the ones it already lists."""
+        if self._target_shot and tuple(self._target_shot) == (film, seq, shot):
+            return [p for p in self._published if p.get("kind") in SHOT_ITEMS
+                    and (code is None
+                         or p.get("kind") == "cache" and code == api.CACHE_DEPARTMENT
+                         or p.get("kind") == "camera" and any(
+                             api._camera_published_from(f["map"]) == code
+                             for f in p["files"].values()))]
+        key = (film, seq, shot, code)
+        if key not in self._shot_items:
+            self._shot_items[key] = api.shot_items(self._get_roots()[0], film, seq, shot, code)
+        return self._shot_items[key]
+
+    def _add_other_shot_rows(self, wanted, manifest):
+        """Rows for other shots' cameras and caches this place has: on its
+        saved list, or built here (the manifest says from which shot)."""
+        h_root = self._get_roots()[0]
+        have = set(self._key(r) for r in self._rows)
+        shots = None
+        for key in sorted(set(wanted) | set(manifest)):
+            entry = manifest.get(key) or {}
+            if key in have:
+                continue
+            from_shot = entry.get("from_shot")
+            if not from_shot and key.startswith(api.CAMERA_TYPE + "/"):
+                name = key.split("/")[1]        # a camera on the list, not pulled here yet
+                if self._target_shot and name == self._target_shot[2]:
+                    continue
+                if shots is None:
+                    shots = dict((s, q) for q, s in api.list_shots(h_root, self._film()))
+                from_shot = (shots[name], name) if name in shots else None
+            if not from_shot:
+                continue
+            match = [p for p in self._shot_items_for(self._film(), from_shot[0],
+                                                     from_shot[1], None)
+                     if self._key(p) == key]
+            if match:
+                self._rows.append(self._row(match[0], match[0]["latest"]))
+                have.add(key)
+
+    def _film(self):
+        target = self._target_shot or self._target_asset
+        return target[0] if target else None
+
     def _published_in(self, film):
         target = self._target_shot or self._target_asset
         if target and film == target[0]:
@@ -472,6 +527,7 @@ class BuildShotTab(QtWidgets.QWidget):
         h_root, scratch_root = self._get_roots()
         self._published, self._rows, self._removed = [], [], set()
         self._other_films, self._shot_keys, self._keys_src = {}, {}, None
+        self._shot_items = {}
         self._render_table()
         try:
             pub.check_roots(pub.resolve_root(h_root), pub.resolve_root(scratch_root))
@@ -532,6 +588,7 @@ class BuildShotTab(QtWidgets.QWidget):
                                             and not blank else p["latest"]))
             elif p.get("kind") == "camera":
                 self._rows.append(self._row(p, p["latest"]))
+        self._add_other_shot_rows(wanted, manifest)
         self._add_shot_caches()
         self._render_table()
         self.status.show_message(
@@ -689,8 +746,8 @@ class BuildShotTab(QtWidgets.QWidget):
         """Re-read the H drive without losing the list: rows added but not
         built yet stay, and version choices and ticks stay where they
         still exist."""
-        kept = [(self._key(r), r.get("chosen"), r["checked"], r.get("keys_chosen"))
-                for r in self._rows]
+        kept = [(self._key(r), r.get("chosen"), r["checked"], r.get("keys_chosen"),
+                 r.get("from_shot")) for r in self._rows]
         picked = (self.picker.film(), self.picker.department(), self.picker.group(),
                   self.picker.name())
         removed = self._removed
@@ -702,7 +759,14 @@ class BuildShotTab(QtWidgets.QWidget):
         self._rows = [r for r in self._rows if self._key(r) not in removed]
         by_key = dict((self._key(p), p) for p in self._published)
         in_list = dict((self._key(r), r) for r in self._rows)
-        for key, chosen, checked, keys in kept:
+        for key, chosen, checked, keys, from_shot in kept:
+            if key not in by_key and from_shot and key not in in_list:
+                # Another shot's camera or cache added but not built yet.
+                fresh = [p for p in self._shot_items_for(self._film(), from_shot[0],
+                                                         from_shot[1], None)
+                         if self._key(p) == key]
+                if fresh:
+                    by_key[key] = fresh[0]
             if key not in by_key:
                 continue
             row = in_list.get(key)
@@ -841,6 +905,8 @@ class BuildShotTab(QtWidgets.QWidget):
             self.status.show_message("%s doesn't build anything yet."
                                      % self.target_picker.dept_combo.currentText(), ok=False)
             return
+        if self.picker.kind() == picker.SHOT:
+            return self._add_shot_items(film, group, name, code)
         match = [p for p in self._published
                  if p.get("kind") not in SHOT_ITEMS
                  and (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
@@ -859,6 +925,34 @@ class BuildShotTab(QtWidgets.QWidget):
         if self.filter_combo.currentData() not in (None, code):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
+
+    def _add_shot_items(self, film, seq, shot, code):
+        """+ on Add to list's Shot side: everything that shot published for
+        the department (its camera, its caches), a row each, ticked. Untick
+        what isn't wanted (no extra dropdown: the dropdowns are locked)."""
+        items = self._shot_items_for(film, seq, shot, code) if seq and shot else []
+        if not items:
+            self.status.show_message("%s has nothing published by %s to build."
+                                     % (shot or "This shot", api.DEPT_LABELS.get(code, code)),
+                                     ok=False)
+            return
+        have = set(self._key(r) for r in self._rows)
+        added = []
+        for p in items:
+            if self._key(p) in have:
+                continue
+            self._removed.discard(self._key(p))
+            row = self._row(p, p["latest"])
+            row["checked"] = True
+            self._rows.append(row)
+            added.append("%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"])))
+        if self.filter_combo.currentIndex() != 0:
+            self.filter_combo.setCurrentIndex(0)    # don't add them out of sight
+        self._render_table()
+        self.status.show_message(
+            "Added from %s: %s. Untick what you don't need, then Build." % (shot, ", ".join(added))
+            if added else "Everything %s has for %s is already in the list."
+            % (shot, api.DEPT_LABELS.get(code, code)), ok=bool(added))
 
     def _remove_rows(self):
         """Take the selected rows off the list (user, 2026-10-21: list only).

@@ -72,6 +72,16 @@ class PublishCancelled(PublishError):
     """The student watched the movie and chose not to publish."""
 
 
+class NamespaceClash(PublishError):
+    """Taking the namespaces off would rename something (_NoNamespaces).
+    uuids: the namespaced nodes that clash, for the Publish window's Fix
+    button (plan_namespace_fix / fix_namespace_clashes)."""
+
+    def __init__(self, uuids, message):
+        super(NamespaceClash, self).__init__(message)
+        self.uuids = list(uuids)
+
+
 # ---------------------------------------------------------------------------
 # Settings — where the H drive is. Drive letters differ between setups
 # (home test rig, RMIT), so it's a setting, never hard-coded (§3h).
@@ -729,11 +739,18 @@ def copy_to_h_drive(scene_path, plan):
 
 def namespaced_nodes():
     """Nodes in the scene with a namespace that the publish can rename:
-    not from a reference, not locked, not Maya's own defaults."""
+    not from a reference, not locked, not Maya's own defaults, and not an
+    unassigned shader. Unassigned shaders are never published (DECIDED
+    2026-10-19; user 2026-11-12: "if the shader is not connected to a mesh
+    of some description it can be excluded from the publish"), so their
+    names can't clash in a publish (fieldA's incameraGrass:fieldA:lambert3SG)."""
+    unused = set(unused_shading_nodes())
     found = []
     for node in cmds.ls(recursive=True) or []:
         short = node.split("|")[-1]
         if ":" not in short.lstrip(":"):
+            continue
+        if node in unused:
             continue
         if cmds.referenceQuery(node, isNodeReferenced=True):
             continue
@@ -767,14 +784,14 @@ class _NoNamespaces(object):
             got = cmds.rename(node, ":" + wanted, ignoreShape=True)
             self.renamed.append((uuid, short))
             if got.split("|")[-1].lstrip(":") != wanted:
-                clashes.append((short.lstrip(":"), wanted))
+                clashes.append((short.lstrip(":"), wanted, uuid))
         if clashes:
             self.__exit__()
-            raise PublishError(
+            raise NamespaceClash([u for _, _, u in clashes],
                 "Taking the namespaces off would give these the same name as something "
                 "else in the scene, so Maya would rename them and connections could break:\n  %s"
                 "\n\nRename one of each pair (or delete the one you don't need), then publish "
-                "again." % "\n  ".join("%s -> %s (taken)" % c for c in clashes[:10]))
+                "again." % "\n  ".join("%s -> %s (taken)" % c[:2] for c in clashes[:10]))
         return self
 
     def __exit__(self, *exc):
@@ -790,6 +807,81 @@ def check_namespace_clashes():
     namespaces can't come off cleanly: a dry run of _NoNamespaces."""
     with _NoNamespaces():
         pass
+
+
+# The Fix button for namespace clashes (user, 2026-11-12: "can the pipe
+# offer to correct the namespace clashes for the student?"). It changes
+# the working scene, so the window shows this plan and asks first.
+MANUAL_FIX_TYPES = ("embeddedNodeRL4",)     # MetaHuman DNA: linked by name (review #7)
+
+
+def _flat_name(node):
+    """tuft_002:fieldA:lambert_ground -> tuft_002_fieldA_lambert_ground,
+    made unique if even that is taken."""
+    base = node.split("|")[-1].lstrip(":").replace(":", "_")
+    name, n = base, 2
+    while cmds.ls(name) or cmds.ls("*:" + name, recursive=True):
+        name, n = "%s_%d" % (base, n), n + 1
+    return name
+
+
+def plan_namespace_fix(uuids):
+    """What the Fix button would do to the clashing nodes:
+    {"delete": [...], "rename": [(node, new name)], "manual": [...]}.
+    delete: animation curves driving nothing (left over from an import);
+    they'd never be published. rename: anything in use, shaders on meshes
+    included (those are published): the namespace folds into the name, so
+    it's unique and still readable; the node it clashed with is never
+    touched. manual: MetaHuman DNA nodes, left for the student."""
+    fix = {"delete": [], "rename": [], "manual": []}
+    taken = set()
+    for node in cmds.ls(list(uuids), long=True) or []:
+        if cmds.nodeType(node) in MANUAL_FIX_TYPES:
+            fix["manual"].append(node)
+        elif (cmds.ls(node, type="animCurve")
+              and not cmds.listConnections(node, source=False, destination=True)):
+            fix["delete"].append(node)
+        else:
+            name = _flat_name(node)
+            while name in taken:
+                name += "_2"
+            taken.add(name)
+            fix["rename"].append((node, name))
+    return fix
+
+
+def fix_namespace_clashes(fix):
+    """Do plan_namespace_fix's plan in the working scene (one undo step),
+    then remove namespaces it left empty. Returns the namespaces removed."""
+    before = set(n.split("|")[-1].lstrip(":").rsplit(":", 1)[0]
+                 for n in fix["delete"] + [n for n, _ in fix["rename"]])
+    cmds.undoInfo(openChunk=True, chunkName="pipeFixNamespaceClashes")
+    try:
+        # By UUID: a rename can change another node's path.
+        renames = [(cmds.ls(n, uuid=True)[0], name) for n, name in fix["rename"]
+                   if cmds.objExists(n)]
+        doomed = [n for n in fix["delete"] if cmds.objExists(n)]
+        if doomed:
+            cmds.lockNode(doomed, lock=False)
+            cmds.delete(doomed)
+        for uuid, name in renames:
+            node = cmds.ls(uuid)
+            if node:
+                cmds.rename(node[0], ":" + name, ignoreShape=True)
+        removed = []
+        # Deepest first, so incameraGrass:fieldA goes before incameraGrass.
+        for ns in sorted(before, key=lambda s: -s.count(":")):
+            parts = ns.split(":")
+            for depth in range(len(parts), 0, -1):
+                name = ":".join(parts[:depth])
+                if (cmds.namespace(exists=":" + name)
+                        and not cmds.namespaceInfo(":" + name, listNamespace=True)
+                        and name not in removed):
+                    cmds.namespace(removeNamespace=":" + name)
+                    removed.append(name)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return removed
 
 
 # Every rig publish must contain this set, made by hand by the rigger: it
@@ -952,8 +1044,11 @@ def check_cache_set(objects):
 # ---------------------------------------------------------------------------
 
 PUBLISH_SET = "RMIT_publishSet"
+# A character's sets (rig_rules.CHARACTER_CONTROL_SETS); other assets use
+# rig_rules.OTHER_CONTROL_SETS (controls_SET). Names live in rig_rules.
 BODY_CONTROLS_SET = "body_controls_SET"
 FACE_CONTROLS_SET = "face_controls_SET"
+CONTROLS_SET = "controls_SET"
 
 
 def _short(node):
@@ -1014,16 +1109,17 @@ def metahuman_face_controls():
     return sorted(found)
 
 
-def _known_set_hints():
+def _known_set_hints(asset_type=None):
     """'rig1_controllers_grp: mGear's controllers set: ...' for sets other
-    tools made that are in the scene, to say what goes where."""
+    tools made that are in the scene, to say what goes where (in this
+    asset type's set names)."""
     import fnmatch
     import rig_rules
     hints = []
     for s in cmds.ls(type="objectSet") or []:
-        for pattern, text in rig_rules.KNOWN_SETS:
+        for pattern, _role, text in rig_rules.KNOWN_SETS:
             if fnmatch.fnmatchcase(_short(s), pattern):
-                hints.append("%s: %s" % (s, text))
+                hints.append("%s: %s" % (s, rig_rules.known_set_text(text, asset_type)))
                 break
     return ("\n\nFound in this scene:\n  " + "\n  ".join(hints)) if hints else ""
 
@@ -1038,23 +1134,62 @@ def _one_set(name, how):
     return sets[0]
 
 
-def check_control_sets(objects):
-    """A Rigging publish needs the rigger's control sets. Returns
-    {body, face, metahuman_missing, metahuman_count, sets} where
-    metahuman_missing are MetaHuman face controls not yet in the face set
-    (Publish adds them to the published file only) and sets is every set
-    to export with the rig. Raises PublishError explaining what to fix."""
-    how = ("\n\nRig publishes need control sets, made by hand:\n"
-           "  %s   (body controls; required)\n  %s   (face controls; required "
-           "for a MetaHuman, optional otherwise)\n"
-           "Create > Sets > Set for each. Sets can hold sets, so you can put an existing "
-           "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
-           "Publish puts them in %s itself."
-           % (BODY_CONTROLS_SET, FACE_CONTROLS_SET, PUBLISH_SET))
-    how += _known_set_hints()
-    body = _one_set(BODY_CONTROLS_SET, how)
+def check_control_sets(objects, asset_type=None):
+    """A Rigging publish needs the rigger's control sets, named by the
+    asset's type folder (rig_rules.control_sets_for): a character has
+    body_controls_SET (+ face_controls_SET), anything else (environment,
+    prop, vehicle...) one controls_SET and no face set (user, 2026-11-11).
+    asset_type None = character. Returns {body, face, metahuman_missing,
+    metahuman_count, sets} where body is the required controls set, face
+    the face set or None, metahuman_missing are MetaHuman face controls not
+    yet in the face set (Publish adds them to the published file only) and
+    sets is every set to export with the rig. Raises PublishError
+    explaining what to fix."""
+    import rig_rules
+    names = rig_rules.control_sets_for(asset_type)
+    character = names["face"] is not None
+    kind = asset_type or "character"
+    a_kind = ("an " if kind[:1].lower() in "aeiou" else "a ") + kind
+    tool = ("The Rig Sets button on the mpRig shelf checks these and can make them "
+            "for you.")
+    if character:
+        how = ("\n\nRig publishes need control sets, made by hand:\n"
+               "  %s   (body controls; required)\n  %s   (face controls; required "
+               "for a MetaHuman, optional otherwise)\n"
+               "Create > Sets > Set for each. Sets can hold sets, so you can put an existing "
+               "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
+               "Publish puts them in %s itself. %s"
+               % (names["body"], names["face"], PUBLISH_SET, tool))
+    else:
+        how = ("\n\n%s rig needs one controls set, made by hand:\n"
+               "  %s   (all its controls; required)\n"
+               "No face set and no body_ in the name: those are for characters. "
+               "Create > Sets > Set. Sets can hold sets, so you can put an existing "
+               "set (e.g. mGear's rig_controllers_grp) inside instead of the controls. "
+               "Publish puts it in %s itself. %s"
+               % (a_kind[0].upper() + a_kind[1:], names["body"], PUBLISH_SET, tool))
+    how += _known_set_hints(asset_type)
+    # The other kind's name: say so, rather than just "no controls set".
+    other = rig_rules.OTHER_CONTROL_SETS if character else rig_rules.CHARACTER_CONTROL_SETS
+    if not _own_sets(names["body"]) and _own_sets(other["body"]):
+        raise PublishError(
+            "This rig's controls are in %s, but %s rig uses %s. Rename the set to %s."
+            % (other["body"], a_kind, names["body"], names["body"]) + how)
+    body = _one_set(names["body"], how)
     if not set_controls(body):
         raise PublishError("%s has no controls in it." % body + how)
+    if not character:
+        sets = set_tree(body)
+        if objects:
+            outside = [c for c in set_controls(body) if not _under(c, objects)]
+            if outside:
+                raise PublishError(
+                    "%s holds controls that aren't in this publish: %s\n"
+                    "Publish the whole rig (or include them), or take them out of the set."
+                    % (body, ", ".join(_short(c) for c in outside[:5])))
+        return {"body": body, "face": None, "metahuman_missing": [],
+                "metahuman_count": 0,
+                "sets": [s for i, s in enumerate(sets) if s not in sets[:i]]}
     face = _own_sets(FACE_CONTROLS_SET)
     face = _one_set(FACE_CONTROLS_SET, how) if face else None
     metahuman = metahuman_face_controls()
@@ -1466,18 +1601,28 @@ def _stamp(group, info):
         cmds.setAttr("%s.%s" % (group, attr), lock=True)
 
 
+def is_shot_camera_group(node):
+    """A <shot>_cam_GRP Build brought in: its pipe stamp says cam."""
+    attr = PIPE_ATTR_PREFIX + "department"
+    return (cmds.attributeQuery(attr, node=node, exists=True)
+            and cmds.getAttr("%s.%s" % (node, attr)) == "cam")
+
+
 def _model_roots(objects):
     """The transforms a model publish takes: the given ones (nothing given
-    = every top-level object except Maya's default cameras), without any
-    that sit below another one, and with an existing pipe group swapped for
-    its contents (republishing a scene built from a publish)."""
+    = every top-level object except Maya's default cameras and shot
+    cameras Build brought in, e.g. to check an environment's layout, user
+    2026-11-12), without any that sit below another one, and with an
+    existing pipe group swapped for its contents (republishing a scene
+    built from a publish)."""
     if objects:
         nodes = cmds.ls(objects, long=True, type="transform") or []
     else:
         nodes = [n for n in cmds.ls(assemblies=True, long=True) or []
                  if not any(cmds.camera(s, query=True, startupCamera=True)
                             for s in cmds.listRelatives(n, shapes=True, fullPath=True,
-                                                        type="camera") or [])]
+                                                        type="camera") or [])
+                 and not is_shot_camera_group(n)]
     roots = []
     for node in nodes:
         if is_pipe_group(node):
@@ -2173,7 +2318,7 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
         import publishTool_textures as tex
         check_rig_selection(plan["objects"])
         plan["cache_set"] = check_cache_set(plan["objects"])
-        plan["control_sets"] = check_control_sets(plan["objects"])
+        plan["control_sets"] = check_control_sets(plan["objects"], plan.get("asset_type"))
         plan["set_uuids"] = cmds.ls([plan["cache_set"]] + plan["control_sets"]["sets"], uuid=True)
         face_fill = (plan["control_sets"]["face"], plan["control_sets"]["metahuman_missing"])
         # The rig's textures and MetaHuman DNA travel with it (spec §4
