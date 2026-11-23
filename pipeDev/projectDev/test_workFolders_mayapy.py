@@ -100,27 +100,30 @@ check("... while new work folders are",
       and os.path.isdir(os.path.join(sc_scout, "edits"))
       and not os.path.exists(os.path.join(sc_scout, "s1111111")))
 
-# -- Build lists publishes only ----------------------------------------------
+# -- Build lists publishes in the old and the department folders -------------
+# Since spec §4g (2026-11-23) H's scenes\<dept>\<login>\ holds that person's
+# publishes (H never holds working files); the old scenes\<login>\ is still
+# read. A file whose login doesn't match its folder isn't a publish.
 pubs = os.path.join(asset_h, "scenes", "e131988")
 os.makedirs(pubs)
 open(os.path.join(pubs, "scout_e131988_rig_v001.ma"), "w").write("//")
-# A working file that happens to look like a publish.
-work = os.path.join(asset_h, "scenes", "rig", "e131988")
-os.makedirs(work)
-open(os.path.join(work, "scout_e131988_rig_v009.ma"), "w").write("//")
+new = os.path.join(asset_h, "scenes", "rig", "e131988")
+os.makedirs(new)
+open(os.path.join(new, "scout_e131988_rig_v002.ma"), "w").write("//")
+open(os.path.join(new, "scout_s7654321_rig_v009.ma"), "w").write("//")
 found = build.list_published(H, "NWF_SHF")
-check("Build: the publish is listed, the working file in scenes\\rig isn't",
-      [sorted(e["versions"]) for e in found] == [["e131988/v001"]])
-# Same in a shot: a camera-publish lookalike in scenes\anim\<login>.
-cam_work = os.path.join(shot_h, "scenes", "anim", "e131988")
-os.makedirs(cam_work)
-for name in ("EAP_010_010_e131988_cam_v001.ma", "EAP_010_010_e131988_camAnim_v001.ma",
-             "EAP_010_010_e131988_camAnim_v001.json"):
-    open(os.path.join(cam_work, name), "w").write("{}")
+check("Build: publishes in scenes\\<login> and scenes\\rig\\<login> are listed, "
+      "a mismatched login isn't",
+      [sorted(e["versions"]) for e in found] == [["e131988/v001", "e131988/v002"]])
+# Same in a shot: scenes\anim\<login> and the old scenes\<login>.
+shot_new = os.path.join(shot_h, "scenes", "anim", "e131988")
+os.makedirs(shot_new)
+open(os.path.join(shot_new, "EAP_010_010_e131988_anim_v002.ma"), "w").write("//")
 shot_pubs = os.path.join(shot_h, "scenes", "e131988")
 os.makedirs(shot_pubs, exist_ok=True)
 open(os.path.join(shot_pubs, "EAP_010_010_e131988_anim_v001.ma"), "w").write("//")
-seen = [n for _, names in build._walk_shot_publishes(os.path.join(shot_h, "scenes")) for n in names]
-check("Build: a shot's publishes are looked at, its scenes\\anim etc. working files aren't",
-      seen == ["EAP_010_010_e131988_anim_v001.ma"])
+seen = sorted(n for _, names in build._walk_shot_publishes(os.path.join(shot_h, "scenes"))
+              for n in names)
+check("Build: a shot's publishes are looked at in scenes\\anim\\<login> and scenes\\<login>",
+      seen == ["EAP_010_010_e131988_anim_v001.ma", "EAP_010_010_e131988_anim_v002.ma"])
 print("%d/%d passed" % (sum(ok), len(ok)))

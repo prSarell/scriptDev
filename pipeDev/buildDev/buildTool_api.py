@@ -44,8 +44,9 @@ import pipeEnv                                            # $PIPE_SCRATCH refere
 MANIFEST_NAME = "build_manifest.json"   # in <shot>/assets/, records what was pulled
 KEEP_FILES = ("workspace.mel",)          # never removed from scratch
 
-# <asset>_<login>_<code>_v###.<ext>, in <asset>\scenes\<login>\ (spec §4
-# "Personal work folders": publishes are personal, DECIDED 2026-10-15).
+# <asset>_<login>_<code>_v###.<ext>, in <asset>\scenes\<dept>\<login>\
+# (spec §4g, 2026-11-23; before that <asset>\scenes\<login>\, still read).
+# Publishes are personal (spec §4 "Personal work folders", 2026-10-15).
 PUBLISHED_RE = re.compile(r"^(?P<asset>.+)_(?P<login>[a-z0-9]+)_(?P<code>[A-Za-z]+)"
                           r"_v(?P<version>\d{3})\.(?P<ext>ma|mb)$", re.IGNORECASE)
 DEPT_CODES = [code for _, code in pub.DEPARTMENTS]
@@ -230,11 +231,9 @@ def list_published(h_root, film):
     groups = {}
     for asset_type, asset in pub.list_h_assets(h_root, film):
         scenes = os.path.join(assets_dir, asset_type, asset, "scenes")
+        # Publishes are in scenes\<dept>\<login>\ (spec §4g) and, before
+        # 2026-11-23, scenes\<login>\: both are read.
         for dirpath, dirnames, filenames in os.walk(scenes):
-            if os.path.normcase(dirpath) == os.path.normcase(scenes):
-                # scenes\model\, rig\, lookDev\ hold working files, not publishes.
-                work = [w.lower() for w in pub.WORK_FOLDERS]
-                dirnames[:] = [d for d in dirnames if d.lower() not in work]
             login = os.path.basename(dirpath)
             for name in filenames:
                 m = PUBLISHED_RE.match(name)
@@ -272,12 +271,11 @@ CAMERA_RE = re.compile(r"^(?P<shot>.+)_(?P<login>[a-z0-9]+)_(?P<code>cam|camAnim
 
 
 def _walk_shot_publishes(scenes):
-    """os.walk over a shot's scenes folder, minus scenes\\layout\\, anim\\,
-    fx\\ and lighting\\: they hold working files, not publishes."""
-    work = [w.lower() for w in pub.SHOT_WORK_FOLDERS]
+    """os.walk over a shot's scenes folder on H: publishes are in each
+    person's scenes\\<dept>\\<login>\\ (spec §4g) and, before 2026-11-23,
+    scenes\\<login>\\. Callers match the folder's name to the login in the
+    file name, so nothing else counts."""
     for dirpath, dirnames, filenames in os.walk(scenes):
-        if os.path.normcase(dirpath) == os.path.normcase(scenes):
-            dirnames[:] = [d for d in dirnames if d.lower() not in work]
         yield dirpath, filenames
 
 
@@ -312,7 +310,8 @@ def list_shot_cameras(h_root, film, seq, shot):
 
 
 # A Final animation publish's caches (publishTool_anim): one Alembic per
-# item, in the shot's cache\alembic\<login>\, with a .json beside it saying
+# item, in the shot's cache\alembic\anim\<login>\ (cache\alembic\<login>\
+# before 2026-11-23), with a .json beside it saying
 # what it is.
 CACHE_RE = re.compile(r"^(?P<item>.+)_anim_v(?P<version>\d{3})\.abc$", re.IGNORECASE)
 
@@ -336,10 +335,19 @@ def list_shot_caches(h_root, film, seq, shot):
     groups = {}
     if not os.path.isdir(caches):
         return []
-    for login in sorted(os.listdir(caches)):
-        folder = os.path.join(caches, login)
+    # cache\alembic\<dept>\<login>\ (spec §4g) and, before 2026-11-23,
+    # cache\alembic\<login>\.
+    people = []
+    for name in sorted(os.listdir(caches)):
+        folder = os.path.join(caches, name)
         if not os.path.isdir(folder):
             continue
+        if name.lower() in [d.lower() for d in pub.DEPT_FOLDERS]:
+            people += [(login, os.path.join(folder, login)) for login in sorted(os.listdir(folder))
+                       if os.path.isdir(os.path.join(folder, login))]
+        else:
+            people.append((name, folder))
+    for login, folder in people:
         for name in os.listdir(folder):
             if not name.lower().startswith(shot.lower() + "_"):
                 continue
@@ -630,10 +638,17 @@ def write_shot_list(h_root, film, seq, shot, department, keys):
 def texture_folder_of(path):
     """The texture folder that goes with a published file (H drive or
     scratch publish folder): <asset>\\sourceimages\\<login>\\<file name
-    without extension> beside <asset>\\scenes\\<login>\\<file> (publishTool_
-    textures, 2026-10-20). It may not exist (nothing textured)."""
+    without extension> beside <asset>\\scenes\\<dept>\\<login>\\<file> (spec
+    §4g; scenes\\<login>\\ before 2026-11-23) (publishTool_textures,
+    2026-10-20). It may not exist (nothing textured)."""
     login_dir = os.path.dirname(path)
-    asset_dir = os.path.dirname(os.path.dirname(login_dir))
+    try:
+        asset_dir = pub.project_of_publish(login_dir)
+    except BuildError:
+        # Not a scene publish (a cache in cache\alembic\...): no textures.
+        # Callers only walk / copy what exists, so a folder that doesn't
+        # exist is the answer, as before §4g.
+        asset_dir = os.path.dirname(os.path.dirname(login_dir))
     return os.path.join(asset_dir, "sourceimages", os.path.basename(login_dir),
                         os.path.splitext(os.path.basename(path))[0])
 
@@ -1558,7 +1573,8 @@ def apply_camera_range(shot_dir, files=None):
 # ---------------------------------------------------------------------------
 # Shot keys (spec §4 item 7 "Build Shot pulling animation back in", DECIDED
 # 2026-10-23): a Layout or Animation publish writes each item's keys (a .ma
-# of curves + a .json map) to the shot's scenes\<login>\ on the H drive.
+# of curves + a .json map) to the shot's scenes\<layout|anim>\<login>\ on
+# the H drive (scenes\<login>\ before 2026-11-23).
 # Build puts an asset's keys back on that same asset (Scout's keys on Scout
 # only), from the Keys column on its row. Layout and anim keys are one list,
 # newest by publish time; the rig version is picked separately, and keys
@@ -1897,13 +1913,16 @@ def _published_source(h_root, film, stamp):
     if not (stamp.get("assetType") and stamp.get("asset") and stamp.get("department")
             and login and version):
         return None
-    folder = os.path.join(asset_folder(h_root, film, stamp["assetType"], stamp["asset"]),
-                          "scenes", login)
-    for ext in (".ma", ".mb"):
-        path = os.path.join(folder, pub.published_name(stamp["asset"], login,
-                                                       stamp["department"], version, ext))
-        if os.path.isfile(path):
-            return path
+    scenes = os.path.join(asset_folder(h_root, film, stamp["assetType"], stamp["asset"]),
+                          "scenes")
+    # scenes\<dept>\<login>\ (spec §4g), then the old scenes\<login>\.
+    folders = [os.path.join(scenes, stamp["department"], login), os.path.join(scenes, login)]
+    for folder in folders:
+        for ext in (".ma", ".mb"):
+            path = os.path.join(folder, pub.published_name(stamp["asset"], login,
+                                                           stamp["department"], version, ext))
+            if os.path.isfile(path):
+                return path
     return None
 
 

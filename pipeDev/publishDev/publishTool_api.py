@@ -7,11 +7,13 @@ Design: pipeDev/filmPipeline_spec.md §3h (drives, 1:1 mirror) and §3i
 (tabs, department codes, where publishes land).
 
     scratch  G:\\scratch\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\anything\\backPackPrevis.mb
-    H drive  G:\\H\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\s1234567\\backpack_s1234567_model_v001.mb
+    H drive  G:\\H\\NWF_SHF\\maya\\assets\\prop\\backpack\\scenes\\model\\s1234567\\backpack_s1234567_model_v001.mb
 
-Publishes are personal (spec §4 "Personal work folders", 2026-10-15): each
-person's go in scenes\\<login>\\ with the login in the name, so everyone
-has their own version series. Working files can be called anything.
+Publishes are personal: each person's go in scenes\\<department>\\<login>\\,
+the same path as their working folder on scratch (spec §4g, 2026-11-23;
+before that scenes\\<login>\\, still read), with the login in the name, so
+everyone has their own version series. Working files can be called
+anything.
 
 One click publishes: playblast (shotSub-style, default 2 frames) ->
 copy to H drive -> ShotGrid Version on the matching Asset. The local
@@ -55,6 +57,10 @@ DEPARTMENTS = [
     ("FX", "fx"),
     ("Lighting", "lighting"),
 ]
+# Every department's folder in an asset's or shot's scenes\ (spec §4g):
+# scenes\<code>\<login>\ holds that person's working files on scratch and
+# their publishes on H.
+DEPT_FOLDERS = tuple(code for _, code in DEPARTMENTS)
 
 # Film folders are named <FILM>_<TYPE>, TYPE a three-letter code (§3f).
 FILM_FOLDER_RE = re.compile(r"^[A-Za-z0-9]+_[A-Z]{3}$")
@@ -138,8 +144,9 @@ def get_root(key):
 
 
 # Who is publishing. Publishes are personal (spec §4 "Personal work
-# folders", DECIDED 2026-10-15): they go in scenes\<login>\ with the login
-# in the file name, so everyone has their own version series. The login
+# folders", DECIDED 2026-10-15; a folder per department since §4g,
+# 2026-11-23): they go in scenes\<dept>\<login>\ with the login in the file
+# name, so everyone has their own version series. The login
 # is the Windows login (RMIT logins match ShotGrid logins). "publish_as"
 # in the machine's settings overrides it, for staff testing on a machine
 # whose Windows login isn't their RMIT one; failing that "shotgrid_as" (the
@@ -150,7 +157,7 @@ SHOTGRID_AS = "shotgrid_as"
 # Every asset's scenes folder has these working folders, each holding one
 # folder per person (scenes\model\s1234567\): model, rig and lookdev
 # iteration and development (user, 2026-10-28). Named by department code.
-# Publishes still go in scenes\<login>\.
+# On H the same folders hold that person's publishes (spec §4g).
 WORK_FOLDERS = ("model", "rig", "lookDev")
 # Every shot's scenes folder has the same, for shot departments
 # (scenes\anim\s1234567\), so a shot can be built for rendering (user,
@@ -408,10 +415,61 @@ def published_name(asset, login, code, version, ext):
     return "%s_%s_%s_v%03d%s" % (asset, login, code, version, ext)
 
 
-def personal_folder(h_root, rel_project, login):
-    """<H>\\<film>\\maya\\...\\<asset or shot>\\scenes\\<login>: where one
-    person's publishes for an asset or shot go."""
+def personal_folder(h_root, rel_project, login, department):
+    """<H>\\<film>\\maya\\...\\<asset or shot>\\scenes\\<department>\\<login>:
+    where one person's publishes for an asset or shot go, the same path as
+    their working folder on scratch (spec §4g, user 2026-11-23: scratch and
+    H match 1:1, so several artists each have their own folder per
+    department). department is a department code (DEPT_FOLDERS)."""
+    if department not in DEPT_FOLDERS:
+        raise ValueError("not a department folder: %r" % (department,))
+    return os.path.join(h_root, *(list(rel_project) + ["scenes", department, login]))
+
+
+def old_personal_folder(h_root, rel_project, login):
+    """<asset or shot>\\scenes\\<login>: where publishes went before §4g
+    (2026-10-15 to 2026-11-23). Nothing is written there any more; those
+    publishes stay put, and are still read (Build) and counted (versions)."""
     return os.path.join(h_root, *(list(rel_project) + ["scenes", login]))
+
+
+def person_folders(h_root, rel_project, login):
+    """Every folder one person's publishes for an asset or shot can be in:
+    the old scenes\\<login>\\ and each scenes\\<department>\\<login>\\."""
+    return [old_personal_folder(h_root, rel_project, login)] + [
+        personal_folder(h_root, rel_project, login, d) for d in DEPT_FOLDERS]
+
+
+def person_versions(h_root, rel_project, asset, login, code, exts=("ma", "mb")):
+    """published_versions across all of person_folders(): one person's
+    version series for an asset + department, wherever each version is, so
+    a v003 in the old folder makes the next one v004 in the new one."""
+    found = set()
+    for folder in person_folders(h_root, rel_project, login):
+        found.update(published_versions(folder, asset, login, code, exts))
+    return sorted(found)
+
+
+def project_of_publish(path):
+    """The asset or shot folder a published file (or its folder) is in: the
+    folder holding its scenes\\, whether the file sits in
+    scenes\\<dept>\\<login>\\ (spec §4g) or the old scenes\\<login>\\."""
+    folder = os.path.normpath(path)
+    while os.path.basename(folder).lower() != "scenes":
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            raise PublishError("Not inside a scenes folder: %s" % path)
+        folder = parent
+    return os.path.dirname(folder)
+
+
+def scene_department(rel):
+    """The department folder a scene is in, from its film-relative parts
+    (<film>\\maya\\<sequences|assets>\\<x>\\<y>\\scenes\\<dept>\\...), as the
+    department code (case as in DEPT_FOLDERS), or None."""
+    if len(rel) > 7 and rel[5] == "scenes":
+        return next((d for d in DEPT_FOLDERS if d.lower() == rel[6].lower()), None)
+    return None
 
 
 def work_folder(project, code, login):
@@ -494,12 +552,13 @@ def plan_publish(scene_path, h_root, scratch_root, code, target=None):
             raise PublishError("No folder for asset '%s' on the H drive." % target[1])
     ctx["is_source_asset"] = (ctx["asset_type"], ctx["asset"]) == ctx["source_asset"]
 
-    # Wherever the working file sits on scratch, the publish goes in the
-    # person's own folder: <asset>\scenes\<login>\.
+    # The publish goes in the person's own folder for its department:
+    # <asset>\scenes\<code>\<login>\ (spec §4g), whatever the working
+    # file's folder on scratch. Versions count across the old folder too.
     login = who()
-    h_folder = personal_folder(h_root, [ctx["film"], "maya", "assets",
-                                        ctx["asset_type"], ctx["asset"]], login)
-    versions = published_versions(h_folder, ctx["asset"], login, code)
+    project = [ctx["film"], "maya", "assets", ctx["asset_type"], ctx["asset"]]
+    h_folder = personal_folder(h_root, project, login, code)
+    versions = person_versions(h_root, project, ctx["asset"], login, code)
     version = (versions[-1] + 1) if versions else 1
     name = published_name(ctx["asset"], login, code, version, ctx["ext"])
     ctx.update({

@@ -97,8 +97,10 @@ approvals = {}
 api.approved_tasks = lambda shot: approvals
 TASKS = {"layout": 10, "blocking": 11, "final": 12}
 api.task_on = lambda shot, name: {"type": "Task", "id": TASKS[name.lower()], "content": name}
-h_scenes = os.path.join(H, *shot_rel, "scenes", "scout")
-caches = os.path.join(H, *shot_rel, "cache", "alembic", "scout")   # per person
+# Each stage's publishes in the person's folder for it (spec 4g).
+h_scenes = os.path.join(H, *shot_rel, "scenes", "anim", "scout")
+h_layout = os.path.join(H, *shot_rel, "scenes", "layout", "scout")
+caches = os.path.join(H, *shot_rel, "cache", "alembic", "anim", "scout")   # per person
 
 
 def frames_left():
@@ -182,7 +184,7 @@ approvals = {"final": {"type": "Task", "id": 12}}       # no Layout approval nee
 caches_before = listing(caches)
 updates[:] = []
 plan = anim.publish_anim(scene, H, SC, objs, publish_for=anim.LAYOUT_CODE)
-layout_files = [n for n in listing(h_scenes) if "_layout_" in n]
+layout_files = [n for n in listing(h_layout) if "_layout_" in n]
 check("Layout publish: own series, full file + keys for keyed items", layout_files == [
     "EAP_010_010_scout_backpack_layout_v001.json", "EAP_010_010_scout_backpack_layout_v001.ma",
     "EAP_010_010_scout_ball_layout_v001.json", "EAP_010_010_scout_ball_layout_v001.ma",
@@ -202,11 +204,15 @@ updates[:] = []
 plan = cam.publish_camera(scene, H, SC, camera="camera1")
 check("camera publishes with nothing approved, Version on the Layout task",
       os.path.isfile(plan["dest"]) and ("Version", 55, {"sg_task": {"type": "Task", "id": 10}}) in updates)
+check("a camera published for Layout goes in scenes/layout/<login>",
+      os.path.dirname(plan["dest"]) == h_layout)
 
 # -- a camera published from Animation says so ----------------------------
 plan = cam.publish_camera(scene, H, SC, camera="camera1", publish_for=anim.ANIM_CODE)
 m = json.load(open(plan["map_dest"]))
 check("camera map records it came from animation", m["published_from"] == "anim")
+check("a camera published for Animation goes in scenes/anim/<login>",
+      os.path.dirname(plan["dest"]) == h_scenes)
 cmds.file(new=True, force=True)
 cmds.file(plan["dest"], open=True, force=True)
 grp = cam.camera_group_name(plan["shot"])      # the stamp is on the camera group (2026-10-20)
@@ -224,7 +230,7 @@ FakeSG.upload_playblast = lambda self, *a, **k: uploads.append(k) or {"type": "V
 real_blast = api.playblast_frames
 api.playblast_frames = lambda plan, n, objects=None, camera=None: (
     blasts.append(camera) or real_blast(plan, n, objects=objects, camera=camera))
-cam_before = len(cam.published_camera_versions(h_scenes, "EAP_010_010", "scout"))
+cam_before = len(cam.published_camera_versions(H, shot_rel, "EAP_010_010", "scout"))
 plan = anim.publish_anim(scene, H, SC, objs, camera="camera1")
 cp = plan["camera_plan"]
 check("camera + anim: one playblast, through the camera, one Version",

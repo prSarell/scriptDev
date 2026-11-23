@@ -129,7 +129,7 @@ print("   ", done, warning)
 refs = [(n, w) for n, w, _, _ in api.scene_references() if w.lower().endswith(".abc")]
 check("cache referenced, through $PIPE_SCRATCH, from scratch publish\\",
       len(refs) == 1 and refs[0][1].startswith("$PIPE_SCRATCH/")
-      and "/publish/sequences/EAP_010/EAP_010_010/cache/alembic/scout/" in refs[0][1])
+      and "/publish/sequences/EAP_010/EAP_010_010/cache/alembic/anim/scout/" in refs[0][1])
 check("cache in its own namespace beside the rig", cmds.objExists("scoutrig_cache:body_geo")
       and cmds.objExists("scout_rig:body_geo"))
 group = cmds.ls("scoutrig_cache_GRP")
@@ -190,8 +190,9 @@ check("updated: same rig, so the look stays on",
       set(engine_of(cache_body)) == {"scoutrig_cache_look:skinSG", "scoutrig_cache_look:eyeSG"})
 
 # --- which look: Lighting takes the newest LookDev look, Animation the rig's
-lookdev = os.path.join(H, FILM, "maya", "assets", "character", "scout", "scenes", LOGIN,
-                       "scout_scout_lookDev_v001")
+lookdev = os.path.join(H, FILM, "maya", "assets", "character", "scout", "scenes", "lookDev",
+                       LOGIN, "scout_scout_lookDev_v001")     # spec 4g folder
+os.makedirs(os.path.dirname(lookdev), exist_ok=True)
 shutil.copy2(rig_file, lookdev + ".ma")
 rig_look = os.path.splitext(rig_file)[0] + "_look"
 for ext in (".ma", ".json"):

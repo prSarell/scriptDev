@@ -178,7 +178,9 @@ def collect_dna():
 def texture_folder(plan):
     """The version's texture folder on the H drive:
     <asset>\\sourceimages\\<login>\\<published file name without extension>."""
-    asset_dir = os.path.dirname(os.path.dirname(plan["h_folder"]))   # <asset>\scenes\<login>
+    # h_folder is <asset>\scenes\<dept>\<login> (spec §4g; scenes\<login>
+    # before): the asset folder is the one holding scenes.
+    asset_dir = api.project_of_publish(plan["h_folder"])
     stem = os.path.splitext(os.path.basename(plan["dest"]))[0]
     return os.path.join(asset_dir, FOLDER, plan["login"], stem)
 

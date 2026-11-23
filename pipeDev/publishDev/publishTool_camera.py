@@ -7,7 +7,8 @@ which curve drives which attribute). No UI, so it can be tested under mayapy.
 Design: pipeDev/filmPipeline_spec.md §3i "Cameras" and "The ID rule".
 
     scratch  G:\\scratch\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\layout_003.ma
-    H drive  G:\\H\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\s1234567\\
+    H drive  G:\\H\\NWF_SHF\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\layout\\s1234567\\
+             (the department folder the scene is in; spec §4g)
                EAP_010_010_s1234567_cam_v001.ma
                EAP_010_010_s1234567_camAnim_v001.ma
                EAP_010_010_s1234567_camAnim_v001.json
@@ -41,6 +42,7 @@ import publishTool_api as api
 from publishTool_api import PublishError
 
 CAM_CODE = "cam"
+CAMERA_DEPARTMENT = "layout"    # a camera's folder when its scene is in no department folder
 KEYS_CODE = "camAnim"
 CAM_LABEL = "Camera"
 PUBLISHED_CAMERA = "shotCam"         # node name inside the published camera file
@@ -75,6 +77,9 @@ def shot_context(scene_path):
         "shot": rel[4],
         "rel_folder": rel[:6],                            # the shot's scenes folder
         "shot_project": os.path.join(root, *rel[:5]),     # on scratch
+        # the department folder the scene is in (scenes/anim/<login>/...),
+        # or None: where a camera publish goes (spec 4g)
+        "department": api.scene_department(rel),
     }
 
 
@@ -148,12 +153,13 @@ def check_camera(objects):
 # Versions on the H drive
 # ---------------------------------------------------------------------------
 
-def published_camera_versions(folder, shot, login):
-    """Version numbers this person has already used for either camera file
-    in their folder."""
+def published_camera_versions(h_root, rel_project, shot, login):
+    """Version numbers this person has already used for either camera file,
+    in any of their folders for the shot (the old scenes/<login>/ and each
+    department's): a camera can be published from layout or anim."""
     exts = ("ma", "mb", "json")
-    return sorted(set(api.published_versions(folder, shot, login, CAM_CODE, exts) +
-                      api.published_versions(folder, shot, login, KEYS_CODE, exts)))
+    return sorted(set(api.person_versions(h_root, rel_project, shot, login, CAM_CODE, exts) +
+                      api.person_versions(h_root, rel_project, shot, login, KEYS_CODE, exts)))
 
 
 def camera_file_names(shot, login, version):
@@ -163,8 +169,11 @@ def camera_file_names(shot, login, version):
             "map": api.published_name(shot, login, KEYS_CODE, version, ".json")}
 
 
-def plan_camera(scene_path, h_root, scratch_root, camera=None):
-    """Work out where a camera publish would go, without touching anything."""
+def plan_camera(scene_path, h_root, scratch_root, camera=None, department=None):
+    """Work out where a camera publish would go, without touching anything.
+    department: the stage it's published for (layout / anim), whose folder
+    it goes in; without one, the department folder the scene is in, else
+    Layout."""
     h_root, scratch_root = api.resolve_root(h_root), api.resolve_root(scratch_root)
     api.check_roots(h_root, scratch_root)
     ctx = shot_context(scene_path)
@@ -179,9 +188,14 @@ def plan_camera(scene_path, h_root, scratch_root, camera=None):
     if camera:
         check_camera([camera])
 
+    # The person's folder for its department (spec 4g): the stage it's
+    # published for (a camera published for Animation goes in
+    # scenes/anim/<login>/, next to the anim publish it may come with),
+    # else the department folder the scene is in, else Layout.
     login = api.who()
-    h_folder = api.personal_folder(h_root, ctx["rel_folder"][:5], login)
-    versions = published_camera_versions(h_folder, ctx["shot"], login)
+    department = department or ctx["department"] or CAMERA_DEPARTMENT
+    h_folder = api.personal_folder(h_root, ctx["rel_folder"][:5], login, department)
+    versions = published_camera_versions(h_root, ctx["rel_folder"][:5], ctx["shot"], login)
     version = (versions[-1] + 1) if versions else 1
     names = camera_file_names(ctx["shot"], login, version)
     ctx.update({
@@ -189,6 +203,7 @@ def plan_camera(scene_path, h_root, scratch_root, camera=None):
         "code": CAM_CODE,
         "asset": ctx["shot"],                # what playblast_frames names things by
         "asset_project": ctx["shot_project"],
+        "department": department,
         "h_folder": h_folder,
         "version": version,
         "dest": os.path.join(h_folder, names["camera"]),
@@ -563,7 +578,7 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     h_root = api.resolve_root(h_root)
     api.check_script_nodes()
     camera = check_camera([camera])
-    plan = plan_camera(scene_path, h_root, scratch_root)
+    plan = plan_camera(scene_path, h_root, scratch_root, department=publish_for)
     plan["objects"] = [cmds.ls(camera)[0]]
     plan["publish_for"] = publish_for       # which stage, stamped on the camera
     plan["sg_shot"] = find_shotgrid_shot(plan, h_root)

@@ -17,11 +17,12 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
   one frame). The newest final is the true source. Layout never caches.
 - One version number per publish, shared by everything in it.
 
-    H drive  <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\scout\\
+    H drive  <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\anim\\scout\\
                  EAP_010_010_scout_anim_v001.ma           the full file
                  EAP_010_010_scout_backpack_anim_v001.ma  keys, per item
                  EAP_010_010_scout_backpack_anim_v001.json   + the map
-             <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\scout\\
+             (a Layout publish: scenes\\layout\\scout\\; spec §4g)
+             <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\anim\\scout\\
                  EAP_010_010_backpack_anim_v001.abc       final only, per person
     scratch  <film>\\premiere\\shotgridMovs\\EAP_010_010.mp4  (replaced each time)
 
@@ -297,20 +298,27 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
         raise PublishError("%s publishes aren't built yet."
                            % PUBLISH_FOR_LABELS.get(publish_for, publish_for))
     plan = cam.plan_camera(scene_path, h_root, scratch_root)
-    shot, login, folder = plan["shot"], plan["login"], plan["h_folder"]
+    shot, login = plan["shot"], plan["login"]
     code = publish_for
-    versions = api.published_versions(folder, shot, login, code)
+    # The person's folder for the stage published: scenes\layout\<login>\ or
+    # scenes\anim\<login>\ (spec §4g), versions counted across the old
+    # scenes\<login>\ too.
+    project = plan["rel_folder"][:5]
+    folder = api.personal_folder(api.resolve_root(h_root), project, login, code)
+    versions = api.person_versions(api.resolve_root(h_root), project, shot, login, code)
     version = (versions[-1] + 1) if versions else 1
     ext = os.path.splitext(scene_path)[1].lower() or ".ma"
-    h_shot = os.path.join(api.resolve_root(h_root), *plan["rel_folder"][:5])
+    h_shot = os.path.join(api.resolve_root(h_root), *project)
     plan.update({
         "code": code,
         "publish_for": publish_for,
+        "department": code,
+        "h_folder": folder,
         "version": version,
         "dest": os.path.join(folder, api.published_name(shot, login, code, version, ext)),
-        # per person, like the publishes (spec §4, 2026-10-15): versions are
-        # per person, so two people's v003 caches can't collide
-        "cache_folder": os.path.join(h_shot, "cache", "alembic", login),
+        # per person, like the publishes: versions are per person, so two
+        # people's v003 caches can't collide; per department (spec §4g)
+        "cache_folder": os.path.join(h_shot, "cache", "alembic", code, login),
     })
     for key in ("keys_dest", "map_dest"):
         plan.pop(key, None)
@@ -580,7 +588,7 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     end = int(cmds.playbackOptions(query=True, maxTime=True))
     if camera:
         camera = cam.check_camera([camera])
-        cam_plan = cam.plan_camera(scene_path, h_root, scratch_root)
+        cam_plan = cam.plan_camera(scene_path, h_root, scratch_root, department=publish_for)
         cam_plan["objects"] = [cmds.ls(camera)[0]]
         cam_plan["publish_for"] = publish_for
         cam_plan["sg_shot"] = plan["sg_shot"]

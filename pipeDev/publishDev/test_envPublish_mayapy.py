@@ -145,7 +145,8 @@ after = (sorted(cmds.ls(long=True, type="transform")), cmds.getAttr("environment
 check("published from the shot's layout scene to the environment asset, as Modeling",
       os.path.basename(plan["dest"]) == "scoutsHouseLandscape_scout_model_v001.ma"
       and plan["code"] == "model"
-      and os.sep + os.path.join("environment", "scoutsHouseLandscape", "scenes", "scout") in plan["dest"])
+      and os.sep + os.path.join("environment", "scoutsHouseLandscape", "scenes", "model",
+                                "scout") in plan["dest"])
 check("read-only on H", not os.access(plan["dest"], os.W_OK))
 check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
 check("working scene unchanged (names, placements, history, sets, image path)", before == after)

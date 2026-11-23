@@ -194,9 +194,10 @@ def plan_environment(scene_path, h_root, scratch_root, target):
     asset_rel = [film, "maya", "assets", ENV_TYPE, asset]
     if not os.path.isdir(os.path.join(h_root, *asset_rel)):
         raise PublishError("No folder for environment '%s' on the H drive." % asset)
+    # An environment publishes as Modeling: scenes\model\<login>\ (spec §4g).
     login = api.who()
-    h_folder = api.personal_folder(h_root, asset_rel, login)
-    versions = api.published_versions(h_folder, asset, login, api.MODEL_CODE)
+    h_folder = api.personal_folder(h_root, asset_rel, login, api.MODEL_CODE)
+    versions = api.person_versions(h_root, asset_rel, asset, login, api.MODEL_CODE)
     version = (versions[-1] + 1) if versions else 1
     name = api.published_name(asset, login, api.MODEL_CODE, version, ext)
     return {"root": root, "film": film, "asset_type": ENV_TYPE, "asset": asset,

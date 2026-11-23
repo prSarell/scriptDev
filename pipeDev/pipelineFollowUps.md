@@ -150,7 +150,7 @@ Stage 2 started: tidy up and add features, with contributors joining. Read
       `%TEMP%\setUP_v009_defaultRenderLayer_17388__1.log`.
       Seen in the export log: sky dome `light_shader.outputs:color` type
       mismatch (may light wrong); background export ran with
-      `-proj ...ssets\propackpack\` (wrong project: set the shot's
+      `-proj ...assets\prop\backpack\` (wrong project: set the shot's
       project before submitting).
 - [ ] **v004 cloud job FAILED (found 2026-11-13 17:00).** From
       `%LOCALAPPDATA%\Autodesk\Logs\FlowRenderMaya.log`: upload ok (one
@@ -351,6 +351,16 @@ hand. One T7 session could cover most of it.
       Try it in a shot scene (refused) and with a `props_grp` already in the
       scene (refused). Open: should it work on rigs too (not now: models and
       environments only)?
+- [ ] **One folder layout on scratch and H** (spec §4g, built 2026-11-23,
+      `test_deptFolders_mayapy.py`): reinstall the pipe, open SEQ010_160's
+      `scenes\anim\e131988\setUP_v012.ma`, publish it as Animation. Check H
+      gets `SEQ010_160\scenes\anim\e131988\SEQ010_160_e131988_anim_v002.ma`
+      (v002: the old v001 is in `scenes\e131988\`, which isn't written to
+      any more). Then a model or environment publish lands in
+      `scenes\model\e131988\`. Build the shot and check it lists the old
+      and new versions; open an older shot and check its references still
+      load. Project Tool Update Scratch: other people's
+      `scenes\<dept>\<login>\` come across (1:1, as decided).
 - [ ] **mpModel shelf, USD Hierarchy + USD Names** (built 2026-11-20;
       imported-model clean-up added 2026-11-23, `modelTool_usd.py`, test
       45/45 on 2025 + 2027, windows not yet driven in the GUI): import a

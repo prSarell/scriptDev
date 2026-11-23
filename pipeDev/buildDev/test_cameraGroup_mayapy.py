@@ -211,6 +211,7 @@ check("update: v002 plays the same move", abs(cmds.getAttr(g + "|camera1.tx") - 
 
 # --- Old-format publishes are left out of the list
 old_dir = os.path.join(api.shot_folder(H, FILM, "EAP_010", "EAP_010_010"), "scenes", "scout")
+os.makedirs(old_dir, exist_ok=True)       # the old scenes/<login>/ folder, still read
 for name in ("EAP_010_010_scout_cam_v009.ma", "EAP_010_010_scout_camAnim_v009.ma"):
     shutil.copy2(plan["dest"], os.path.join(old_dir, name))
 json.dump({"camera": "shotCam", "curves": {}}, open(os.path.join(old_dir, "EAP_010_010_scout_camAnim_v009.json"), "w"))

@@ -302,9 +302,9 @@ os.makedirs(os.path.dirname(wip))
 cmds.file(new=True, force=True); cmds.polyCube(name="backPack_geo")
 cmds.file(rename=wip); cmds.file(save=True, type="mayaAscii")
 plan = pub.plan_publish(wip, H, S, "model")
-check("ben's first publish is his v001, in his folder",
+check("ben's first publish is his v001, in his Modeling folder (spec §4g)",
       plan["version"] == 1 and n(plan["dest"]) == n(os.path.join(
-          H, FILM, "maya", "assets", "prop", "backpack", "scenes", "bensmith",
+          H, FILM, "maya", "assets", "prop", "backpack", "scenes", "model", "bensmith",
           "backpack_bensmith_model_v001.ma")))
 pub.save_config(dict(pub.load_config(), publish_as=LOGIN))
 check("anna's next publish is her v003", pub.plan_publish(wip, H, S, "model")["version"] == 3)

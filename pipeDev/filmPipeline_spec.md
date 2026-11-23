@@ -3852,13 +3852,18 @@ for the same shot or asset". This replaces the personal publish folder
   folders and two version series. Version numbers are counted in the
   folder; "latest = newest by time, across everyone" (assets) is
   unchanged.
-- **Which department folder.** The one the working scene is in (as
-  renderSub already does): an anim scene publishes to `anim\`, a camera
-  published from a layout scene to `layout\`, from an anim scene to
-  `anim\`. An environment publishes as Modeling, so `model\`. Folder
-  names are the department codes (`publishTool_api.WORK_FOLDERS`,
-  `SHOT_WORK_FOLDERS`: model, rig, lookDev, layout, anim, fx, lighting;
-  creature made on first save).
+- **Which department folder.** The department the publish is for, which
+  is where the artist works when they follow the pipe: a Modeling publish
+  goes to `model\`, Rigging to `rig\`, an environment (a Modeling publish)
+  to `model\`, a Layout or Animation publish to `layout\` or `anim\`. A
+  camera goes with the stage it's published for (Publish always asks
+  Layout or Animation), so a camera published with an animation lands
+  beside it in `anim\`; with no stage given, the department folder its
+  scene is in, else `layout\`. (Built 2026-11-23 this way rather than
+  "always the scene's folder", so one publish never splits across two
+  folders.) Folder names are the department codes
+  (`publishTool_api.DEPT_FOLDERS`: model, rig, creature, lookDev, layout,
+  anim, fx, lighting).
 - **Other per-person folders follow it.** Alembic caches:
   `cache\alembic\<department>\<login>\`. Renders already do
   (`images\lighting\<login>\`). Studio Library data and anything else
@@ -3869,31 +3874,42 @@ for the same shot or asset". This replaces the personal publish folder
   scratch" still holds; on H that folder simply stops being written.
 - **Build's `maya\publish\` cache** keeps mirroring H, so new pulls land at
   the new paths.
-- **Must change with it: the H -> scratch structure copy** (checked
-  2026-11-23). `projectTool_api._publish_folder` keeps H's
-  `scenes\<login>\` off scratch by skipping any `scenes\` child that isn't
-  a department code. Once publishes are in `scenes\<dept>\<login>\`, that
-  test no longer catches them, and every student's scratch would get an
-  empty folder for every artist who has published. The copy must skip every
-  per-person folder on H (`scenes\<dept>\<anyone>\`, old
-  `scenes\<login>\`, `cache\alembic\...\<login>\`) and only bring the
-  department folders; a person's own `scenes\<dept>\<login>\` is made by
-  `work_folder` when they first save. Add a test that the copy never makes
-  someone else's folder on scratch. (`h_sync.build_project` already skips
-  everything under `scenes\`.)
-- **Other per-person folders found on scratch, 2026-11-23:**
+- **The H -> scratch structure copy stays 1:1** (corrected 2026-11-23; an
+  earlier note here said it must skip other people's folders). The
+  Project Tool already copies everyone's `scenes\<dept>\<login>\` from H
+  (Set Project's "full 1:1 structure"; Update Scratch's "new people's
+  folders") and skips only the old `scenes\<login>\`, H-only.
+  User 2026-11-23, asked whether students should get other people's
+  (empty) folders: "Yes, full 1:1 (as now)". So no change to
+  `projectTool_api._publish_folder`; `test_deptFolders_mayapy.py` checks
+  it. (`h_sync.build_project`, the desktop tool, skips everything under
+  `scenes\` when it makes a new asset or shot.)
+- **Other per-person folders on scratch, 2026-11-23:**
   `data\studioLibrary\<login>\` (Studio Library, §4b, made ahead on
-  purpose, no department) and `cache\alembic\<login>\`. Decide with §4g
-  whether they gain a department folder. `images\lighting\<login>\`,
+  purpose, no department) is left as it is for now. Caches moved to
+  `cache\alembic\anim\<login>\`. `images\lighting\<login>\`,
   `images\anim\<login>\` and `data\shotgrid\<dept>\<login>\` already
-  follow the rule.
+  follow the rule. Textures stay `<asset>\sourceimages\<login>\<published
+  name>\` (one folder per version, so no clash).
 - **SUGGESTION (Claude, not yet confirmed):** a scene saved outside a
   department folder (straight in `scenes\`, or `scenes\anim\New Folder\`)
   can't be placed, so Publish refuses with a fix button (Save Here into
   the right department folder), per "the pipe refuses rather than warns".
-- **Status.** Decided, not built. Build it after the T7's `chkdsk /f`
-  (2026-11-23: the drive dropped off USB and needs an offline repair),
-  tested on copies, not the real H.
+- **BUILT 2026-11-23** (after the T7's `chkdsk /f`; tested on copies, not
+  the real H). `publishTool_api.personal_folder(..., department)`,
+  `old_personal_folder`, `person_folders`, `person_versions` (a person's
+  version numbers across the old and every department folder, so a v003 in
+  `scenes\<login>\` makes the next one v004 in `scenes\model\<login>\`),
+  `scene_department`, `project_of_publish` (the asset/shot folder of a
+  publish at either depth; textures and Build's `texture_folder_of` use
+  it). Asset, environment, camera, Layout and Animation publishes all use
+  them; caches go in `cache\alembic\anim\<login>\`. Build reads both
+  layouts (`list_published`, `_walk_shot_publishes`, `list_shot_caches`,
+  `_published_source`). Test: `publishDev\test_deptFolders_mayapy.py`.
+  Hand test: reinstall the pipe, publish SEQ010_160's `setUP_v012` as
+  Animation and check it lands in `scenes\anim\e131988\` as v002 (the old
+  v001 is in `scenes\e131988\`), then Build the shot and check it lists
+  both.
 
 ## 5. Context: what the existing tools assume
 
