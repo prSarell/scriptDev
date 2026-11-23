@@ -78,6 +78,27 @@ try:
     check("... the FBX holds the mesh, not the light",
           b"shed_GEO" in data and b"sun" not in data)
 
+    # --- an asset scene with a camera driven by a data node in a locked group (a Build
+    # shot camera: SEQ010_120_cam_GRP|camera1, user 2026-11-24) -----------------
+    cam_grp = cmds.group(empty=True, name="SEQ010_120_cam_GRP")
+    for a in ("tx", "ty", "tz", "rx", "ry", "rz"):
+        cmds.setAttr(cam_grp + "." + a, lock=True)
+    asset_cam = cmds.parent(cmds.camera(name="turnCam")[0], cam_grp)[0]
+    data = cmds.createNode("transform", name="camera1_DATA")   # Build: keys live here
+    cmds.setKeyframe(data, attribute="ry", time=1, value=0)
+    cmds.setKeyframe(data, attribute="ry", time=24, value=90)
+    cmds.connectAttr(data + ".ry", asset_cam + ".ry")
+    cmds.playbackOptions(minTime=1, maxTime=24)
+    path3 = fx.export(selection=[cam_grp, grp])[0]
+    cmds.file(save=True, force=True)
+    cmds.file(new=True, force=True)
+    cmds.file(path3, i=True, type="FBX", ignoreVersion=True)
+    back = [t for t in cmds.ls("turnCam*", type="transform")]
+    keys = cmds.keyframe(back, query=True, timeChange=True) if back else None
+    check("asset scene: the camera's animation comes back from the FBX, baked 1-24",
+          back and keys and min(keys) == 1 and max(keys) == 24
+          and round(cmds.getAttr(back[0] + ".ry", time=24), 2) == 90)
+
     # --- a shot, with an animated camera ---------------------------------------
     cmds.file(new=True, force=True)
     cmds.file(rename=os.path.join(shot_dir, "SEQ010_160_layout_v001.ma"))

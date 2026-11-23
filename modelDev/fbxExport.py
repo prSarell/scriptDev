@@ -9,8 +9,9 @@ Substance Painter folder, found from the open scene's own path:
 
 e.g. D:\\NWF_SHF\\substancePainter\\assets\\environment\\hillShed\\hillShed_v001.fbx.
 Each export is a new version (<asset or shot>_v001.fbx, v002, ...); nothing
-is overwritten. In a shot the cameras' animation is baked over the
-playback range; an asset exports as it stands.
+is overwritten. With a camera picked, animation is baked over the
+playback range, in any scene: a Build shot camera is driven by camera1_DATA
+(not in the selection), so unbaked it came out with no keys.
 
 Not part of the pipe: it only reads the scene's path, and doesn't touch
 publishes, ShotGrid or the pipe's records. One click: run() exports and
@@ -167,7 +168,7 @@ def export(selection=None, scene=None):
     path = next_path(folder, name)
     before = cmds.ls(selection=True, long=True) or []
     try:
-        _settings(bake=(kind == "sequences" and bool(cameras)))
+        _settings(bake=bool(cameras))   # any scene: see the top
         cmds.select(roots, replace=True)
         mel.eval('FBXExport -f "%s" -s' % path.replace("\\", "/"))
     finally:

@@ -55,7 +55,7 @@ BUTTONS.append({
     "tooltip": "FBX Export: exports the selected geometry and cameras as FBX to this "
                "asset's or shot's Substance Painter folder (<film>/substancePainter/assets"
                "/<type>/<asset>, or .../sequences/<seq>/<shot>), as <name>_v001.fbx, "
-               "v002, ... In a shot, camera animation is baked over the playback range.",
+               "v002, ... Camera animation is baked over the playback range.",
     "icon": "iconModelFbxExport.png",
     "command": _command("fbxExport", "run"),
 })
