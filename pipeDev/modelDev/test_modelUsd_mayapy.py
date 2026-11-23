@@ -16,6 +16,7 @@ import publishTool_api as api
 import publishTool_textures as tex
 import publishTool_outputs as out
 import modelTool_usd as usd
+import modelTool_usd_ui      # the windows must at least import (a syntax slip once shipped)
 api.artist_name = lambda login: "Test Person"      # no ShotGrid in the test
 
 ok = []

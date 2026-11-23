@@ -177,10 +177,8 @@ class HierarchyWindow(object):
         found = usd.strays()
         if found:
             _say("These cameras / lights came into geo with their group and don't belong "
-                 "in the model's USD. Move them out of geo:
-  %s"
-                 % "
-  ".join(n.split("|")[-1] for n in found[:15]))
+                 "in the model's USD. Move them out of geo:\n  %s"
+                 % "\n  ".join(n.split("|")[-1] for n in found[:15]))
 
     def add(self, purpose):
         picked = _selection()
