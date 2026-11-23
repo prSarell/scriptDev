@@ -320,6 +320,27 @@ check("USD: the texture is beside it, by a relative path",
 check("USDZ: the texture packed inside",
       any(n.endswith("wood.png") for n in zipfile.ZipFile(usdz_path).namelist()))
 print("materials at:", [str(p.GetPath()) for p in stage.Traverse() if p.GetTypeName() == "Material"])
+check("USD: render's proxyPrim points at proxy",
+      UsdGeom.Imageable(stage.GetPrimAtPath("/chair_model_GRP/geo/render")).GetProxyPrimRel()
+      .GetTargets() == [Sdf.Path("/chair_model_GRP/geo/proxy")])
+del stage
+out.remove(folder)
+
+# No proxy: render left untagged, so it shows in Maya's USD stage (which
+# draws proxy, not render, by default). User 2026-11-23.
+cmds.delete("|geo|proxy|chair_proxy_GEO")
+cmds.file(save=True, type="mayaAscii")
+plan.update(outputs_written=[], version=2,
+            dest=os.path.join(h_folder, "chair_scout_model_v002.ma"))
+api.export_model_to_h_drive(["geo"], plan, scene, tex.collect(["geo"]))
+folder = out.folder_of(plan["dest"])
+stage = Usd.Stage.Open(os.path.join(folder, "chair_scout_model_v002.usd"))
+render = stage.GetPrimAtPath("/chair_model_GRP/geo/render")
+check("no proxy: render has no purpose (default), no proxyPrim",
+      render.IsValid() and not UsdGeom.Imageable(render).GetPurposeAttr().HasAuthoredValue()
+      and UsdGeom.Imageable(render).ComputePurpose() == "default"
+      and not UsdGeom.Imageable(render).GetProxyPrimRel().GetTargets())
+del stage
 
 out.remove(folder)
 cmds.file(new=True, force=True)

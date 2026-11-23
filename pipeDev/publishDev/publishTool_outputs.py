@@ -14,8 +14,8 @@ to another program (e.g. Unreal) on its own:
                                     (relative paths); the top prim is the
                                     default prim, kind component, and
                                     geo|render / geo|proxy get their USD
-                                    purpose (user, 2026-11-20; see
-                                    modelTool_usd)
+                                    purpose when there is a proxy (user,
+                                    2026-11-20 / 11-23; see modelTool_usd)
         <published name>.usdz       the same, textures packed inside
         <published name>.fbx        textures embedded
         <published name>.obj/.mtl   + textures\\ (copies, .mtl points there).
@@ -183,13 +183,17 @@ def _usd(roots, path, textures):
 #     geo
 #       render          purpose render: the meshes that render
 #       proxy           purpose proxy: an optional light stand-in
+#   Purposes are set only when proxy has geometry (render's proxyPrim
+#   points at it); with no proxy, render is left untagged so it shows
+#   everywhere, Maya's USD stage included (user 2026-11-23).
 #     mtl               materials (the exporter writes them)
 USD_PURPOSES = (("geo", "render", "render"), ("geo", "proxy", "proxy"))
 
 
 def finish_usd(path, textures):
     """What mayaUSDExport leaves out: the top prim as the default prim and a
-    component (what USD tools expect of an asset), render/proxy purposes,
+    component (what USD tools expect of an asset), render/proxy purposes
+    (only when proxy has geometry),
     and texture paths relative to the file (textures\\<name>, copied from
     textures, file name -> real path) so the folder works anywhere."""
     from pxr import Usd, UsdGeom, Kind, Sdf
@@ -200,10 +204,21 @@ def finish_usd(path, textures):
         if len(tops) == 1:
             Usd.ModelAPI(tops[0]).SetKind(Kind.Tokens.component)
     for top in tops:
+        geo = top.GetChild("geo")
+        parts = dict((child, geo.GetChild(child) if geo else None)
+                     for _, child, _ in USD_PURPOSES)
+        # Purposes only when there's a proxy to stand in (user 2026-11-23):
+        # Maya's USD stage draws proxy, not render, by default, so a model
+        # with render tagged and no proxy would show nothing there.
+        proxy = parts["proxy"]
+        if not (proxy and any(p.IsA(UsdGeom.Gprim) for p in Usd.PrimRange(proxy))):
+            continue
         for group, child, purpose in USD_PURPOSES:
-            prim = top.GetChild(group).GetChild(child) if top.GetChild(group) else None
+            prim = parts[child]
             if prim and prim.IsA(UsdGeom.Imageable):
                 UsdGeom.Imageable(prim).CreatePurposeAttr().Set(purpose)
+        if parts["render"]:
+            UsdGeom.Imageable(parts["render"]).SetProxyPrim(proxy)
     folder = os.path.join(os.path.dirname(path), "textures")
     for prim in stage.Traverse():
         for attr in prim.GetAttributes():
