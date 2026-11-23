@@ -352,7 +352,10 @@ hand. One T7 session could cover most of it.
       scene (refused). Open: should it work on rigs too (not now: models and
       environments only)?
 - [ ] **One folder layout on scratch and H** (spec §4g, built 2026-11-23,
-      `test_deptFolders_mayapy.py`): reinstall the pipe, open SEQ010_160's
+      `test_deptFolders_mayapy.py`). 2026-11-23: user test-published every
+      published asset in SEQ010_160 -- "looks good". Still to check: Build
+      lists old + new versions; an older shot's references; a model publish.
+      Steps: reinstall the pipe, open SEQ010_160's
       `scenes\anim\e131988\setUP_v012.ma`, publish it as Animation. Check H
       gets `SEQ010_160\scenes\anim\e131988\SEQ010_160_e131988_anim_v002.ma`
       (v002: the old v001 is in `scenes\e131988\`, which isn't written to
