@@ -1354,6 +1354,74 @@ class _AddedToSet(object):
         return False
 
 
+# A MetaHuman's face board (rig_rules.METAHUMAN face_gui_group) is built from
+# meshes (frames, sliders, text) that render by default; a rig publish turns
+# their render stats off so they never show in a render (user, 2026-11-24).
+# Viewport display is untouched, so animators still see and pick the board.
+NOT_RENDERABLE = ("primaryVisibility", "castsShadows", "receiveShadows",
+                  "visibleInReflections", "visibleInRefractions",
+                  "aiVisibleInDiffuseReflection", "aiVisibleInSpecularReflection",
+                  "aiVisibleInDiffuseTransmission", "aiVisibleInSpecularTransmission",
+                  "aiVisibleInVolume", "aiSelfShadows")
+
+
+def metahuman_face_gui_geo(objects=None):
+    """The renderable shapes (mesh, NURBS surface) under a MetaHuman's face
+    GUI group, long names; only those inside objects when given."""
+    import rig_rules
+    found = set()
+    for group in cmds.ls(type="transform", long=True) or []:
+        if _short(group) != rig_rules.METAHUMAN["face_gui_group"]:
+            continue
+        if objects and not _under(group, objects):
+            continue
+        for kind in ("mesh", "nurbsSurface"):
+            for shape in cmds.listRelatives(group, allDescendents=True, fullPath=True,
+                                            type=kind) or []:
+                if not cmds.getAttr(shape + ".intermediateObject"):
+                    found.add(shape)
+    return sorted(found)
+
+
+class _NotRenderable(object):
+    """Turn the shapes' render stats off for the length of the export, then
+    put every value (and lock) back, so the working scene ends as it was.
+    A stat driven by a connection is left alone and listed in skipped."""
+
+    def __init__(self, shapes):
+        self.shapes, self.before, self.skipped = list(shapes or []), [], []
+
+    def __enter__(self):
+        for shape in self.shapes:
+            for attr in NOT_RENDERABLE:
+                plug = "%s.%s" % (shape, attr)
+                if not cmds.attributeQuery(attr, node=shape, exists=True):
+                    continue
+                if cmds.listConnections(plug, source=True, destination=False):
+                    self.skipped.append(plug)
+                    continue
+                value, locked = cmds.getAttr(plug), cmds.getAttr(plug, lock=True)
+                if not value:
+                    continue
+                self.before.append((plug, value, locked))
+                self._set(plug, False, locked)
+        return self
+
+    @staticmethod
+    def _set(plug, value, locked):
+        if locked:
+            cmds.setAttr(plug, lock=False)
+        cmds.setAttr(plug, value)
+        if locked:              # locked in the published file too
+            cmds.setAttr(plug, lock=True)
+
+    def __exit__(self, *exc):
+        for plug, value, locked in self.before:
+            if cmds.objExists(plug):
+                self._set(plug, value, locked)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Rig publish group (user, 2026-10-20): like the model and camera, the
 # published rig sits in <asset>_rig_GRP (pipe icon, locked at the origin),
@@ -1442,6 +1510,7 @@ def rig_group_info(plan, scene_path, files):
         ("rigRulesVersion", rig_rules.VERSION),
         ("metahumanFaceControls", sets.get("metahuman_count", 0)),
         ("faceControlsAdded", len(sets.get("metahuman_missing") or [])),
+        ("faceGuiNotRenderable", plan.get("face_gui_not_renderable", 0)),
     ]
 
 
@@ -1458,8 +1527,14 @@ def export_rig_to_h_drive(objects, plan, scene_path, textures=(), dna=(), face_f
     sets = plan.get("control_sets") or {}
     pipe_sets = [plan.get("cache_set"), sets.get("body"), sets.get("face")]
     import publishTool_look as look
-    with _AddedToSet(*face_fill), _PublishSet(plan, pipe_sets), \
+    gui = metahuman_face_gui_geo(objects)
+    with _AddedToSet(*face_fill), _PublishSet(plan, pipe_sets), _NotRenderable(gui) as quiet, \
             tex.PublishedTextures(textures, plan, dna) as files:
+        plan["face_gui_not_renderable"] = len(gui)
+        if quiet.skipped:
+            plan.setdefault("warnings", []).append(
+                "MetaHuman face board: %d render setting(s) are driven by a connection, "
+                "so Publish left them as they are (e.g. %s)." % (len(quiet.skipped), quiet.skipped[0]))
         with _RigGroup(plan, objects, rig_group_info(plan, scene_path, files)) as rig:
             # The look of what the rig caches (its cache_SET), for animation
             # caches (spec "Shaders on caches").
@@ -1574,6 +1649,10 @@ ID_ATTR = PIPE_ATTR_PREFIX + "sgAssetId"
 # normal container icon, nothing breaks. Only shown on a container, hence
 # make_pipe_group.
 PIPE_ICON = "iconPipeOutliner.png"
+# The USD hierarchy's top group (modelTool_usd) is geo_USD, red in the
+# Outliner, in the work scene only (user 2026-11-24): the model publish's
+# copy is named geo, uncoloured, so it doesn't travel down the pipe.
+USD_WORK_TOP, USD_TOP = "geo_USD", "geo"
 GROUP_CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY",
                   "rotateZ", "scaleX", "scaleY", "scaleZ", "visibility")
 
@@ -1802,6 +1881,10 @@ def _export_model(objects, plan, info):
                 left_out = [r.split("|")[-1] for r in hidden_roots]
                 hidden = dict((u, hidden_inside(cmds.ls(u, long=True)[0])) for u in roots)
                 copies, twins = [], []      # twins: (original, copy) for _CopiesDriveShaders
+                if any(cmds.ls(u, long=True)[0] == "|" + USD_WORK_TOP for u in roots):
+                    for node in cmds.ls("|" + USD_TOP, long=True) or []:
+                        moved.append((cmds.ls(node, uuid=True)[0], USD_TOP))
+                        cmds.rename(node, "pipeTmp_" + USD_TOP)
                 for uuid in roots:
                     root = cmds.ls(uuid, long=True)[0]
                     short = root.split("|")[-1]
@@ -1809,7 +1892,10 @@ def _export_model(objects, plan, info):
                     made.append(cmds.ls(copy, uuid=True)[0])
                     moved.append((uuid, short))
                     cmds.rename(cmds.ls(uuid)[0], "pipeTmp_" + short)
-                    copy = cmds.rename(copy, short)
+                    work_top = root == "|" + USD_WORK_TOP
+                    copy = cmds.rename(copy, USD_TOP if work_top else short)
+                    if work_top:        # the scene's cue stays in the scene
+                        cmds.setAttr(copy + ".useOutlinerColor", False)
                     if cmds.listRelatives(copy, parent=True):
                         copy = cmds.parent(copy, world=True)[0]
                     copy = cmds.ls(copy, long=True)[0]
@@ -2449,6 +2535,9 @@ def publish(scene_path, h_root, scratch_root, code, frame_count=2, notes="",
     if plan.get("textures"):
         note += "\nTextures: %d file(s), MetaHuman DNA: %d, in %s" % (
             plan["textures"]["files"], plan["textures"].get("dna", 0), plan["textures"]["folder"])
+    if plan.get("face_gui_not_renderable"):
+        note += "\nMetaHuman face board: %d mesh(es) set not to render (published file only)" % (
+            plan["face_gui_not_renderable"])
     if plan.get("look"):
         note += "\nLook (for animation caches): %d shading group(s), %s" % (
             plan["look"]["shading_groups"], os.path.basename(plan["look"]["file"]))

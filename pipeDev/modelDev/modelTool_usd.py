@@ -16,7 +16,7 @@ Gets a model ready to publish as USD. The layout and names are the user's
 
     meshes  <asset>_<part>_GEO      groups  <part>_GRP
 
-Hierarchy (the USD Hierarchy button): build() makes geo|render|proxy at the
+Hierarchy (the USD Hierarchy button): build() makes geo_USD|render|proxy at the
 world root; add() moves what's picked into render or proxy, where it was
 in the world, with its whole top group (the artist's groups are kept and
 can nest as deep as they like under render). left_out() is the geometry still outside geo.
@@ -48,6 +48,12 @@ from publishTool_api import PublishError
 
 GEO, RENDER, PROXY = "geo", "render", "proxy"
 STRUCTURE = (GEO, RENDER, PROXY)
+# In the work scene the top group is geo_USD, red in the Outliner (user
+# 2026-11-24: a cue the hierarchy is built). Publish writes it as geo.
+TOP = api.USD_WORK_TOP              # geo_USD
+TOP_PATH = "|" + TOP
+RENDER_PATH, PROXY_PATH = TOP_PATH + "|" + RENDER, TOP_PATH + "|" + PROXY
+OUTLINER_RED = (1.0, 0.25, 0.25)
 GEO_SUFFIX, GRP_SUFFIX = "_GEO", "_GRP"
 # Maya's own names for new things: listed for the artist to name.
 DEFAULT_NAME = re.compile(
@@ -118,37 +124,51 @@ def structure():
     """{'geo', 'render', 'proxy'}: each one's path, or None if it isn't
     there yet."""
     found = {}
-    for key, path in ((GEO, "|geo"), (RENDER, "|geo|render"), (PROXY, "|geo|proxy")):
+    for key, path in ((GEO, TOP_PATH), (RENDER, RENDER_PATH), (PROXY, PROXY_PATH)):
         found[key] = path if cmds.objExists(path) and cmds.nodeType(path) == "transform" \
             else None
     return found
 
 
 def _in_the_way():
-    """Nodes already called geo / render / proxy somewhere else: the
-    hierarchy needs those names to itself."""
-    where = {GEO: "|geo", RENDER: "|geo|render", PROXY: "|geo|proxy"}
+    """Nodes already called geo_USD / geo / render / proxy somewhere else:
+    the hierarchy needs those names to itself (geo too: Publish names the
+    top group geo in the published files)."""
+    where = {TOP: TOP_PATH, GEO: None, RENDER: RENDER_PATH, PROXY: PROXY_PATH}
     clash = []
-    for key in STRUCTURE:
+    for key in (TOP, GEO, RENDER, PROXY):
         for node in cmds.ls(key, long=True) or []:
             if node != where[key]:
                 clash.append(node)
     return clash
 
 
+def mark(top=TOP_PATH):
+    """The work scene's cue that the USD hierarchy is built (user
+    2026-11-24): the top group is geo_USD and red in the Outliner. Scene
+    only: Publish names it geo, uncoloured, in what it writes."""
+    cmds.setAttr(top + ".useOutlinerColor", True)
+    cmds.setAttr(top + ".outlinerColor", *OUTLINER_RED)
+
+
 def build():
-    """Make geo|render|proxy at the world root (only the parts missing).
-    Returns structure()."""
+    """Make geo_USD|render|proxy at the world root (only the parts
+    missing), the top group marked. A top group made before 2026-11-24
+    (|geo) is renamed geo_USD. Returns structure()."""
+    if not cmds.objExists(TOP_PATH) and cmds.objExists("|" + GEO) and \
+            cmds.nodeType("|" + GEO) == "transform":
+        cmds.rename("|" + GEO, TOP)
     clash = _in_the_way()
     if clash:
-        raise PublishError("The USD hierarchy needs the names geo, render and proxy, and "
-                           "these already have one:\n  %s\nRename them first (USD Names)."
-                           % "\n  ".join(clash))
-    if not cmds.objExists("|geo"):
-        cmds.group(empty=True, world=True, name=GEO)
+        raise PublishError("The USD hierarchy needs the names geo_USD, geo, render and "
+                           "proxy, and these already have one:\n  %s\nRename them first "
+                           "(USD Names)." % "\n  ".join(clash))
+    if not cmds.objExists(TOP_PATH):
+        cmds.group(empty=True, world=True, name=TOP)
+    mark()
     for key in (RENDER, PROXY):
-        if not cmds.objExists("|geo|" + key):
-            cmds.group(empty=True, parent="|geo", name=key)
+        if not cmds.objExists(TOP_PATH + "|" + key):
+            cmds.group(empty=True, parent=TOP_PATH, name=key)
     return structure()
 
 
@@ -168,7 +188,7 @@ def _whole_group(node):
     """What moves when node is picked: outside geo, its top group (so a
     mesh picked in the viewport brings its groups along, user 2026-11-23);
     inside geo, just node."""
-    if node == "|geo" or node.startswith("|geo|"):
+    if node == TOP_PATH or node.startswith(TOP_PATH + "|"):
         return node
     return "|" + node.lstrip("|").split("|")[0]
 
@@ -185,7 +205,7 @@ def add(nodes, purpose=RENDER):
     moved = []
     picked = _topmost([_whole_group(n) for n in _topmost(nodes)])
     for node in picked:
-        if node in ("|geo", "|geo|render", "|geo|proxy"):
+        if node in (TOP_PATH, RENDER_PATH, PROXY_PATH):
             continue
         if target.startswith(node + "|"):
             continue                    # can't go inside itself
@@ -201,8 +221,8 @@ def strays():
     """Cameras and lights inside geo (they came in with a group): they
     don't belong in the model's USD."""
     found = []
-    for node in cmds.listRelatives("|geo", allDescendents=True, fullPath=True,
-                                   type="transform") or [] if cmds.objExists("|geo") else []:
+    for node in cmds.listRelatives(TOP_PATH, allDescendents=True, fullPath=True,
+                                   type="transform") or [] if cmds.objExists(TOP_PATH) else []:
         if _kind(node) is None and _shapes(node):
             found.append(node)
     return sorted(found)
@@ -212,7 +232,7 @@ def left_out():
     """Top-level geometry outside geo (cameras and lights don't count)."""
     out = []
     for node in cmds.ls(assemblies=True, long=True) or []:
-        if node == "|geo" or _default_camera(node):
+        if node == TOP_PATH or _default_camera(node):
             continue
         if _kind(node) == "geo" or (_kind(node) == "group" and _has_geometry(node)):
             out.append(node)
@@ -298,7 +318,7 @@ def name(nodes, part, asset=None):
     if not part:
         raise PublishError("Type a part name (e.g. seat, legL, wheelFront).")
     picked = [n for n in cmds.ls(nodes, long=True, type="transform") or []
-              if n not in ("|geo", "|geo|render", "|geo|proxy") and _kind(n)]
+              if n not in (TOP_PATH, RENDER_PATH, PROXY_PATH) and _kind(n)]
     if not picked:
         raise PublishError("Pick the meshes or groups to name.")
     taken = _taken(ignore=picked)
@@ -320,14 +340,14 @@ def name(nodes, part, asset=None):
 def _scope():
     """The nodes names are checked on: everything under geo, or (no
     hierarchy yet) every transform with geometry below the world root."""
-    roots = ["|geo"] if cmds.objExists("|geo") else left_out()
+    roots = [TOP_PATH] if cmds.objExists(TOP_PATH) else left_out()
     nodes = []
     for root in roots:
         nodes.append(root)
         nodes += cmds.listRelatives(root, allDescendents=True, fullPath=True,
                                     type="transform") or []
     return [n for n in sorted(set(nodes), key=lambda p: (p.count("|"), p))
-            if n not in ("|geo", "|geo|render", "|geo|proxy") and _kind(n)
+            if n not in (TOP_PATH, RENDER_PATH, PROXY_PATH) and _kind(n)
             and not cmds.referenceQuery(n, isNodeReferenced=True)]
 
 

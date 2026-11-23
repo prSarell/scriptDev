@@ -29,19 +29,19 @@ HOW_TO_WINDOW = "modelToolUsdHowToWin"
 HIERARCHY_HOW_TO = """USD HIERARCHY
 
 Puts the model in the layout a USD publish needs:
-   geo
+   geo_USD     red in the Outliner: built (Publish writes it as geo)
       render    the meshes that render
       proxy     an optional light stand-in
 Publish adds <asset>_model_GRP on top.
 
 1. Open the asset's scene (saved in its scenes folder).
 2. Click Build Hierarchy. With nothing selected, all geometry
-   outside geo goes into render.
+   outside geo_USD goes into render.
 3. To place things yourself: select them, then Selected to Render
    or Selected to Proxy. A mesh brings its whole top group, so your
    groups are kept (nest them as deep as you like). Nothing moves
    in the world.
-4. Check the list "Geometry outside geo" is empty (click a row to
+4. Check the list "Geometry outside geo_USD" is empty (click a row to
    select it). Refresh updates it.
 5. Next: USD Names, then Publish with USD ticked.
 
@@ -117,11 +117,11 @@ class HierarchyWindow(object):
         cmds.text(label="", height=2)
         cmds.text(align="left", wordWrap=True, label=(
             "Publish puts this in <asset>_model_GRP, the USD's top prim:\n"
-            "   geo\n      render    the meshes that render\n"
+            "   geo_USD   red in the Outliner (written as geo)\n      render    the meshes that render\n"
             "      proxy     an optional light stand-in"))
         cmds.button(label="Build Hierarchy", height=32, command=lambda *_: self.make(),
-                    annotation="Makes geo, render and proxy. With nothing picked, the "
-                               "geometry outside geo goes into render.")
+                    annotation="Makes geo_USD (red), render and proxy. With nothing picked, the "
+                               "geometry outside geo_USD goes into render.")
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach=[(1, "both", 0),
                                                                            (2, "both", 4)])
         cmds.button(label="Selected to Render", height=28,
@@ -129,7 +129,7 @@ class HierarchyWindow(object):
         cmds.button(label="Selected to Proxy", height=28,
                     command=lambda *_: self.add(usd.PROXY))
         cmds.setParent("..")
-        cmds.text(label="Geometry outside geo (not in the USD's layout):", align="left")
+        cmds.text(label="Geometry outside geo_USD (not in the USD's layout):", align="left")
         self.w["left"] = cmds.textScrollList(numberOfRows=6, allowMultiSelection=True,
                                              selectCommand=lambda *_: self.pick())
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
@@ -176,8 +176,8 @@ class HierarchyWindow(object):
     def warn_strays(self):
         found = usd.strays()
         if found:
-            _say("These cameras / lights came into geo with their group and don't belong "
-                 "in the model's USD. Move them out of geo:\n  %s"
+            _say("These cameras / lights came into geo_USD with their group and don't belong "
+                 "in the model's USD. Move them out of geo_USD:\n  %s"
                  % "\n  ".join(n.split("|")[-1] for n in found[:15]))
 
     def add(self, purpose):
@@ -194,7 +194,7 @@ class HierarchyWindow(object):
         finally:
             cmds.undoInfo(closeChunk=True)
         self.refresh()
-        cmds.inViewMessage(amg="<hl>%d</hl> moved into geo|%s." % (len(moved), purpose),
+        cmds.inViewMessage(amg="<hl>%d</hl> moved into geo_USD|%s." % (len(moved), purpose),
                            pos="topCenter", fade=True)
         self.warn_strays()
 

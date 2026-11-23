@@ -51,8 +51,11 @@ new_scene()
 check("the asset's name comes from the scene's folder", usd.asset_name() == "chair")
 s = usd.build()
 check("build: geo|render|proxy at the world root",
-      s == {"geo": "|geo", "render": "|geo|render", "proxy": "|geo|proxy"})
-check("build again: nothing new", usd.build() == s and len(cmds.ls("geo")) == 1)
+      s == {"geo": "|geo_USD", "render": "|geo_USD|render", "proxy": "|geo_USD|proxy"})
+check("build again: nothing new", usd.build() == s and len(cmds.ls("geo_USD")) == 1)
+check("... geo_USD is red in the Outliner (the cue it's built)",
+      cmds.getAttr("|geo_USD.useOutlinerColor")
+      and [round(c, 2) for c in cmds.getAttr("|geo_USD.outlinerColor")[0]] == list(usd.OUTLINER_RED))
 
 seat = cmds.polyCube(name="seat")[0]; cmds.move(1, 2, 3, seat)
 legs = cmds.group(empty=True, name="legs")
@@ -64,13 +67,13 @@ check("left out: the geometry outside geo (not cameras)",
 moved = usd.add([seat, legs, leg_a, cam])
 check("add: picked ones go into render, a group with what's in it, a child "
       "picked with its parent only once, cameras stay",
-      sorted(moved) == ["|geo|render|legs", "|geo|render|seat"]
-      and cmds.objExists("|geo|render|legs|legA") and cmds.objExists("|" + cam))
+      sorted(moved) == ["|geo_USD|render|legs", "|geo_USD|render|seat"]
+      and cmds.objExists("|geo_USD|render|legs|legA") and cmds.objExists("|" + cam))
 check("add: nothing moves in the world",
-      world("|geo|render|seat") == [1, 2, 3] and world("|geo|render|legs|legA") == [4, 0, 0])
-check("add again: already there, nothing moves", usd.add(["|geo|render|seat"]) == [])
+      world("|geo_USD|render|seat") == [1, 2, 3] and world("|geo_USD|render|legs|legA") == [4, 0, 0])
+check("add again: already there, nothing moves", usd.add(["|geo_USD|render|seat"]) == [])
 box = cmds.polyCube(name="box")[0]
-check("add to proxy", usd.add([box], purpose=usd.PROXY) == ["|geo|proxy|box"])
+check("add to proxy", usd.add([box], purpose=usd.PROXY) == ["|geo_USD|proxy|box"])
 check("nothing left out", usd.left_out() == [])
 
 # A mesh picked in the viewport brings its groups (user 2026-11-23: the
@@ -83,13 +86,13 @@ roof = cmds.parent(cmds.polyCube(name="roof")[0], house)[0]
 cmds.move(5, 0, 0, house)
 moved = usd.add(["|house_GRP|walls_GRP|wallN", "|house_GRP|roof"])
 check("add a mesh inside groups: its whole top group comes, nesting kept",
-      moved == ["|geo|render|house_GRP"]
-      and cmds.objExists("|geo|render|house_GRP|walls_GRP|wallN")
-      and cmds.objExists("|geo|render|house_GRP|roof")
-      and world("|geo|render|house_GRP|walls_GRP|wallN") == [5, 0, 0])
-moved = usd.add(["|geo|render|house_GRP|roof"], purpose=usd.PROXY)
+      moved == ["|geo_USD|render|house_GRP"]
+      and cmds.objExists("|geo_USD|render|house_GRP|walls_GRP|wallN")
+      and cmds.objExists("|geo_USD|render|house_GRP|roof")
+      and world("|geo_USD|render|house_GRP|walls_GRP|wallN") == [5, 0, 0])
+moved = usd.add(["|geo_USD|render|house_GRP|roof"], purpose=usd.PROXY)
 check("inside geo, render to proxy: only what's picked moves",
-      moved == ["|geo|proxy|roof"] and cmds.objExists("|geo|render|house_GRP|walls_GRP|wallN"))
+      moved == ["|geo_USD|proxy|roof"] and cmds.objExists("|geo_USD|render|house_GRP|walls_GRP|wallN"))
 check("no cameras or lights in geo", usd.strays() == [])
 shot = cmds.group(empty=True, name="set_GRP")
 cmds.parent(cmds.polyCube(name="crate")[0], shot)
@@ -101,7 +104,21 @@ check("a camera that came in with its group is listed",
 new_scene()
 cmds.group(empty=True, name="render")
 check("build: refuses when something else is already called render",
-      "render" in str(refuses(usd.build)) and not cmds.objExists("|geo"))
+      "render" in str(refuses(usd.build)) and not cmds.objExists("|geo_USD"))
+
+new_scene()
+old = cmds.group(empty=True, world=True, name="geo")
+cmds.group(empty=True, parent=old, name="render")
+cmds.parent(cmds.polyCube(name="oldSeat")[0], "|geo|render")
+s = usd.build()
+check("a scene from before 2026-11-24: |geo renamed geo_USD, red, contents kept",
+      s["geo"] == "|geo_USD" and not cmds.objExists("|geo")
+      and cmds.objExists("|geo_USD|render|oldSeat") and cmds.objExists("|geo_USD|proxy")
+      and cmds.getAttr("|geo_USD.useOutlinerColor"))
+new_scene()
+cmds.group(empty=True, name="geo", parent=cmds.group(empty=True, name="stuff"))
+check("build: refuses a geo elsewhere (Publish writes the top group as geo)",
+      "geo" in str(refuses(usd.build)) and not cmds.objExists("|geo_USD"))
 
 # --- naming --------------------------------------------------------------------
 check("part names cleaned: spaces, asset name and suffix typed by the artist",
@@ -129,15 +146,15 @@ check("name: refuses with no part name or nothing picked",
 # --- clean-up: the names that would clash or break the convention ------------
 new_scene()
 usd.build()
-a = cmds.group(empty=True, name="frontLegs", parent="|geo|render")
-b = cmds.group(empty=True, name="backLegs_GRP", parent="|geo|render")
+a = cmds.group(empty=True, name="frontLegs", parent="|geo_USD|render")
+b = cmds.group(empty=True, name="backLegs_GRP", parent="|geo_USD|render")
 cmds.parent(cmds.polyCube(name="leg")[0], a)
 cmds.parent(cmds.polyCube(name="leg")[0], b)
-cmds.parent(cmds.polySphere()[0], "|geo|render")                # pSphere1
+cmds.parent(cmds.polySphere()[0], "|geo_USD|render")                # pSphere1
 cmds.namespace(add="old")
 ns = cmds.polyCube(name="old:cushion")[0]
-cmds.parent(ns, "|geo|render")
-good = cmds.parent(cmds.polyCube(name="chair_back_GEO")[0], "|geo|render")[0]
+cmds.parent(ns, "|geo_USD|render")
+good = cmds.parent(cmds.polyCube(name="chair_back_GEO")[0], "|geo_USD|render")[0]
 cmds.rename(cmds.listRelatives(good, shapes=True)[0], "wrongShape")
 found = dict((f["name"], f) for f in usd.problems())
 check("problems: two meshes called leg (and no prefix or suffix)",
@@ -283,7 +300,7 @@ usd.add([seat]); usd.add([proxy], purpose=usd.PROXY)
 mat = cmds.shadingNode("lambert", asShader=True, name="woodMat")
 sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="woodMatSG")
 cmds.connectAttr(mat + ".outColor", sg + ".surfaceShader")
-cmds.sets("|geo|render|chair_seat_GEO", edit=True, forceElement=sg)
+cmds.sets("|geo_USD|render|chair_seat_GEO", edit=True, forceElement=sg)
 f = cmds.shadingNode("file", asTexture=True, name="wood_file")
 cmds.setAttr(f + ".fileTextureName", png.replace("\\", "/"), type="string")
 cmds.connectAttr(f + ".outColor", mat + ".color")
@@ -295,7 +312,14 @@ plan = {"dest": os.path.join(h_folder, "chair_scout_model_v001.ma"), "h_folder":
         "ext": ".ma", "asset": "chair", "asset_type": "prop", "code": "model", "version": 1,
         "login": "scout", "film": FILM, "sg_asset": {"id": 1}, "outputs": ["usd"],
         "root": os.path.join(base, "scratch")}
-api.export_model_to_h_drive(["geo"], plan, scene, tex.collect(["geo"]))
+api.export_model_to_h_drive(["geo_USD"], plan, scene, tex.collect(["geo_USD"]))
+with open(plan["dest"]) as f:
+    ma = f.read()
+check("publish: the .ma's top group is geo, uncoloured (the cue stays in the scene)",
+      '-n "geo" -p "chair_model_GRP"' in ma and "geo_USD" not in ma and ".uoc" not in ma)
+check("... and the work scene still has geo_USD, red",
+      cmds.objExists("|geo_USD") and cmds.getAttr("|geo_USD.useOutlinerColor")
+      and not cmds.objExists("|geo"))
 folder = out.folder_of(plan["dest"])
 usd_path = os.path.join(folder, "chair_scout_model_v001.usd")
 usdz_path = os.path.join(folder, "chair_scout_model_v001.usdz")
@@ -328,11 +352,11 @@ out.remove(folder)
 
 # No proxy: render left untagged, so it shows in Maya's USD stage (which
 # draws proxy, not render, by default). User 2026-11-23.
-cmds.delete("|geo|proxy|chair_proxy_GEO")
+cmds.delete("|geo_USD|proxy|chair_proxy_GEO")
 cmds.file(save=True, type="mayaAscii")
 plan.update(outputs_written=[], version=2,
             dest=os.path.join(h_folder, "chair_scout_model_v002.ma"))
-api.export_model_to_h_drive(["geo"], plan, scene, tex.collect(["geo"]))
+api.export_model_to_h_drive(["geo_USD"], plan, scene, tex.collect(["geo_USD"]))
 folder = out.folder_of(plan["dest"])
 stage = Usd.Stage.Open(os.path.join(folder, "chair_scout_model_v002.usd"))
 render = stage.GetPrimAtPath("/chair_model_GRP/geo/render")
