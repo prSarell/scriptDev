@@ -3747,16 +3747,16 @@ for the same shot or asset". This replaces the personal publish folder
   test no longer catches them, and every student's scratch would get an
   empty folder for every artist who has published. The copy must skip every
   per-person folder on H (`scenes\<dept>\<anyone>\`, old
-  `scenes\<login>\`, `cachelembic\...\<login>\`) and only bring the
+  `scenes\<login>\`, `cache\alembic\...\<login>\`) and only bring the
   department folders; a person's own `scenes\<dept>\<login>\` is made by
   `work_folder` when they first save. Add a test that the copy never makes
   someone else's folder on scratch. (`h_sync.build_project` already skips
   everything under `scenes\`.)
 - **Other per-person folders found on scratch, 2026-11-23:**
   `data\studioLibrary\<login>\` (Studio Library, §4b, made ahead on
-  purpose, no department) and `cachelembic\<login>\`. Decide with §4g
+  purpose, no department) and `cache\alembic\<login>\`. Decide with §4g
   whether they gain a department folder. `images\lighting\<login>\`,
-  `imagesnim\<login>\` and `data\shotgrid\<dept>\<login>\` already
+  `images\anim\<login>\` and `data\shotgrid\<dept>\<login>\` already
   follow the rule.
 - **SUGGESTION (Claude, not yet confirmed):** a scene saved outside a
   department folder (straight in `scenes\`, or `scenes\anim\New Folder\`)
