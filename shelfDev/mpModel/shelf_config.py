@@ -8,7 +8,8 @@ SHELF_NAME = "mpModel"
 # Reloaded in import order on each click, so a reinstall takes effect
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_textures", "publishTool_env", "pipeEnv",
-                "buildTool_api", "modelTool_convert", "modelTool_usd", "modelTool_usd_ui")
+                "buildTool_api", "modelTool_convert", "modelTool_usd", "modelTool_usd_ui",
+                "fbxExport")
 
 
 def _command(module, call):
@@ -30,8 +31,8 @@ BUTTONS = [
     },
     {
         "label": "USD Hierarchy",
-        "tooltip": "USD Hierarchy: builds geo > render / proxy for publishing the model as "
-                   "USD (Publish puts it in <asset>_model_GRP, the USD's top prim). Moves "
+        "tooltip": "USD Hierarchy: builds geo_USD (red) > render / proxy for publishing the "
+                   "model as USD (Publish puts it in <asset>_model_GRP, the USD's top prim). Moves "
                    "what's picked into render (the meshes that render) or proxy (a light "
                    "stand-in), where it is in the world.",
         "icon": "iconModelUsdHierarchy.png",
@@ -46,3 +47,15 @@ BUTTONS = [
         "command": _command("modelTool_usd_ui", "show_names"),
     },
 ]
+
+# Not a pipe tool (user 2026-11-24): its source is the top-level modelDev\,
+# it only reads the scene's path. Shipped in the mpPipe package with the shelf.
+BUTTONS.append({
+    "label": "FBX",
+    "tooltip": "FBX Export: exports the selected geometry and cameras as FBX to this "
+               "asset's or shot's Substance Painter folder (<film>/substancePainter/assets"
+               "/<type>/<asset>, or .../sequences/<seq>/<shot>), as <name>_v001.fbx, "
+               "v002, ... In a shot, camera animation is baked over the playback range.",
+    "icon": "iconModelFbxExport.png",
+    "command": _command("fbxExport", "run"),
+})

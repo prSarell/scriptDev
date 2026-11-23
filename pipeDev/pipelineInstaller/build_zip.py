@@ -51,6 +51,7 @@ SCRIPTS = [
     ("pipeDev/modelDev", "modelTool_convert.py"),
     ("pipeDev/modelDev", "modelTool_usd.py"),
     ("pipeDev/modelDev", "modelTool_usd_ui.py"),
+    ("modelDev", "fbxExport.py"),            # not a pipe tool, on the mpModel shelf
     ("pipeDev/lightingDev", "renderSub_api.py"),
     ("pipeDev/lightingDev", "renderSub_ui.py"),
     ("pipeDev/lightingDev", "renderSub_flow.py"),
@@ -86,7 +87,7 @@ def _git_hash():
                                          "pipeDev/publishDev", "pipeDev/buildDev",
                                          "pipeDev/pipelineInstaller", "shelfDev/mpPipe",
                                          "pipeDev/layoutDev", "shelfDev/mpLayout",
-                                         "pipeDev/modelDev", "shelfDev/mpModel",
+                                         "pipeDev/modelDev", "shelfDev/mpModel", "modelDev",
                                          "pipeDev/lightingDev", "shelfDev/mpLighting"],
                                         stderr=subprocess.DEVNULL)
         return out.decode().strip() + ("+local changes" if dirty.strip() else "")

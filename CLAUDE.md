@@ -15,6 +15,7 @@ Development follows the existing folder structure — always save files in the c
 ### Pipeline
 
 1. **Develop** — tool scripts are written and iterated on in the `*Dev/` folders:
+   - `modelDev/` — modelling tool scripts that aren't part of the pipe (e.g. `fbxExport.py`, shipped on the mpModel shelf in the mpPipe package; the pipe's own model tools stay in `pipeDev/modelDev/`)
    - `rigDev/` — rigging tool scripts
    - `animDev/` — animation tool scripts
    - `simDev/` — simulation tool scripts
