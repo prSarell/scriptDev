@@ -505,6 +505,39 @@ hand. One T7 session could cover most of it.
       explicitly confirmed.
 - [?] **What decides the latest shot publish**: still open, doesn't block
       v0.
+- [?] **Shot publishes pile up on H** (raised 2026-11-23, don't rush it;
+      decide before March 2027). Every Layout/Animation publish writes, flat
+      into `scenes\<dept>\<login>\`: the full shot `.ma`, a keys `.ma` + map
+      `.json` per animated asset, a map `.json` per static asset with
+      settings, and the camera files. SEQ010_160 v002 = 9 files; ~30
+      publishes = a few hundred files in one folder. Nothing cleans up.
+      The per-asset files are needed: Build's Keys column puts one asset's
+      keys back on that asset, from any version (spec §4 item 7, DECIDED
+      2026-10-23). Options (any mix):
+      - **A. One keys file per publish:** `<shot>_<login>_anim_v002_keys.ma`
+        + `_keys.json` holding every asset, grouped per asset; Build imports
+        only the picked asset's curves. ~5 files a publish, Keys column
+        unchanged.
+      - **B. Version folders:** `scenes\anim\e131988\v002\` holds everything
+        from that publish; easy to browse, archive or clear old versions.
+        Touches Build, textures path, rig reference paths (§4a), Studio
+        Library backups.
+      - **C. A clean-up rule** later (e.g. keep the latest N + any version a
+        later stage uses), easier on top of B.
+      Suggestion: A + B as one spec change and one build; old flat files
+      still read (like §4g). Caches stay one `.abc` per asset (final only).
+      To do when decided:
+      - [ ] Pick A / B / C; write it into the spec (§4g / §4 item 7)
+      - [ ] Build it + tests; Build reads old flat + new layout
+      - [ ] Hand test: publish SEQ010_160, Build it, pick keys per asset
+- [ ] **SEQ010_160 `anim_v002.ma` is 537 MB** (v001: 84 MB). It holds
+      3,740 meshes saved straight into the scene, not referenced: 1,870
+      `grassTuft`, 1,425 under `grassBRNfosterParent` (orphaned from the
+      grassB reference; likely names inside grassB changed after the shot
+      referenced it, e.g. Renumber; not confirmed) and 354 `tuft_`. It comes
+      from the working scene `setUP_v012`; every publish of it copies the
+      lot. Look into it before the pile-up decision above: size, not file
+      count, is what fills H.
 
 ## 3. Bugs and risks found in the review
 
