@@ -7,7 +7,7 @@ made from exactly what goes in the .ma (the clean copy in its pipe group,
 no namespaces) and go in one folder beside it, so the folder can be handed
 to another program (e.g. Unreal) on its own:
 
-    <asset>\\scenes\\<login>\\<published name>_exports\\
+    <asset>\\scenes\\model\\<login>\\<published name>_exports\\   (spec §4g)
         <published name>.abc        geometry, one frame, world space, UVs
         <published name>.usd        USD with UsdPreviewSurface materials,
                                     textures in textures\\ beside it
