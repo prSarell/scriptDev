@@ -23,9 +23,21 @@ Freeze a frame as a static Maya mesh (e.g. to use as terrain):
 """
 from maya import cmds
 
-WAVES_NODE = "BifrostGraph,Simulation::BOSS,create_spectral_waves"
-DISPLACE_NODE = "BifrostGraph,Simulation::BOSS,displace_by_wave"
-BOUNDS_FROM_GEOMETRY = "2"  # Simulation::BOSS::BoundsMethod enum
+# Bifrost 2.15+ (Maya 2027) moved the BOSS nodes to Simulation::Ocean; older
+# Bifrost (Maya 2025) still has Simulation::BOSS. Tried in this order.
+NAMESPACES = ("Simulation::Ocean", "Simulation::BOSS")
+BOUNDS_FROM_GEOMETRY = "2"  # BoundsMethod enum: FromGeometry (From_Geometry before 2.15)
+
+
+def _add_node(graph, name):
+    """Add a BOSS/Ocean node to the graph, whichever namespace this Bifrost has."""
+    for space in NAMESPACES:
+        try:
+            return cmds.vnnCompound(graph, "/", addNode="BifrostGraph,%s,%s" % (space, name))[0]
+        except RuntimeError:
+            continue
+    cmds.error("bossOceanSetup: this Bifrost has no %s node (looked in %s)."
+               % (name, ", ".join(NAMESPACES)))
 
 
 def _get_mesh(geo=None):
@@ -62,8 +74,8 @@ def build(geo=None):
         cmds.vnnNode(graph, "/input", createOutputPort=("inMesh", "Object"))
         cmds.connectAttr(shape + ".worldMesh[0]", graph + ".inMesh")
 
-        waves = cmds.vnnCompound(graph, "/", addNode=WAVES_NODE)[0]
-        displace = cmds.vnnCompound(graph, "/", addNode=DISPLACE_NODE)[0]
+        waves = _add_node(graph, "create_spectral_waves")
+        displace = _add_node(graph, "displace_by_wave")
 
         # size the ocean patch to the mesh
         cmds.vnnNode(graph, "/" + waves, setPortDefaultValues=("bounds_method", BOUNDS_FROM_GEOMETRY))

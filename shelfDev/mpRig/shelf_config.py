@@ -9,6 +9,7 @@ EXTRA_SCRIPTS = []
 # they are deployed using just the basename.
 RIGTOOL_SCRIPTS = [
     "ps_spine.py",
+    "edgeToCurve.py",
     "follicleRig_api.py",
     "follicleRig_ui.py",
     "../metahuman_facial_transfer/metahuman_api_25.py",
@@ -27,6 +28,7 @@ RIGTOOL_SCRIPTS = [
     "nameStripper/nameStripper/ps_namespace_stripper.py",
     "mh_body_clean/mh_body_clean_api.py",
     "mh_body_clean/mh_body_clean_ui.py",
+    "rigSets.py",
 ]
 
 # Scripts from renderDev/ — deployed flat to ~/maya/scripts/.
@@ -48,6 +50,17 @@ BUTTONS = [
             "import ps_spine\n"
             "importlib.reload(ps_spine)\n"
             "ps_spine.show()"
+        ),
+    },
+    {
+        "label": "Edge Curve",
+        "tooltip": "Edge To Curve — build a curve with one CV snapped to each vertex of the selected edges (e.g. for ps_spine)",
+        "icon": "iconEdgeToCurve.png",
+        "command": (
+            "import importlib\n"
+            "import edgeToCurve\n"
+            "importlib.reload(edgeToCurve)\n"
+            "edgeToCurve.run()"
         ),
     },
     {
@@ -186,6 +199,17 @@ BUTTONS = [
             "importlib.reload(tlmCorrectiveBS_api)\n"
             "importlib.reload(tlmCorrectiveBS_ui)\n"
             "tlmCorrectiveBS_ui.show()"
+        ),
+    },
+    {
+        "label": "Rig Sets",
+        "tooltip": "Rig Sets — check the rig for the sets a pipe Rigging publish needs (cache_SET + controls) and build any that are missing",
+        "icon": "iconRigSets.png",
+        "command": (
+            "import importlib\n"
+            "import rigSets\n"
+            "importlib.reload(rigSets)\n"
+            "rigSets.show()"
         ),
     },
 ]
