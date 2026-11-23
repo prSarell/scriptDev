@@ -1,13 +1,17 @@
-"""
+r"""
 FBX Export (mpModel shelf, user 2026-11-24)
 
-Exports the selected geometry and cameras as FBX to the asset's or shot's
-Substance Painter folder, found from the open scene's own path:
+Exports the selected geometry and cameras as FBX to the artist's own
+fromMaya folder in the asset's or shot's Substance Painter folder, found
+from the open scene's own path (scenes\<dept>\<login>, spec 4g), so
+several artists can work on one asset (user 2026-11-24):
 
-    <film>\\maya\\assets\\<type>\\<asset>\\...      ->  <film>\\substancePainter\\assets\\<type>\\<asset>
-    <film>\\maya\\sequences\\<seq>\\<shot>\\...     ->  <film>\\substancePainter\\sequences\\<seq>\\<shot>
+    <film>\maya\assets\<type>\<asset>\scenes\<dept>\<login>\...
+        ->  <film>\substancePainter\assets\<type>\<asset>\<login>\fromMaya
+    <film>\maya\sequences\<seq>\<shot>\scenes\<dept>\<login>\...
+        ->  <film>\substancePainter\sequences\<seq>\<shot>\<login>\fromMaya
 
-e.g. D:\\NWF_SHF\\substancePainter\\assets\\environment\\hillShed\\hillShed_v001.fbx.
+e.g. D:\NWF_SHF\substancePainter\assets\environment\hillShed\e131988\fromMaya\hillShed_v001.fbx.
 Each export is a new version (<asset or shot>_v001.fbx, v002, ...); nothing
 is overwritten. With a camera picked, animation is baked over the
 playback range, in any scene: a Build shot camera is driven by camera1_DATA
@@ -31,6 +35,8 @@ TARGET_FOLDER = "substancePainter"
 DEPTH = {"assets": 2, "sequences": 2}      # assets\<type>\<asset>, sequences\<seq>\<shot>
 VERSION_RE = r"^%s_v(\d{3,})\.fbx$"
 TITLE = "FBX Export"
+SCENES_FOLDER = "scenes"
+EXPORT_FOLDER = "fromMaya"
 
 
 class ExportError(Exception):
@@ -42,8 +48,9 @@ class ExportError(Exception):
 # ---------------------------------------------------------------------------
 
 def target(scene=None):
-    """(folder, name, kind) for the open scene: the Substance Painter
-    folder, the asset or shot name, and 'assets' or 'sequences'."""
+    """(folder, name, kind, root) for the open scene: the artist's fromMaya
+    folder, the asset or shot name, 'assets' or 'sequences', and the
+    film's substancePainter folder."""
     scene = scene or cmds.file(query=True, sceneName=True)
     if not scene:
         raise ExportError("Save the scene in its asset or shot folder first: the export "
@@ -61,8 +68,16 @@ def target(scene=None):
         film = os.sep.join(parts[:i]) or os.sep
         if film.endswith(":"):
             film += os.sep                                      # D: -> D:\
-        folder = os.path.join(film, TARGET_FOLDER, *rel)
-        return folder, rel[-1], kind
+        root = os.path.join(film, TARGET_FOLDER)
+        # scenes\<dept>\<login>\<file>: the login folder names the artist
+        j = i + 2 + depth
+        if lowered[j] != SCENES_FOLDER or j + 3 > len(parts) - 1:
+            raise ExportError(
+                "Save the scene in your own folder, scenes\\<department>\\<your login>, so "
+                "the export goes to your folder in Substance Painter:\n  %s" % scene)
+        login = parts[j + 2]
+        folder = os.path.join(root, *(rel + [login, EXPORT_FOLDER]))
+        return folder, rel[-1], kind, root
     raise ExportError("This scene isn't in an asset or shot folder:\n  %s\nOpen (or save) "
                       "it under <film>\\maya\\assets\\<type>\\<asset> or "
                       "<film>\\maya\\sequences\\<seq>\\<shot>." % scene)
@@ -151,8 +166,7 @@ def _settings(bake):
 def export(selection=None, scene=None):
     """Export what's picked to the next version in the asset's or shot's
     Substance Painter folder. Returns (path, roots, cameras, skipped)."""
-    folder, name, kind = target(scene)
-    film_target = os.path.dirname(os.path.dirname(os.path.dirname(folder)))
+    folder, name, kind, film_target = target(scene)
     if not os.path.isdir(film_target):
         raise ExportError("There's no %s folder in this film:\n  %s" % (TARGET_FOLDER,
                                                                          film_target))

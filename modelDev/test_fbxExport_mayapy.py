@@ -34,22 +34,31 @@ shot_dir = os.path.join(film, "maya", "sequences", "SEQ010", "SEQ010_160", "scen
                         "e131988")
 for d in (asset_dir, shot_dir, os.path.join(film, "substancePainter")):
     os.makedirs(d)
-sp_asset = os.path.join(film, "substancePainter", "assets", "environment", "hillShed")
-sp_shot = os.path.join(film, "substancePainter", "sequences", "SEQ010", "SEQ010_160")
+sp_root = os.path.join(film, "substancePainter")
+sp_asset = os.path.join(sp_root, "assets", "environment", "hillShed", "e131988", "fromMaya")
+sp_shot = os.path.join(sp_root, "sequences", "SEQ010", "SEQ010_160", "e131988", "fromMaya")
 
 try:
     # --- where it goes -------------------------------------------------------
     scene = os.path.join(asset_dir, "hillShed_model_v001.ma")
-    check("asset scene -> substancePainter\\assets\\<type>\\<asset>",
-          fx.target(scene) == (sp_asset, "hillShed", "assets"))
-    check("shot scene -> substancePainter\\sequences\\<seq>\\<shot>",
+    check("asset scene -> substancePainter\\assets\\<type>\\<asset>\\<login>\\fromMaya",
+          fx.target(scene) == (sp_asset, "hillShed", "assets", sp_root))
+    check("shot scene -> substancePainter\\sequences\\<seq>\\<shot>\\<login>\\fromMaya",
           fx.target(os.path.join(shot_dir, "SEQ010_160_layout_v001.ma"))
-          == (sp_shot, "SEQ010_160", "sequences"))
+          == (sp_shot, "SEQ010_160", "sequences", sp_root))
     check("a scene outside assets / sequences is refused",
           "isn't in an asset or shot folder" in refused(fx.target, os.path.join(base, "x.ma")))
+    check("a scene not in scenes\\<dept>\\<login> is refused (no login to file it under)",
+          "your own folder" in refused(fx.target, os.path.join(
+              film, "maya", "assets", "environment", "hillShed", "scenes", "model", "a.ma")))
     check("a drive-root film works (D:\\NWF_SHF\\...)",
-          fx.target("D:\\NWF_SHF\\maya\\assets\\environment\\hillShed\\scenes\\a.ma")[0]
-          == "D:\\NWF_SHF\\substancePainter\\assets\\environment\\hillShed")
+          fx.target("D:\\NWF_SHF\\maya\\assets\\environment\\hillShed\\scenes\\model\\"
+                    "e131988\\a.ma")[0]
+          == "D:\\NWF_SHF\\substancePainter\\assets\\environment\\hillShed\\e131988\\fromMaya")
+    check("another artist gets their own folder",
+          fx.target(os.path.join(film, "maya", "assets", "environment", "hillShed", "scenes",
+                                 "lookDev", "s1234567", "a.ma"))[0]
+          == os.path.join(sp_root, "assets", "environment", "hillShed", "s1234567", "fromMaya"))
 
     # --- an asset --------------------------------------------------------------
     cmds.file(new=True, force=True)
@@ -118,7 +127,8 @@ try:
           b"shotCam1" in data and b"AnimationCurve" in data)
 
     # --- a film without a substancePainter folder --------------------------------
-    other = os.path.join(base, "OTHER", "maya", "assets", "prop", "cup", "scenes")
+    other = os.path.join(base, "OTHER", "maya", "assets", "prop", "cup", "scenes", "model",
+                         "scout")
     os.makedirs(other)
     cmds.file(new=True, force=True)
     cmds.file(rename=os.path.join(other, "cup.ma")); cmds.file(save=True, type="mayaAscii")
