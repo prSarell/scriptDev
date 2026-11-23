@@ -3656,9 +3656,15 @@ the T7".
 
   Not yet tested: SharePoint/OneDrive (files-on-demand placeholders, long
   "OneDrive - <org>" paths), a real server share (only this machine's own
-  `C$`), Windows' 260-character path limit with the pipe's deep folders,
-  and the T7 (2026-11-23: the T7 reported "Scan Needed" and its folders
-  couldn't be read, so the test waits on the drive).
+  `C$`) and Windows' 260-character path limit with the pipe's deep
+  folders.
+- **T7, tested 2026-11-23** (after its `chkdsk /f`; throwaway
+  `G:\usdPathTest\`, removed after): the same chain built on the T7, then
+  (1) moved to another folder on the T7, (2) opened by network path
+  (`//localhost/G$/...`), (3) copied to D: (a space and a deeper folder) and
+  opened there, the T7 copy deleted: all three instances load, nothing
+  unresolved; Maya's stage node with `$PIPE_SCRATCH` loads, is kept in the
+  saved `.ma` and works on reopen.
 - **Decision.**
   1. **Inside every USD file the pipe writes: relative paths only**, never
      a drive letter and never a variable (`../../publish/...`,
