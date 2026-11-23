@@ -3740,6 +3740,24 @@ for the same shot or asset". This replaces the personal publish folder
   scratch" still holds; on H that folder simply stops being written.
 - **Build's `maya\publish\` cache** keeps mirroring H, so new pulls land at
   the new paths.
+- **Must change with it: the H -> scratch structure copy** (checked
+  2026-11-23). `projectTool_api._publish_folder` keeps H's
+  `scenes\<login>\` off scratch by skipping any `scenes\` child that isn't
+  a department code. Once publishes are in `scenes\<dept>\<login>\`, that
+  test no longer catches them, and every student's scratch would get an
+  empty folder for every artist who has published. The copy must skip every
+  per-person folder on H (`scenes\<dept>\<anyone>\`, old
+  `scenes\<login>\`, `cachelembic\...\<login>\`) and only bring the
+  department folders; a person's own `scenes\<dept>\<login>\` is made by
+  `work_folder` when they first save. Add a test that the copy never makes
+  someone else's folder on scratch. (`h_sync.build_project` already skips
+  everything under `scenes\`.)
+- **Other per-person folders found on scratch, 2026-11-23:**
+  `data\studioLibrary\<login>\` (Studio Library, §4b, made ahead on
+  purpose, no department) and `cachelembic\<login>\`. Decide with §4g
+  whether they gain a department folder. `images\lighting\<login>\`,
+  `imagesnim\<login>\` and `data\shotgrid\<dept>\<login>\` already
+  follow the rule.
 - **SUGGESTION (Claude, not yet confirmed):** a scene saved outside a
   department folder (straight in `scenes\`, or `scenes\anim\New Folder\`)
   can't be placed, so Publish refuses with a fix button (Save Here into
