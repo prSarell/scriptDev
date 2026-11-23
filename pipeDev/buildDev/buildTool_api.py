@@ -614,9 +614,18 @@ def read_shot_list(h_root, film, seq, shot, department):
     return read_build_list(shot_folder(h_root, film, seq, shot), department)
 
 
-def write_build_list(folder, department, keys):
+def read_build_list_usd(folder, department):
+    """The keys on the department's list that load as USD (spec §4h)."""
+    try:
+        with open(build_list_path(folder, department), "r") as f:
+            return set(json.load(f).get("usd", []))
+    except (IOError, OSError, ValueError, AttributeError):
+        return set()
+
+
+def write_build_list(folder, department, keys, usd=()):
     """Save the department's list (manifest keys, in list order) for a shot
-    or asset folder on H."""
+    or asset folder on H. usd: the keys loaded as USD stages (spec §4h)."""
     path = build_list_path(folder, department)
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
@@ -627,7 +636,8 @@ def write_build_list(folder, department, keys):
     except BuildError:
         login = ""
     with open(path, "w") as f:
-        json.dump({"assets": list(keys), "department": department, "saved_by": login,
+        json.dump({"assets": list(keys), "usd": [k for k in keys if k in set(usd)],
+                   "department": department, "saved_by": login,
                    "saved": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
 
 
@@ -666,7 +676,10 @@ def side_files(path):
 def version_files(path):
     """A pulled version in the publish folder plus its textures and side
     files: what clearing that version removes (spec "Clearing old
-    versions": its textures go with it)."""
+    versions": its textures go with it). A pulled USD (spec §4h): the .usd
+    and the textures\\ folder beside it."""
+    if path.lower().endswith(USD_EXTENSIONS):
+        return [path] + _folder_files(os.path.join(os.path.dirname(path), USD_TEXTURES))
     found = [path] + side_files(path)
     for dirpath, _, filenames in os.walk(texture_folder_of(path)):
         found += [os.path.join(dirpath, n) for n in filenames]
@@ -702,17 +715,22 @@ def copy_published(source, maya_dir):
     return dest, _copy_if_changed(source, dest)
 
 
-def pull(shot_dir, published, vid):
+def pull(shot_dir, published, vid, usd=False):
     """Make sure one published version (a version id, e.g. 'scout/v003')
     is in the shared publish folder and record that this shot uses it.
-    Other shots' versions are untouched. Returns the path in the publish
+    Other shots' versions are untouched. usd: the version's USD export
+    instead of its .ma (spec §4h). Returns the path in the publish
     folder."""
     if vid not in published["versions"]:
         raise BuildError("%s of %s %s isn't on the H drive."
                          % (vid, published["asset"], published["code"]))
     source = published["versions"][vid]
+    if usd:
+        source = usd_export(source)
+        if not source:
+            raise BuildError(no_usd_message(published, vid))
     maya_dir = maya_dir_of_shot(shot_dir)
-    dest, _ = copy_published(source, maya_dir)
+    dest, _ = copy_usd(source, maya_dir) if usd else copy_published(source, maya_dir)
 
     info = published["info"][vid]
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
@@ -726,7 +744,9 @@ def pull(shot_dir, published, vid):
     }
     if published.get("from_shot"):         # another shot's cache (shot_items)
         entry["from_shot"] = list(published["from_shot"])
-    if published["code"] in LINKED_CODES:
+    if usd:
+        entry["usd"] = True
+    elif published["code"] in LINKED_CODES:
         entry["link"] = link_rel_path(published["asset_type"], published["asset"],
                                       published["code"], os.path.splitext(dest)[1])
         entry["hardlink"] = link_version(dest, entry_path(shot_dir, entry), maya_dir)
@@ -847,6 +867,10 @@ def scene_version(shot_dir, published):
     if published.get("kind") == "camera":
         node, vid = shot_camera((published.get("from_shot") or (None, published["asset"]))[1])
         return (vid or "") if node else None
+    stage = stage_of(published)
+    if stage:
+        m = USD_RE.match(os.path.basename(_absolute(stage[2])))
+        return version_id(m.group("login").lower(), int(m.group("version"))) if m else ""
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
     if entry and referenced_nodes(entry_path(shot_dir, entry)):
@@ -896,12 +920,16 @@ def newer_maya_warning(path):
     return None
 
 
-def build_asset(shot_dir, published, vid, department=None):
+def build_asset(shot_dir, published, vid, department=None, usd=False, replace=False):
     """Build one asset (see _build_asset), then point any MetaHuman DNA
     nodes it brought at their files on this drive (pipeEnv.fix_dna_paths:
     DNA nodes can't read $PIPE_SCRATCH). A cache also gets its look, picked
-    by the department building (apply_look)."""
-    done, warning, replaced = _build_asset(shot_dir, published, vid)
+    by the department building (apply_look). usd: load a model's USD
+    export as a USD stage instead (spec §4h); replace: allow switching an
+    asset between a Maya reference and a USD stage (the other is removed)."""
+    if usd:
+        return _build_usd(shot_dir, published, vid, replace)
+    done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
     if published.get("kind") == "cache":
         look_done, look_warning = apply_look(shot_dir, published, vid, department)
         if look_done and done == ["already up to date"]:
@@ -917,12 +945,14 @@ def build_asset(shot_dir, published, vid, department=None):
     return done, warning, replaced
 
 
-def _build_asset(shot_dir, published, vid):
+def _build_asset(shot_dir, published, vid, replace=False):
     """One click for one asset: make sure the chosen version (a version id,
     e.g. 'scout/v003') is in the shared publish folder, then make sure the
     open scene references it. A reference to another version (or to an old
     copy in the shot) is repointed, never referenced twice. Only this shot
-    changes.
+    changes. The asset loaded as a USD stage instead (spec §4h): refused
+    unless replace, which swaps the stage for the reference, keeping its
+    placement.
 
     Returns (list of what was done, warning or None, replaced) where
     replaced is the path of a version this shot no longer uses, or None."""
@@ -936,6 +966,15 @@ def _build_asset(shot_dir, published, vid):
     linked = published["code"] in LINKED_CODES
     label = version_label(published, vid, mark_latest=False)
     done = []
+    stage = stage_of(published)
+    placement = None
+    if stage:
+        if not replace:
+            raise BuildError(switch_message(published, to_usd=False))
+        placement = cmds.xform(stage[0], query=True, worldSpace=True, matrix=True)
+        cmds.delete(stage[0])
+        done.append("USD stage %s removed" % stage[0].split("|")[-1])
+        entry = None    # the stage's USD isn't a Maya reference to repoint
     # Leftover unassigned shaders holding the asset's name (e.g. from an
     # old import whose geometry was deleted) are cleared, not a clash.
     cleared = pub.unused_shading_nodes(namespace)
@@ -1021,6 +1060,10 @@ def _build_asset(shot_dir, published, vid):
         return done, warning, replaced
     reference_into_scene(ref_path, namespace)
     done.append("referenced into scene")
+    if placement:
+        for top in reference_tops(target)[:1]:
+            cmds.xform(placement_node(top), worldSpace=True, matrix=placement)
+            done.append("placed where the USD stage was")
     return done, warning, replaced
 
 
@@ -1076,9 +1119,11 @@ def shots_using(maya_dir):
 
 def unused_versions(paths, maya_dir):
     """The paths (pulled versions in the publish folder) that no shot's
-    manifest uses and the open scene doesn't reference."""
+    manifest uses and the open scene doesn't reference (or load as a USD
+    stage)."""
     used = shots_using(maya_dir)
     in_scene = set(os.path.normcase(os.path.normpath(r)) for _, _, _, r in scene_references())
+    in_scene |= set(os.path.normcase(os.path.normpath(_absolute(w))) for _, _, w in usd_stages())
     result, seen = [], set()
     for path in paths:
         key = os.path.normcase(os.path.normpath(path))
@@ -1147,9 +1192,41 @@ def repair_scene(h_root):
                              % (name, rel[7] if len(rel) > 8 else os.path.splitext(name)[0]))
         else:
             not_fixed.append("%s: missing, and not a pulled publish (%s)." % (name, path))
+    usd_fixed, usd_not = _repair_stages(h_root)
+    fixed += usd_fixed
+    not_fixed += usd_not
     fixed += _repair_textures(h_root)
     fixed += ["%s: MetaHuman DNA pointed at %s" % (node, os.path.basename(path))
               for node, path in pipeEnv.fix_dna_paths()]
+    return fixed, not_fixed
+
+
+def _repair_stages(h_root):
+    """USD stages Build loaded (spec §4h) whose .usd is missing from the
+    publish folder, e.g. after a scratch wipe: pull it (and its textures)
+    again and reload the stage. Returns (fixed, not_fixed) messages."""
+    fixed, not_fixed = [], []
+    for transform, shape, written in usd_stages():
+        path = _absolute(written)
+        if not written or os.path.isfile(path):
+            continue
+        name = os.path.basename(path)
+        try:
+            root, rel = pub.find_film_folder(path)
+        except BuildError:
+            not_fixed.append("%s: not in a film folder, can't tell where it came from." % name)
+            continue
+        if not (len(rel) > 3 and rel[1] == "maya" and rel[2] == PUBLISH_FOLDER):
+            not_fixed.append("%s: missing, and not a pulled publish (%s)." % (name, path))
+            continue
+        source = os.path.join(h_root, rel[0], "maya", *rel[3:])
+        if not os.path.isfile(source):
+            not_fixed.append("%s: not on the H drive either (%s)." % (name, source))
+            continue
+        copy_usd(source, os.path.join(root, rel[0], "maya"))
+        cmds.setAttr(shape + ".filePath", "", type="string")    # reload the stage
+        cmds.setAttr(shape + ".filePath", written, type="string")
+        fixed.append("%s: USD pulled again from the H drive and reloaded." % name)
     return fixed, not_fixed
 
 
@@ -1891,6 +1968,248 @@ def reference_cache(path, namespace):
         cmds.setAttr(group[0] + ".overrideEnabled", 1)
         cmds.setAttr(group[0] + ".overrideDisplayType", 2)     # Reference
     return path
+
+
+def placement_node(top):
+    """What moves a referenced model: its top group, or, since a pipe group
+    is locked at the origin (publishTool_api.finish_pipe_group), its geo
+    group (the one artists move, e.g. grassB:geo in SEQ010_120), else its
+    first child group."""
+    if not cmds.getAttr(top + ".translateX", lock=True):
+        return top
+    children = cmds.listRelatives(top, children=True, type="transform", fullPath=True) or []
+    geo = [c for c in children if c.split("|")[-1].split(":")[-1] == "geo"]
+    return (geo or children or [top])[0]
+
+
+def reference_tops(path):
+    """The top-level DAG nodes (long names) a reference to path brought,
+    e.g. |grassB:grassB_model_GRP."""
+    tops = []
+    for ref_node in referenced_nodes(path):
+        for node in cmds.referenceQuery(ref_node, nodes=True, dagPath=True) or []:
+            node = (cmds.ls(node, long=True) or [node])[0]
+            # the pipe group is a dagContainer, a kind of transform
+            if node.count("|") == 1 and cmds.objectType(node, isAType="transform"):
+                tops.append(node)
+    return tops
+
+
+# ---------------------------------------------------------------------------
+# Models as USD (spec §4h, user 2026-11-23: "I was hoping that publishing a
+# model as USD would mean loading it as usd in another scene"). A Modeling
+# publish with USD ticked writes <name>_exports\<name>.usd beside its .ma
+# (publishTool_outputs). Build can load that instead of referencing the .ma:
+# the .usd and its textures are pulled into scratch's publish\ (the .ma is
+# not), and a USD stage (mayaUsdProxyShape) reads it by its $PIPE_SCRATCH
+# path (spec §4f). One asset is either a Maya reference or a USD stage in a
+# scene, never both; switching keeps the top group's placement only.
+# ---------------------------------------------------------------------------
+
+USD_PLUGIN = "mayaUsdPlugin"
+USD_SHAPE = "mayaUsdProxyShape"
+USD_CODES = ("model",)              # models and environments (Modeling publishes)
+USD_EXTENSIONS = (".usd", ".usda", ".usdc")
+USD_TEXTURES = "textures"           # beside the .usd (publishTool_outputs)
+USD_STAGE_SUFFIX = "_USD"           # grassB -> grassB_USD (transform), grassB_USDShape
+USD_KEY_ATTR = "pipe_buildKey"      # on the stage's transform: its manifest key
+USD_RE = re.compile(r"^(?P<asset>.+)_(?P<login>[a-z0-9]+)_(?P<code>[A-Za-z]+)"
+                    r"_v(?P<version>\d{3})\.usd[ac]?$", re.IGNORECASE)
+EXPORTS_SUFFIX = "_exports"         # publishTool_outputs.FOLDER_SUFFIX
+
+
+def can_load_usd(published):
+    """True for a list entry that can be loaded as USD at all (a model or
+    environment; not rigs, cameras or caches)."""
+    return published.get("kind") is None and published.get("code") in USD_CODES
+
+
+def usd_export(path):
+    """The .usd a Modeling publish wrote beside path (H drive), or None if
+    it was published without USD ticked."""
+    if not path:
+        return None
+    stem = os.path.splitext(os.path.basename(path))[0]
+    usd = os.path.join(os.path.dirname(path), stem + EXPORTS_SUFFIX, stem + ".usd")
+    return usd if os.path.isfile(usd) else None
+
+
+def has_usd(published, vid):
+    return can_load_usd(published) and bool(usd_export(published["versions"].get(vid)))
+
+
+def no_usd_message(published, vid):
+    return ("%s of %s has no USD: it was published without USD ticked. Publish it "
+            "again with USD ticked, or build it as a Maya reference."
+            % (version_label(published, vid, mark_latest=False), published["asset"]))
+
+
+def switch_message(published, to_usd):
+    """Why Build stops before swapping an asset between a Maya reference
+    and a USD stage, unless asked to (the UI asks first)."""
+    if to_usd:
+        return ("%s is in this scene as a Maya reference. Loading it as USD removes the "
+                "reference (its file stays); the top group's placement is kept, changes "
+                "made inside it are lost." % published["asset"])
+    return ("%s is in this scene as a USD stage. Building it as a Maya reference "
+            "removes the stage; its placement is kept." % published["asset"])
+
+
+def _folder_files(folder):
+    return [os.path.join(d, n) for d, _, names in os.walk(folder) for n in names]
+
+
+def usd_files(usd):
+    """The .usd plus everything it needs (spec §4f item 5: Build pulls the
+    whole chain), found with UsdUtils.ComputeAllDependencies: (files,
+    unresolved). Only files inside the .usd's own film folder count (§4f
+    item 4); anything else is reported as unresolved."""
+    load_usd_plugin()
+    from pxr import Sdf, UsdUtils
+    layers, assets, unresolved = UsdUtils.ComputeAllDependencies(
+        Sdf.AssetPath(usd.replace("\\", "/")))
+    try:
+        root, rel = pub.find_film_folder(usd)
+        film_root = os.path.join(root, rel[0])
+    except BuildError:
+        film_root = os.path.dirname(usd)
+    files, missing = [usd], [str(p) for p in unresolved]
+    for path in [layer.realPath for layer in layers] + [str(a) for a in assets]:
+        path = os.path.normpath(path)
+        if pub._same_path(path, usd) or path in files:
+            continue
+        if os.path.normcase(path).startswith(os.path.normcase(film_root) + os.sep):
+            files.append(path)
+        else:
+            missing.append(path)
+    return files, missing
+
+
+def copy_usd(source, maya_dir):
+    """Copy a published .usd and its dependencies (textures) from the H
+    drive into the shared publish folder at the same paths, read-only, like
+    copy_published. Returns (dest, copied)."""
+    dest = os.path.join(publish_dir(maya_dir), *_maya_rel(source).split("/"))
+    files, _ = usd_files(source)
+    for path in files[1:]:
+        _copy_if_changed(path, os.path.join(publish_dir(maya_dir), *_maya_rel(path).split("/")))
+    return dest, _copy_if_changed(source, dest)
+
+
+def load_usd_plugin():
+    if not cmds.pluginInfo(USD_PLUGIN, query=True, loaded=True):
+        cmds.loadPlugin(USD_PLUGIN, quiet=True)
+
+
+def usd_stages():
+    """[(transform, shape, file path as written)] for every USD stage in
+    the open scene (long names)."""
+    if not cmds.pluginInfo(USD_PLUGIN, query=True, loaded=True):
+        return []
+    found = []
+    for shape in cmds.ls(type=USD_SHAPE, long=True) or []:
+        parent = (cmds.listRelatives(shape, parent=True, fullPath=True) or [None])[0]
+        found.append((parent, shape, cmds.getAttr(shape + ".filePath") or ""))
+    return found
+
+
+def stage_of(published):
+    """(transform, shape, file path as written) of the USD stage Build
+    loaded for this asset, or None."""
+    if not can_load_usd(published):
+        return None
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    for transform, shape, written in usd_stages():
+        if (transform and cmds.attributeQuery(USD_KEY_ATTR, node=transform, exists=True)
+                and cmds.getAttr(transform + "." + USD_KEY_ATTR) == key):
+            return transform, shape, written
+    return None
+
+
+def make_stage(name, key, file_path):
+    """A USD stage reading file_path: <name>_USD with its shape, driven by
+    the scene's time, stamped with the asset's manifest key. Maya draws its
+    proxy purpose (if the model has one) and renders the render purpose."""
+    load_usd_plugin()
+    transform = cmds.createNode("transform", name=name + USD_STAGE_SUFFIX)
+    shape = cmds.createNode(USD_SHAPE, name=transform + "Shape", parent=transform)
+    cmds.connectAttr("time1.outTime", shape + ".time")
+    cmds.setAttr(shape + ".filePath", file_path, type="string")
+    cmds.addAttr(transform, longName=USD_KEY_ATTR, dataType="string")
+    cmds.setAttr(transform + "." + USD_KEY_ATTR, key, type="string")
+    return cmds.ls(transform, long=True)[0]
+
+
+def _maya_references_of(shot_dir, published, entry):
+    """Reference nodes in the open scene for this asset, whichever version
+    or old path."""
+    nodes = []
+    paths = _old_paths(shot_dir, published, entry if entry and not entry.get("usd") else None)
+    for node in [n for p in paths for n in referenced_nodes(p)] + \
+            any_version_references(shot_dir, published):
+        if node not in nodes:
+            nodes.append(node)
+    return nodes
+
+
+def _build_usd(shot_dir, published, vid, replace=False):
+    """Load the chosen version's USD export as a USD stage in the open
+    scene (spec §4h): pulled into the publish folder, read by $PIPE_SCRATCH
+    path. A stage Build loaded before is pointed at the new version. The
+    asset referenced as a Maya file: refused unless replace, which removes
+    the reference and puts the stage where its top group was.
+    Returns (done, warning, replaced) like _build_asset."""
+    if not can_load_usd(published):
+        raise BuildError("Only models and environments can be loaded as USD.")
+    if vid not in published["versions"]:
+        raise BuildError("%s of %s %s isn't on the H drive."
+                         % (vid, published["asset"], published["code"]))
+    if not usd_export(published["versions"][vid]):
+        raise BuildError(no_usd_message(published, vid))
+    load_usd_plugin()
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    entry = read_manifest(shot_dir).get(key)
+    refs = _maya_references_of(shot_dir, published, entry)
+    if refs and not replace:
+        raise BuildError(switch_message(published, to_usd=True))
+    previous = shared_path(shot_dir, entry) if entry else None
+    label = version_label(published, vid, mark_latest=False)
+    stage = stage_of(published)
+    dest = pull(shot_dir, published, vid, usd=True)
+    pipeEnv.set_from_path(shot_dir)
+    file_path = pipeEnv.to_var_path(dest)
+    done = []
+    if stage:
+        transform, shape, written = stage
+        if written != file_path:
+            cmds.setAttr(shape + ".filePath", file_path, type="string")
+            m = USD_RE.match(os.path.basename(_absolute(written)))
+            done.append("%s -> %s" % ("v%s" % m.group("version") if m else "USD", label))
+        else:
+            done.append("already up to date")
+    else:
+        placement = None
+        if refs:
+            tops = []
+            for node in refs:
+                path = _absolute(written_path(node))
+                tops += reference_tops(path) if path else []
+            if tops:
+                placement = cmds.xform(placement_node(tops[0]), query=True, worldSpace=True,
+                                       matrix=True)
+            for node in refs:
+                cmds.file(referenceNode=node, removeReference=True)
+            done.append("Maya reference removed")
+        transform = make_stage(namespace_for(published["asset"], published["code"]), key,
+                               file_path)
+        if placement:
+            cmds.xform(transform, worldSpace=True, matrix=placement)
+        done.append("%s loaded as a USD stage (%s)" % (label, transform.split("|")[-1]))
+    _, missing = usd_files(dest)
+    warning = ("these files it needs weren't found: %s" % ", ".join(
+        os.path.basename(m) for m in missing)) if missing else None
+    replaced = previous if previous and not pub._same_path(previous, dest) else None
+    return done, warning, replaced
 
 
 # ---------------------------------------------------------------------------

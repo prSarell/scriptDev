@@ -3911,6 +3911,64 @@ for the same shot or asset". This replaces the personal publish folder
   v001 is in `scenes\e131988\`), then Build the shot and check it lists
   both.
 
+### 4h. Loading published models as USD — DECIDED + BUILT (2026-11-23)
+
+The user (2026-11-23), after building grassB (published with USD ticked)
+into SEQ010_120 and finding a Maya reference: "I was hoping that publishing
+a model as USD would mean loading it as usd in another scene". Asked to
+"write it into the spec and build the ability to load published USD
+files". The case for it: grassB v003 is 440 MB as `.ma`, 23 MB as `.usd`.
+
+- **What can load as USD.** Models and environments (Modeling publishes)
+  whose version was published with USD ticked, i.e. has
+  `<name>_exports\<name>.usd` beside its `.ma` (`publishTool_outputs`).
+  Not rigs, cameras or caches.
+- **How it's picked.** A **USD** tick column in Build's list, per row
+  (not a dropdown: Build's dropdowns are locked, PIPE_RULES 2). Greyed out
+  when the chosen version has no USD; picking such a version unticks it.
+  The department's saved list on H remembers which rows load as USD
+  (`data\build\<dept>.json`, `"usd": [...]`), so a new scene of the shot
+  starts the same way.
+- **What Build does.** Pulls the `.usd` and everything it needs (its
+  `textures\`, found with `UsdUtils.ComputeAllDependencies`, §4f item 5)
+  into scratch's `publish\` at the same paths, read-only. The `.ma` is not
+  pulled. Then loads it as a USD stage: a `<asset>_USD` transform with a
+  `mayaUsdProxyShape` reading the `.usd` by its `$PIPE_SCRATCH` path (§4f
+  item 2), driven by the scene's time, stamped `pipe_buildKey` (its
+  manifest key). The manifest entry records `"usd": true` and the `.usd`
+  as the shot's file. A newer version re-points the same stage, keeping
+  where it was placed. Maya draws the proxy purpose if the model has one,
+  and renders the render purpose.
+- **One or the other.** An asset is a Maya reference or a USD stage in a
+  scene, never both. Switching asks first (the reference's file stays;
+  changes made inside the reference are lost) and keeps the placement:
+  the stage takes the world position of the model's `geo` group (the pipe
+  group is locked at the origin, so `geo` is what artists move), and back
+  again `geo` takes the stage's.
+- **What a USD stage can't do (yet).** No Keys (the Keys column shows `-`
+  on a USD row) and no editing inside it. Animation publish refuses a
+  stage on its list ("Animation publishes can't carry USD stages yet"),
+  with the fix: build it as a Maya reference. The stage stays in the full
+  scene file either way. So USD suits set dressing and background
+  environments; props that get animated stay Maya references.
+- **Repair** pulls a missing `.usd` (and textures) back from H and
+  reloads the stage; clearing an old version removes the `.usd` and its
+  `textures\`.
+- **Not done here** (still open from §4f): Scopes, variants, assemblies
+  (an environment USD that references model USDs: the dependency pull
+  already follows the chain), shot USD layers, and what Lighting / Publish
+  do with USD stages beyond the full scene file. Staff trial first, before
+  students (March 2027).
+- **BUILT 2026-11-23.** `buildTool_api`: `can_load_usd`, `usd_export`,
+  `has_usd`, `usd_files`, `copy_usd`, `usd_stages`, `stage_of`,
+  `make_stage`, `_build_usd`, `placement_node`, `_repair_stages`;
+  `build_asset(..., usd=, replace=)`, `pull(..., usd=)`. `buildTool_ui`:
+  the USD column (`COL_USD`), the switch question. `publishTool_anim.classify`
+  refuses stages. Test: `buildDev\test_buildUsd_mayapy.py` (36 checks, using
+  Publish's own USD writer). Hand test: Build SEQ010_120 with grassB's USD
+  ticked, check it draws, renders and reopens; untick and Build to switch
+  back.
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:

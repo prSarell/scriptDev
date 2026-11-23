@@ -80,7 +80,7 @@ tab.picker.set_current(film=FILM, code="model", group="prop", name="backpack")
 tab._add_asset()
 check("+ adds the backpack, ticked, ready to build, no keys",
       [(r["asset"], r["checked"], r["keys_chosen"]) for r in tab._rows]
-      == [("backpack", True, None)] and tab.table.item(0, 6).text() == "Ready to build")
+      == [("backpack", True, None)] and tab.table.item(0, ui.COL_STATUS).text() == "Ready to build")
 tab._build_shot()
 cmds.file(save=True, type="mayaAscii")
 check("Build references it (namespace backpack), not an import",
@@ -88,7 +88,7 @@ check("Build references it (namespace backpack), not an import",
 check("recorded in the asset's manifest on scratch",
       api.manifest_key("prop", "backpack", "model") in api.read_manifest(asset_dir))
 check("the row now shows it's in the scene, up to date, unticked",
-      not tab._rows[0]["checked"] and tab.table.item(0, 6).text().startswith("Up to date"))
+      not tab._rows[0]["checked"] and tab.table.item(0, ui.COL_STATUS).text().startswith("Up to date"))
 h_list = api.build_list_path(api.asset_folder(H, FILM, "environment", "shed"), "model")
 check("Modeling's list for the asset saved on H (data\\build\\model.json)",
       json.load(open(h_list))["assets"] == [api.manifest_key("prop", "backpack", "model")])

@@ -7,6 +7,8 @@ Two tabs:
                 from the H drive and references it into the open scene.
                 Each asset's Keys dropdown puts a Layout/Animation
                 publish's keys back on it (from the picker's shot).
+                The USD tick loads a model or environment published
+                with USD as a USD stage instead (spec §4h).
                 Building into an asset works the same way: referenced,
                 like a shot (user, 2026-10-30: one Build button, no
                 context). The mpModel shelf's Convert to Model makes a
@@ -57,6 +59,9 @@ SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
 # Published for a shot itself, not an asset: its own come with it, and
 # Add to list's Shot side brings another shot's (user, 2026-11-12).
 SHOT_ITEMS = ("camera", "cache")
+# The list's columns. USD (spec §4h, 2026-11-23): tick to load a model or
+# environment as a USD stage instead of a Maya reference.
+COL_NAME, COL_TYPE, COL_DEPT, COL_VERSION, COL_USD, COL_KEYS, COL_IN, COL_STATUS = range(8)
 
 STATUS_TEXT = {
     api.SAFE: ("Safe to remove", "#7fbf7f"),
@@ -149,6 +154,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self._keys_src = None    # the shot the Keys dropdowns list (see _keys_source)
         self._rows = []          # the shot's list: published entries shown in the table
         self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
+        self._saved_usd = set()  # keys the department's saved list loads as USD (spec §4h)
 
         # Which shot: always the open scene's.
         self.target_lbl = QtWidgets.QLabel()
@@ -202,7 +208,7 @@ class BuildShotTab(QtWidgets.QWidget):
         show.addWidget(self.keys_lbl)
         show.addWidget(self.keys_combo)
         show.addStretch(1)
-        self.table = _table(["Asset", "Type", "Department", "Version", "Keys",
+        self.table = _table(["Asset", "Type", "Department", "Version", "USD", "Keys",
                              "In this shot", "Status"])
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -568,6 +574,8 @@ class BuildShotTab(QtWidgets.QWidget):
         # one yet what's in its assets folder on scratch, plus anything
         # published for the shot itself, e.g. its camera, ready to build.
         saved = api.read_build_list(self._h_target_dir(), self.department())
+        self._saved_usd = api.read_build_list_usd(self._h_target_dir(), self.department()) \
+            if saved is not None else set()
         wanted = set(saved) if saved is not None else set(manifest)
         self._rows = []
         # Building into a blank scene (nothing referenced yet): always start
@@ -634,6 +642,15 @@ class BuildShotTab(QtWidgets.QWidget):
         if in_scene in p["versions"]:
             chosen = in_scene
         row = dict(p, chosen=chosen, start=chosen, in_scene=in_scene)
+        # USD (spec §4h): what the scene has; for an asset new to the scene,
+        # what the department's list (or this shot's last build) loaded it as.
+        if in_scene is not None:
+            usd = bool(api.stage_of(p))
+        else:
+            entry = api.read_manifest(shot_dir).get(self._key(p)) if shot_dir else None
+            usd = self._key(p) in self._saved_usd or bool(entry and entry.get("usd"))
+        usd = usd and api.has_usd(p, chosen)
+        row.update(usd_chosen=usd, usd_start=usd if in_scene is not None else False)
         # Keys: an asset already in the scene starts at the keys Build put
         # on it, or "keep" if Build didn't (keyed by hand: never wiped
         # unasked). A new one starts at this shot's latest keys.
@@ -691,9 +708,10 @@ class BuildShotTab(QtWidgets.QWidget):
         """The Keys dropdown: the picker's shot's publishes for this asset,
         newest first, plus the current choice and what the scene has (kept
         when the picker moves on), Keep, and None."""
-        self.table.removeCellWidget(row, 4)
-        if p.get("keys_chosen") is None:
-            self.table.setItem(row, 4, _cell("-"))
+        self.table.removeCellWidget(row, COL_KEYS)
+        if p.get("keys_chosen") is None or p.get("usd_chosen"):
+            # A USD stage takes no keys (spec §4h).
+            self.table.setItem(row, COL_KEYS, _cell("-"))
             return
         listed = self._keys_for(p, self._keys_src)
         kids = api.sorted_keys(listed)
@@ -704,7 +722,7 @@ class BuildShotTab(QtWidgets.QWidget):
                                                                p["keys_start"]):
             kids.append(api.KEEP_KEYS)
         if not kids:
-            self.table.setItem(row, 4, _cell("-"))
+            self.table.setItem(row, COL_KEYS, _cell("-"))
             return
         kids.append(api.NO_KEYS)
         latest = api.sorted_keys(listed)[0] if listed else None
@@ -718,14 +736,15 @@ class BuildShotTab(QtWidgets.QWidget):
                          "Keys from (above the list) to list that shot's keys.")
         combo.currentIndexChanged.connect(
             lambda i, c=combo, r=p: self._on_keys_changed(r, c.currentData()))
-        self.table.setCellWidget(row, 4, combo)
+        self.table.setCellWidget(row, COL_KEYS, combo)
 
     def _left_as_is(self, p, shot_dir):
         """True if a row starts unticked: already in the scene and its
         version and keys not changed in the list. A rig whose file in the
         shot is missing or out of date starts ticked, since building is the fix."""
         if (p.get("in_scene") is None or p.get("chosen") != p.get("start")
-                or p.get("keys_chosen") != p.get("keys_start")):
+                or p.get("keys_chosen") != p.get("keys_start")
+                or bool(p.get("usd_chosen")) != bool(p.get("usd_start"))):
             return False
         entry = api.read_manifest(shot_dir).get(api.manifest_key(
             p["asset_type"], p["asset"], p["code"]))
@@ -748,6 +767,7 @@ class BuildShotTab(QtWidgets.QWidget):
         still exist."""
         kept = [(self._key(r), r.get("chosen"), r["checked"], r.get("keys_chosen"),
                  r.get("from_shot")) for r in self._rows]
+        usd_kept = dict((self._key(r), bool(r.get("usd_chosen"))) for r in self._rows)
         picked = (self.picker.film(), self.picker.department(), self.picker.group(),
                   self.picker.name())
         removed = self._removed
@@ -777,6 +797,7 @@ class BuildShotTab(QtWidgets.QWidget):
                 row["chosen"] = chosen
             if keys is not None and row.get("keys_chosen") is not None:
                 row["keys_chosen"] = keys
+            row["usd_chosen"] = usd_kept.get(key, False) and api.has_usd(row, row["chosen"])
             row["checked"] = checked
         self.picker.set_current(*picked)
         self._render_table()
@@ -808,57 +829,95 @@ class BuildShotTab(QtWidgets.QWidget):
             combo.setCurrentIndex(max(combo.findData(p.get("chosen", p["latest"])), 0))
             combo.currentIndexChanged.connect(
                 lambda i, c=combo, r=p: self._on_version_changed(r, c.currentData()))
-            self.table.setCellWidget(row, 3, combo)
+            self.table.setCellWidget(row, COL_VERSION, combo)
+            self._usd_cell(row, p)
             self._keys_cell(row, p)
 
             entry = manifest.get(self._key(p))
             if not entry:
-                self.table.setItem(row, 5, _cell("-"))
-                self.table.setItem(row, 6, _cell("Ready to build", "#9fc5ff"))
+                self.table.setItem(row, COL_IN, _cell("-"))
+                self.table.setItem(row, COL_STATUS, _cell("Ready to build", "#9fc5ff"))
             else:
                 current = api.entry_version_id(entry)
                 text = (api.version_label(p, current, mark_latest=False)
                         if current in p["versions"] else "v%03d (old)" % entry["version"])
-                if p.get("in_scene") is not None and p.get("keys_start") not in (
+                if p.get("in_scene") is not None and p.get("usd_start"):
+                    text += ", USD"
+                elif p.get("in_scene") is not None and p.get("keys_start") not in (
                         None, api.KEEP_KEYS):
                     text += ", keys %s" % api.keys_label(p["keys_start"],
                                                          this_shot=self._target_shot[2])
-                self.table.setItem(row, 5, _cell(text))
+                self.table.setItem(row, COL_IN, _cell(text))
                 state = api.link_state(shot_dir, entry)    # rigs only (spec §4a)
                 if p.get("in_scene") is None:
-                    self.table.setItem(row, 6, _cell("Not in this scene: Build adds it",
+                    self.table.setItem(row, COL_STATUS, _cell("Not in this scene: Build adds it",
                                                      "#9fc5ff"))
                 elif state in (api.MISSING, api.STALE):
-                    self.table.setItem(row, 6, _cell(
+                    self.table.setItem(row, COL_STATUS, _cell(
                         "Rig file %s in this shot: Build to fix"
                         % ("missing" if state == api.MISSING else "out of date"), "#e0a060"))
                 elif api.newer_available(p, entry):
-                    self.table.setItem(row, 6, _cell(
+                    self.table.setItem(row, COL_STATUS, _cell(
                         "%s available" % api.version_label(p, p["latest"], mark_latest=False),
                         "#e0a060"))
                 else:
-                    self.table.setItem(row, 6, _cell(
+                    self.table.setItem(row, COL_STATUS, _cell(
                         "Up to date" + (" (full copy, not linked)" if state == api.COPY else ""),
                         "#7fbf7f"))
         self.table.resizeColumnsToContents()
         self.table.blockSignals(False)
         self._fill_filter()
 
+    def _usd_cell(self, row, p):
+        """The USD tick (spec §4h): only for models and environments, and
+        only enabled when the chosen version was published with USD."""
+        if not api.can_load_usd(p):
+            self.table.setItem(row, COL_USD, _cell("-"))
+            return
+        item = _cell("")
+        available = api.has_usd(p, p.get("chosen", p["latest"]))
+        flags = QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsUserCheckable
+        item.setFlags(flags | QtCore.Qt.ItemIsEnabled if available else flags)
+        item.setCheckState(QtCore.Qt.Checked if p.get("usd_chosen") else QtCore.Qt.Unchecked)
+        item.setToolTip(
+            "Load this version as a USD stage instead of a Maya reference: much lighter "
+            "for big environments, but it can't be edited inside or take keys."
+            if available else
+            "This version was published without USD. Publish it with USD ticked to "
+            "load it as USD.")
+        self.table.setItem(row, COL_USD, item)
+
     def _on_item_changed(self, item):
-        """A row's tick: only ticked rows are built."""
-        if item.column() == 0 and item.row() < len(self._rows):
-            self._rows[item.row()]["checked"] = item.checkState() == QtCore.Qt.Checked
+        """A row's tick: only ticked rows are built. The USD tick switches
+        the row between Maya reference and USD stage."""
+        if item.row() >= len(self._rows):
+            return
+        p = self._rows[item.row()]
+        if item.column() == COL_NAME:
+            p["checked"] = item.checkState() == QtCore.Qt.Checked
+        elif item.column() == COL_USD and api.can_load_usd(p):
+            p["usd_chosen"] = item.checkState() == QtCore.Qt.Checked
+            self.table.blockSignals(True)
+            self._keys_cell(item.row(), p)
+            self.table.blockSignals(False)
+            self._on_version_changed(p, p.get("chosen", p["latest"]))
 
     def _on_version_changed(self, p, vid):
         """Picking another version ticks the row; picking back the one the
-        scene has unticks it again."""
+        scene has unticks it again. A version without USD can't load as USD."""
         p["chosen"] = vid
+        dropped = bool(p.get("usd_chosen") and not api.has_usd(p, vid))
+        if dropped:
+            p["usd_chosen"] = False
         p["checked"] = not self._left_as_is(p, self._shot_dir())
         rows = [i for i, r in enumerate(self._rows) if r is p]
         if rows:
-            item = self.table.item(rows[0], 0)
+            item = self.table.item(rows[0], COL_NAME)
             self.table.blockSignals(True)
             item.setCheckState(QtCore.Qt.Checked if p["checked"] else QtCore.Qt.Unchecked)
+            self._usd_cell(rows[0], p)
+            if dropped:     # the Keys menu comes back (never rebuilt from its own signal)
+                self._keys_cell(rows[0], p)
             self.table.blockSignals(False)
 
     def _fill_filter(self):
@@ -985,8 +1044,9 @@ class BuildShotTab(QtWidgets.QWidget):
             return ""
         # Caches are per scene, never the shot's (see _add_shot_caches).
         keys = [self._key(r) for r in self._rows if r.get("kind") != "cache"]
+        usd = [self._key(r) for r in self._rows if r.get("usd_chosen")]
         try:
-            api.write_build_list(folder, self.department(), keys)
+            api.write_build_list(folder, self.department(), keys, usd)
         except Exception as e:
             return "\nThis %s's list couldn't be saved to the H drive: %s" % (
                 "shot" if self._target_shot else "asset", e)
@@ -1029,6 +1089,21 @@ class BuildShotTab(QtWidgets.QWidget):
                                      if not failed else failed.strip(), ok=not failed)
             return
 
+        # Switching an asset between a Maya reference and a USD stage removes
+        # the other one (spec §4h): ask first.
+        switching = [p for p in self._rows if p["checked"] and p.get("in_scene") is not None
+                     and bool(p.get("usd_chosen")) != bool(p.get("usd_start"))]
+        if switching:
+            text = "\n\n".join(api.switch_message(p, to_usd=bool(p.get("usd_chosen")))
+                               for p in switching)
+            answer = QtWidgets.QMessageBox.question(
+                self, "Build", text + "\n\nSwitch %s?" % ", ".join(p["asset"] for p in switching),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.Cancel)
+            if answer != QtWidgets.QMessageBox.Yes:
+                self.status.show_message("Nothing built.", ok=False)
+                return
+
         lines, warnings, replaced, changed_rigs = [], [], [], []
         try:
             # Build never moves a project that's set (user, 2026-10-28:
@@ -1049,13 +1124,17 @@ class BuildShotTab(QtWidgets.QWidget):
                 try:
                     done, warning, old = api.build_asset(shot_dir, p,
                                                          p.get("chosen", p["latest"]),
-                                                         self.department())
+                                                         self.department(),
+                                                         usd=bool(p.get("usd_chosen")),
+                                                         replace=p in switching)
                 except Exception as e:
                     warnings.append("%s: %s" % (label, e))
                     continue
+                p["usd_start"] = bool(p.get("usd_chosen"))
                 # Keys go on after the asset: when they were changed, or with
                 # an asset new to the scene (then None means nothing to do).
-                keys = p.get("keys_chosen")
+                # A USD stage takes none.
+                keys = None if p.get("usd_chosen") else p.get("keys_chosen")
                 if keys not in (None, api.KEEP_KEYS) and (
                         keys != p.get("keys_start")
                         or (p.get("in_scene") is None and keys != api.NO_KEYS)):

@@ -86,7 +86,7 @@ def tx_at_10():
 
 
 def keys_combo(tab):
-    return tab.table.cellWidget(0, 4)
+    return tab.table.cellWidget(0, ui.COL_KEYS)
 
 
 # A fresh scene on a new scratch drive: add Scout, Build.
@@ -141,7 +141,7 @@ tab.refresh()
 row = tab._rows[0]
 check("reopened: row starts at the keys the scene has, unticked",
       row["keys_start"] == OTHER_ANIM and not row["checked"])
-check("In this shot shows the keys", "keys v001 anim" in tab.table.item(0, 5).text())
+check("In this shot shows the keys", "keys v001 anim" in tab.table.item(0, ui.COL_IN).text())
 
 # Keyed by hand, no record: starts at Keep, unticked, nothing wiped.
 cmds.file(new=True, force=True)

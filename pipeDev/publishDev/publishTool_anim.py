@@ -245,6 +245,17 @@ def classify(objects):
     if cameras:
         raise PublishError("Cameras go in their own Camera row, not Animation: %s"
                            % ", ".join(cameras))
+    # A model Build loaded as a USD stage (spec §4h): its keys and settings
+    # can't go in an Animation publish yet (they stay in the full scene).
+    stages = [o for o in cmds.ls(objects, long=True) or []
+              if cmds.ls([o] + (cmds.listRelatives(o, allDescendents=True, fullPath=True) or []),
+                         type="mayaUsdProxyShape")] \
+        if cmds.pluginInfo("mayaUsdPlugin", query=True, loaded=True) else []
+    if stages:
+        raise PublishError(
+            "%s is a USD stage. Animation publishes can't carry USD stages yet: take it "
+            "off the list (it stays in the full scene file). To animate it, build it as a "
+            "Maya reference (untick USD in Build)." % ", ".join(s.split("|")[-1] for s in stages))
     items, roots = [], set()
     for obj in cmds.ls(objects, long=True) or []:
         root = stamped_root(obj)

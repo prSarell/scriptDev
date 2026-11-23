@@ -364,6 +364,14 @@ hand. One T7 session could cover most of it.
       and new versions; open an older shot and check its references still
       load. Project Tool Update Scratch: other people's
       `scenes\<dept>\<login>\` come across (1:1, as decided).
+- [ ] **Build loads published models as USD** (spec §4h, built 2026-11-23,
+      `test_buildUsd_mayapy.py`): reinstall the pipe, open a copy of
+      SEQ010_120's scene, Build, tick **USD** on grassB (v003) and Build.
+      Answer Yes to switching: the grassB reference goes, `grassB_USD`
+      appears where `grassB:geo` was. Check it draws, renders in Arnold,
+      the scene file shrinks, and it reopens on another drive. Untick USD
+      and Build to switch back. Then a new scene of the shot: grassB
+      should start with USD ticked.
 - [ ] **mpModel shelf, USD Hierarchy + USD Names** (built 2026-11-20;
       imported-model clean-up added 2026-11-23, `modelTool_usd.py`, test
       45/45 on 2025 + 2027, windows not yet driven in the GUI): import a
