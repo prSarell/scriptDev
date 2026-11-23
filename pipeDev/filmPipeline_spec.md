@@ -1174,6 +1174,8 @@ The tools are developed side by side:
     §1 still holds (nobody saves to the server by hand).
     - ~~OPEN: exactly what lands there~~ — **DECIDED 2026-10-15** (the
       user's answers):
+      - **SUPERSEDED 2026-11-23 by §4g** (publishes go in
+        `scenes\<department>\<login>\`, the same path as scratch).
       - **Publishes are personal.** The versioned publish goes in
         `scenes\<login>\` on the H drive, and the login is in the file
         name: `EAP_010_010_s1234567_anim_v003.ma`. The user: this is
@@ -3687,6 +3689,64 @@ the T7".
   publish plus a variant file?); fixed versions or always the latest inside
   assemblies and shot layers; USD environments and shots (staged: export
   only first, USD shots as a staff trial, after March 2027 for students).
+
+### 4g. One folder layout on scratch and H — DECIDED (2026-11-23)
+
+The user (2026-11-23), after finding animation publishes in
+`SEQ010_160\scenes\e131988\` on H: they "should be saving here:
+...\SEQ010_160\scenes\anim\e131988". Agreed: scratch and H match 1:1
+(§3h "Scratch mirrors the H drive 1:1", 2026-10-12) all the way down. "As an
+animator working in shot scene anim e131988 is the same as if I were a
+modeler working in asset model environment shed scene e131988 and all other
+parts of the pipe", "so multiple artists could work in different folders
+for the same shot or asset". This replaces the personal publish folder
+`scenes\<login>\` (§4 "Personal work folders", 2026-10-15, and the
+2026-10-30 note that only light rigs moved).
+
+- **The rule.** Every part of the pipe uses
+  `<asset or shot>\scenes\<department>\<login>\`, on both drives. Scratch
+  holds the person's working files (any names); H holds only their
+  publishes, at the same path, with the pipeline's names
+  (`<asset or shot>_<login>_<code>_v###`).
+
+  | Who | Folder (scratch and H) |
+  |---|---|
+  | Animator, SEQ010_160 | `sequences\SEQ010\SEQ010_160\scenes\anim\e131988\` |
+  | Modeler, environment shed | `assets\environment\shed\scenes\model\e131988\` |
+  | Rigger, scout | `assets\character\scout\scenes\rig\e131988\` |
+  | Lighter, SEQ010_160 | `sequences\SEQ010\SEQ010_160\scenes\lighting\e131988\` |
+  | Layout, a camera publish | `sequences\SEQ010\SEQ010_160\scenes\layout\e131988\` |
+
+- **Several artists, one shot or asset.** Each has their own folder per
+  department (`anim\e131988\`, `anim\s7654321\`, `lighting\s1234567\`), so
+  nobody writes into anyone else's. One artist in two departments has two
+  folders and two version series. Version numbers are counted in the
+  folder; "latest = newest by time, across everyone" (assets) is
+  unchanged.
+- **Which department folder.** The one the working scene is in (as
+  renderSub already does): an anim scene publishes to `anim\`, a camera
+  published from a layout scene to `layout\`, from an anim scene to
+  `anim\`. An environment publishes as Modeling, so `model\`. Folder
+  names are the department codes (`publishTool_api.WORK_FOLDERS`,
+  `SHOT_WORK_FOLDERS`: model, rig, lookDev, layout, anim, fx, lighting;
+  creature made on first save).
+- **Other per-person folders follow it.** Alembic caches:
+  `cache\alembic\<department>\<login>\`. Renders already do
+  (`images\lighting\<login>\`). Studio Library data and anything else
+  per person: check each when building.
+- **Publishes already on H stay where they are.** Nothing on H is moved
+  (shots reference those files); Build reads both the old
+  `scenes\<login>\` and the new folders. "Never `scenes\<login>\` on
+  scratch" still holds; on H that folder simply stops being written.
+- **Build's `maya\publish\` cache** keeps mirroring H, so new pulls land at
+  the new paths.
+- **SUGGESTION (Claude, not yet confirmed):** a scene saved outside a
+  department folder (straight in `scenes\`, or `scenes\anim\New Folder\`)
+  can't be placed, so Publish refuses with a fix button (Save Here into
+  the right department folder), per "the pipe refuses rather than warns".
+- **Status.** Decided, not built. Build it after the T7's `chkdsk /f`
+  (2026-11-23: the drive dropped off USB and needs an offline repair),
+  tested on copies, not the real H.
 
 ## 5. Context: what the existing tools assume
 
