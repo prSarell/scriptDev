@@ -28,7 +28,7 @@ RIGDEV_DIR        = os.path.normpath(os.path.join(HERE, "..", "rigDev"))
 RENDERDEV_DIR     = os.path.normpath(os.path.join(HERE, "..", "renderDev"))
 SIMDEV_DIR        = os.path.normpath(os.path.join(HERE, "..", "simDev"))
 STUDIOLIB_SRC     = os.path.normpath(
-    os.path.join(HERE, "..", "animDev", "studiolibrary-2.20.2", "src")
+    os.path.join(HERE, "..", "animDev", "studiolibrary-2.21.7", "src")
 )
 
 _USERSETUP_MARKER = "# multiTool auto-load (mpAnim installer)"
