@@ -1,6 +1,65 @@
-# USD Edit (mpModel shelf): research and proposal
+# USD Edit (mpModel shelf): research, proposal and what was built
 
-Status: **RESEARCH + PROPOSAL, nothing built, nothing decided.** 2026-11-24.
+Status: **BUILT 2026-11-24 (spec §4i, to be folded into
+`filmPipeline_spec.md`)**, hand test pending. The user said "go ahead and
+build it" without picking from §5, so the recommended defaults were used
+(below). Each is easy to revisit. The research and proposal follow it.
+
+## What was built (2026-11-24)
+
+Defaults taken: shot and asset edits together; one shot layer per asset per
+shot (Build already makes one stage per asset); asset edits reach the
+published model through the model scene; transforms only for Apply; stays
+on Maya 2027.2 (drives plain USD edit targets, no Edit Forwarding needed);
+staff trial first.
+
+**Layers (Build, `buildTool_api.write_stage_layers`).** A USD stage no
+longer reads the publish directly:
+
+```
+<scene's project>\usd\<asset>_<code>.usda                          shot layer   "this shot"
+  sublayer <maya>\assets\<type>\<asset>\usd\<asset>_<code>_edit.usda  asset layer "the asset"
+  sublayer <maya>\publish\...\<name>.usd                             the publish, never edited
+```
+
+Sublayers, not a reference, so a prim has the same path in all three and
+editing is only a choice of edit target (no path remapping, so Edit
+Forwarding isn't needed yet). Relative paths inside the layers (§4f); the
+stage node reads the shot layer by `$PIPE_SCRATCH`. The stage's transform
+stamps the publish it uses (`pipe_usdSource`). A new version only
+re-points the shot layer's sublayer: both layers' edits are kept. Repair
+writes missing layers again (unsaved edits are gone, like any scratch
+work). Stages from before this are updated by building again or by the
+Update Stage button.
+
+**USD Edit window (mpModel shelf, `modelTool_usdEdit` / `_ui`).**
+Select the model (viewport prim or Outliner), Edit for: This shot / The
+asset, **Edit**, move it with Maya's tools, **Save** (or **Discard**). A
+banner shows the layer taking edits (green shot, orange asset). The
+published layer is set not to take edits. In the asset's own scene,
+**Apply Asset Edits** moves the Maya nodes under `geo_USD` to match the
+asset layer (one undo), then the student publishes as usual and clicks
+**Clear Asset Edits**.
+
+**USD rule found while testing.** A transform edit writes the object's
+whole `xformOpOrder`, so once a shot has moved an object, asset-level moves
+of that same object don't show in that shot: the shot's placement wins.
+
+**Tests.** `buildDev\test_buildUsd_mayapy.py` (43: layers, version update
+keeps edits, Repair), `modelDev\test_usdEdit_mayapy.py` (21: picking, shot
+and asset edits, discard, old-stage update, apply + undo + clear, and
+Maya's own `move` on a picked prim landing in the chosen layer).
+
+**Not done / open.**
+- Hand test in GUI Maya (Move tool with manipulators, Outliner picking,
+  the banner, saving the Maya scene with unsaved layer edits).
+- Shot layers are on scratch only: a shot publish's `.ma` points at them,
+  but they aren't published to H. Needed before USD shots go between
+  machines (§4f "shot layers per department").
+- Apply handles moves only; other edits (visibility, materials) are
+  listed, not applied.
+- Asset edits are shared by shots on the same scratch drive only, until
+  the model is republished.
 
 The user (2026-11-24): "one of the key features of USD is that I can edit a
 shot or an asset and pass that from the shot back to the asset and vice

@@ -1208,7 +1208,12 @@ def _repair_stages(h_root):
     fixed, not_fixed = [], []
     for transform, shape, written in usd_stages():
         path = _absolute(written)
-        if not written or os.path.isfile(path):
+        if written and os.path.isfile(path):
+            if _repair_stage_layers(transform, shape, path):
+                fixed.append("%s: its edit layers were missing; made again (edits not "
+                             "saved before are gone)." % transform.split("|")[-1])
+            continue
+        if not written:
             continue
         name = os.path.basename(path)
         try:
@@ -1224,10 +1229,32 @@ def _repair_stages(h_root):
             not_fixed.append("%s: not on the H drive either (%s)." % (name, source))
             continue
         copy_usd(source, os.path.join(root, rel[0], "maya"))
+        _repair_stage_layers(transform, shape, path)
+        file_path = cmds.getAttr(shape + ".filePath")
         cmds.setAttr(shape + ".filePath", "", type="string")    # reload the stage
-        cmds.setAttr(shape + ".filePath", written, type="string")
+        cmds.setAttr(shape + ".filePath", file_path, type="string")
         fixed.append("%s: USD pulled again from the H drive and reloaded." % name)
     return fixed, not_fixed
+
+
+def _repair_stage_layers(transform, shape, source):
+    """A stage reading a shot layer (USD_SOURCE_ATTR) whose shot or edit
+    layer file is gone (e.g. a scratch wipe): write them again over the
+    publish source. True if anything was made."""
+    if not (transform and cmds.attributeQuery(USD_SOURCE_ATTR, node=transform, exists=True)
+            and cmds.attributeQuery(USD_KEY_ATTR, node=transform, exists=True)):
+        return False
+    shot_layer = _absolute(cmds.getAttr(shape + ".filePath") or "")
+    asset_type, asset, code = cmds.getAttr(transform + "." + USD_KEY_ATTR).split("/")
+    published = {"asset_type": asset_type, "asset": asset, "code": code}
+    shot_dir = os.path.dirname(os.path.dirname(shot_layer))
+    edit = asset_edit_layer_path(maya_dir_of_shot(shot_dir), asset_type, asset, code)
+    if os.path.isfile(shot_layer) and os.path.isfile(edit):
+        return False
+    write_stage_layers(shot_dir, published, source)
+    cmds.setAttr(shape + ".filePath", "", type="string")    # reload the stage
+    cmds.setAttr(shape + ".filePath", pipeEnv.to_var_path(shot_layer), type="string")
+    return True
 
 
 def _repair_textures(h_root):
@@ -2102,16 +2129,145 @@ def load_usd_plugin():
         cmds.loadPlugin(USD_PLUGIN, quiet=True)
 
 
+# ---------------------------------------------------------------------------
+# Edit layers (spec §4i, user 2026-11-24: "edit a shot or an asset and pass
+# that from the shot back to the asset"). A stage doesn't read the
+# published .usd directly: it reads the scene's own shot layer, which
+# sublayers the asset's edit layer, which sits over the published file:
+#
+#   <scene's project>\usd\<asset>_<code>.usda              edits for this shot
+#     sublayer  <maya>\assets\<type>\<asset>\usd\<asset>_<code>_edit.usda
+#                                                          edits for the asset (every shot)
+#     sublayer  <maya>\publish\...\<name>.usd              the publish, never edited
+#
+# Sublayers (not a reference) keep prim paths the same in all three, so the
+# USD Edit tool (modelTool_usdEdit) only switches which layer is the edit
+# target. Paths inside the layers are relative (spec §4f). All on scratch:
+# unpublished work, the student's job (PIPE_RULES 7). The published .usd
+# the stage uses is stamped on its transform (USD_SOURCE_ATTR).
+# ---------------------------------------------------------------------------
+
+USD_LAYER_FOLDER = "usd"
+USD_EDIT_SUFFIX = "_edit"
+USD_SOURCE_ATTR = "pipe_usdSource"      # on the stage's transform: the publish, as a var path
+USD_LAYER_KEY = "pipe"                  # customLayerData key on the layers Build writes
+
+
+def shot_layer_path(shot_dir, published):
+    return os.path.join(shot_dir, USD_LAYER_FOLDER,
+                        "%s_%s.usda" % (published["asset"], published["code"]))
+
+
+def asset_edit_layer_path(maya_dir, asset_type, asset, code):
+    return os.path.join(maya_dir, "assets", asset_type, asset, USD_LAYER_FOLDER,
+                        "%s_%s%s.usda" % (asset, code, USD_EDIT_SUFFIX))
+
+
+def _rel_layer_path(from_layer, to_file):
+    rel = os.path.relpath(to_file, os.path.dirname(from_layer)).replace("\\", "/")
+    return rel if rel.startswith(".") else "./" + rel
+
+
+def _open_or_create_layer(path, role, **info):
+    from pxr import Sdf
+    layer = Sdf.Layer.FindOrOpen(path.replace("\\", "/"))
+    if layer is None:
+        folder = os.path.dirname(path)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        layer = Sdf.Layer.CreateNew(path.replace("\\", "/"))
+    data = dict(layer.customLayerData)
+    stamp = dict(data.get(USD_LAYER_KEY) or {})
+    stamp.update(dict(info, role=role))
+    data[USD_LAYER_KEY] = stamp
+    layer.customLayerData = data
+    return layer
+
+
+def write_stage_layers(shot_dir, published, source):
+    """Make (or update) the shot layer and the asset's edit layer for a
+    stage reading the pulled publish source. Edits already in either layer
+    are kept; only the shot layer's sublayers change. Returns the shot
+    layer's path."""
+    load_usd_plugin()
+    from pxr import Sdf
+    maya_dir = maya_dir_of_shot(shot_dir)
+    shot_path = shot_layer_path(shot_dir, published)
+    edit_path = asset_edit_layer_path(maya_dir, published["asset_type"], published["asset"],
+                                      published["code"])
+    src = Sdf.Layer.FindOrOpen(source.replace("\\", "/"))
+    default = src.defaultPrim if src else ""
+    edit = _open_or_create_layer(edit_path, "asset", asset=published["asset"],
+                                 code=published["code"])
+    if default:
+        edit.defaultPrim = default
+    edit.Save()
+    shot = _open_or_create_layer(shot_path, "shot", asset=published["asset"],
+                                 code=published["code"])
+    subs = [_rel_layer_path(shot_path, edit_path), _rel_layer_path(shot_path, source)]
+    if list(shot.subLayerPaths) != subs:
+        del shot.subLayerPaths[:]
+        for sub in subs:
+            shot.subLayerPaths.append(sub)
+    if default:
+        shot.defaultPrim = default
+    shot.Save()
+    return shot_path
+
+
+def stage_layers(shape):
+    """{'shot', 'asset', 'published'}: the Sdf layers of a stage Build
+    loaded (None where it has no such layer, e.g. a stage loaded before
+    edit layers, which reads the publish directly)."""
+    import mayaUsd.ufe
+    from pxr import Sdf
+    stage = mayaUsd.ufe.getStage(cmds.ls(shape, long=True)[0])
+    found = {"shot": None, "asset": None, "published": None}
+    if stage is None:
+        return found
+    root = stage.GetRootLayer()
+    role = (root.customLayerData.get(USD_LAYER_KEY) or {}).get("role")
+    if role != "shot":
+        found["published"] = root
+        return found
+    found["shot"] = root
+    for sub in root.subLayerPaths:
+        layer = Sdf.Layer.FindOrOpen(root.ComputeAbsolutePath(sub))
+        if layer is None:
+            continue
+        if (layer.customLayerData.get(USD_LAYER_KEY) or {}).get("role") == "asset":
+            found["asset"] = layer
+        elif found["published"] is None:
+            found["published"] = layer
+    return found
+
+
 def usd_stages():
-    """[(transform, shape, file path as written)] for every USD stage in
-    the open scene (long names)."""
+    """[(transform, shape, published .usd as written)] for every USD stage
+    in the open scene (long names). Written: the publish the stage reads,
+    as the scene stores it (a $PIPE_SCRATCH path): its transform's
+    USD_SOURCE_ATTR, or for a stage from before edit layers, its file."""
     if not cmds.pluginInfo(USD_PLUGIN, query=True, loaded=True):
         return []
     found = []
     for shape in cmds.ls(type=USD_SHAPE, long=True) or []:
         parent = (cmds.listRelatives(shape, parent=True, fullPath=True) or [None])[0]
-        found.append((parent, shape, cmds.getAttr(shape + ".filePath") or ""))
+        if parent and cmds.attributeQuery(USD_SOURCE_ATTR, node=parent, exists=True):
+            written = cmds.getAttr(parent + "." + USD_SOURCE_ATTR) or ""
+        else:
+            written = cmds.getAttr(shape + ".filePath") or ""
+        found.append((parent, shape, written))
     return found
+
+
+def set_stage_source(transform, shape, shot_layer, source_var):
+    """Point a stage at its shot layer and stamp the publish it reads."""
+    if not cmds.attributeQuery(USD_SOURCE_ATTR, node=transform, exists=True):
+        cmds.addAttr(transform, longName=USD_SOURCE_ATTR, dataType="string")
+    cmds.setAttr(transform + "." + USD_SOURCE_ATTR, source_var, type="string")
+    file_path = pipeEnv.to_var_path(shot_layer)
+    if cmds.getAttr(shape + ".filePath") != file_path:
+        cmds.setAttr(shape + ".filePath", file_path, type="string")
 
 
 def stage_of(published):
@@ -2210,12 +2366,15 @@ def _build_usd(shot_dir, published, vid, replace=False):
     dest = pull(shot_dir, published, vid, usd=True)
     pipeEnv.set_from_path(shot_dir)
     file_path = pipeEnv.to_var_path(dest)
+    shot_layer = write_stage_layers(shot_dir, published, dest)
     done = []
     if stage:
         transform, shape, written = stage
-        usd_group(transform, pub.pipe_group_name(published["asset"], published["code"]))
+        transform = usd_group(transform, pub.pipe_group_name(published["asset"],
+                                                             published["code"]))
+        shape = (cmds.listRelatives(transform, shapes=True, fullPath=True) or [shape])[0]
+        set_stage_source(transform, shape, shot_layer, file_path)
         if written != file_path:
-            cmds.setAttr(shape + ".filePath", file_path, type="string")
             m = USD_RE.match(os.path.basename(_absolute(written)))
             done.append("%s -> %s" % ("v%s" % m.group("version") if m else "USD", label))
         else:
@@ -2234,7 +2393,10 @@ def _build_usd(shot_dir, published, vid, replace=False):
                 cmds.file(referenceNode=node, removeReference=True)
             done.append("Maya reference removed")
         transform = make_stage(namespace_for(published["asset"], published["code"]), key,
-                               file_path, pub.pipe_group_name(published["asset"], published["code"]))
+                               pipeEnv.to_var_path(shot_layer),
+                               pub.pipe_group_name(published["asset"], published["code"]))
+        set_stage_source(transform, cmds.listRelatives(transform, shapes=True, fullPath=True)[0],
+                         shot_layer, file_path)
         if placement:
             cmds.xform(transform, worldSpace=True, matrix=placement)
         done.append("%s loaded as a USD stage (%s)" % (label, transform.split("|")[-1]))

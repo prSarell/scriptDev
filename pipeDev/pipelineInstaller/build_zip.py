@@ -51,6 +51,8 @@ SCRIPTS = [
     ("pipeDev/modelDev", "modelTool_convert.py"),
     ("pipeDev/modelDev", "modelTool_usd.py"),
     ("pipeDev/modelDev", "modelTool_usd_ui.py"),
+    ("pipeDev/modelDev", "modelTool_usdEdit.py"),
+    ("pipeDev/modelDev", "modelTool_usdEdit_ui.py"),
     ("modelDev", "fbxExport.py"),            # not a pipe tool, on the mpModel shelf
     ("pipeDev/lightingDev", "renderSub_api.py"),
     ("pipeDev/lightingDev", "renderSub_ui.py"),

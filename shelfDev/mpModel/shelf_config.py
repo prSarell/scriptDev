@@ -9,6 +9,7 @@ SHELF_NAME = "mpModel"
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_textures", "publishTool_env", "pipeEnv",
                 "buildTool_api", "modelTool_convert", "modelTool_usd", "modelTool_usd_ui",
+                "modelTool_usdEdit", "modelTool_usdEdit_ui",
                 "fbxExport")
 
 
@@ -45,6 +46,15 @@ BUTTONS = [
                    "publish: duplicates, namespaces, missing _GEO / _GRP, shape names.",
         "icon": "iconModelUsdNames.png",
         "command": _command("modelTool_usd_ui", "show_names"),
+    },
+    {
+        "label": "USD Edit",
+        "tooltip": "USD Edit: select a USD model Build loaded (viewport or Outliner), choose "
+                   "this shot or the asset (every shot), click Edit, move it, click Save. "
+                   "In the asset's own scene, Apply Asset Edits moves the Maya model to match, "
+                   "ready to publish. The published file is never changed.",
+        "icon": "iconModelUsdEdit.png",
+        "command": _command("modelTool_usdEdit_ui", "show"),
     },
 ]
 

@@ -147,6 +147,34 @@ check("building it again: already up to date",
       api.build_asset(shot_dir, grass, v1, usd=True)[0] == ["already up to date"])
 check("nothing referenced (no Maya reference made)", not api.scene_references())
 
+# -- edit layers (spec §4i) ----------------------------------------------------
+shot_layer = os.path.join(shot_dir, "usd", "grassB_model.usda")
+edit_layer = os.path.join(maya_dir, "assets", "environment", "grassB", "usd",
+                          "grassB_model_edit.usda")
+check("the stage reads the shot's layer, by $PIPE_SCRATCH path",
+      cmds.getAttr(stage[1] + ".filePath") == pipeEnv.to_var_path(shot_layer)
+      and os.path.isfile(shot_layer) and os.path.isfile(edit_layer))
+layers = api.stage_layers(stage[1])
+check("... shot layer over the asset's edit layer over the publish (relative paths)",
+      layers["shot"] and layers["asset"] and layers["published"]
+      and pub._same_path(layers["asset"].realPath, edit_layer)
+      and pub._same_path(layers["published"].realPath, pulled_usd)
+      and all(p.startswith(".") for p in layers["shot"].subLayerPaths))
+from pxr import Usd, UsdGeom, Gf
+blade = "/grassB_model_GRP/geo/render/grassB_blade_GEO"
+usd_stage.SetEditTarget(Usd.EditTarget(layers["shot"]))
+UsdGeom.XformCommonAPI(usd_stage.GetPrimAtPath(blade)).SetTranslate(Gf.Vec3d(1, 0, 0))
+layers["shot"].Save()
+usd_stage.SetEditTarget(Usd.EditTarget(layers["asset"]))
+render_grp = "/grassB_model_GRP/geo/render"   # the shot moved the blade: its op order masks weaker layers
+UsdGeom.XformCommonAPI(usd_stage.GetPrimAtPath(render_grp)).SetScale(Gf.Vec3f(2, 2, 2))
+layers["asset"].Save()
+check("an edit in each layer lands in that layer only, at the asset's own path",
+      layers["shot"].GetPrimAtPath(blade) and layers["asset"].GetPrimAtPath(render_grp)
+      and "translate" in layers["shot"].ExportToString()
+      and "translate" not in layers["asset"].ExportToString()
+      and "scale" in layers["asset"].ExportToString())
+
 # -- version update ------------------------------------------------------------
 cmds.xform("grassB_USD", worldSpace=True, translation=(5, 0, -3))
 done, warning, replaced = api.build_asset(shot_dir, grass, v3, usd=True)
@@ -164,6 +192,15 @@ check("... v003's is in use (the stage reads it)", api.unused_versions([v3_pulle
 check("version_files of a pulled .usd: it and its textures",
       sorted(os.path.basename(f) for f in api.version_files(v3_pulled))
       == ["grass.png", "grassB_e131988_model_v003.usd"])
+layers = api.stage_layers(stage[1])
+composed = mayaUsd.ufe.getStage(stage[1]).GetPrimAtPath(blade)
+check("... the shot layer now sits over v003, both layers' edits kept",
+      layers["published"] and layers["published"].realPath.replace("\\", "/").endswith(
+          "grassB_e131988_model_v003.usd")
+      and UsdGeom.XformCommonAPI(composed).GetXformVectors(Usd.TimeCode.Default())[0]
+      == Gf.Vec3d(1, 0, 0)
+      and UsdGeom.XformCommonAPI(composed.GetParent()).GetXformVectors(Usd.TimeCode.Default())[2]
+      == Gf.Vec3f(2, 2, 2))
 
 # -- save and reopen: the path stays drive-independent ---------------------------
 cmds.file(save=True, type="mayaAscii")
@@ -179,6 +216,12 @@ os.chmod(v3_pulled, 0o666); os.remove(v3_pulled)
 fixed, not_fixed = api.repair_scene(H)
 check("Repair pulls a missing .usd back and reloads the stage",
       os.path.isfile(v3_pulled) and any("USD pulled again" in f for f in fixed) and not not_fixed)
+os.remove(shot_layer); os.remove(edit_layer)
+fixed, not_fixed = api.repair_scene(H)
+check("Repair writes missing edit layers again",
+      os.path.isfile(shot_layer) and os.path.isfile(edit_layer)
+      and any("edit layers were missing" in f for f in fixed)
+      and mayaUsd.ufe.getStage(api.stage_of(grass)[1]).GetPrimAtPath(blade).IsValid())
 
 # -- Animation publish refuses a stage -----------------------------------------
 try:
