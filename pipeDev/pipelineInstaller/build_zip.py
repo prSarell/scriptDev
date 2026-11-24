@@ -15,6 +15,16 @@ Zip layout (unzip anywhere, drag install.py onto the Maya viewport):
     mpPipe/install.py, uninstall.py, shelf_config.py, version.txt
     mpPipe/scripts/*.py
     mpPipe/icons/*.png
+    mpPipe/gaffer/install.py, uninstall.py, gaffer-<version>-windows.zip
+
+gaffer/ is Gaffer itself (user 2026-11-24: "part of the pipeline bundle ...
+like studio library ... not handled by the drag and drop"): the Gaffer
+release zip as downloaded (BSD licence, so it can be passed on), never
+committed to git, with its own install/uninstall that students drag in
+separately. Found in MPPIPE_GAFFER_ZIP, else the newest
+gaffer-*-windows.zip in Documents\\maya or Downloads. --no-gaffer leaves it
+out (a quick build: Gaffer adds ~470 MB). The Arnold SDK is never bundled
+(Autodesk's licence).
 
 Not for students: never copy this into mpToolSet/ or studio4AnimToolset/,
 whose zips are published as public GitHub Releases.
@@ -60,6 +70,8 @@ SCRIPTS = [
     ("pipeDev/lightingDev", "renderPresets_api.py"),
     ("pipeDev/lightingDev", "renderPresets_ui.py"),
     ("pipeDev/lightingDev", "backdropCard.py"),
+    ("pipeDev/lightingDev", "gafferSend.py"),
+    ("pipeDev/lightingDev", "gafferPipeStartup.py"),   # runs in Gaffer, copied there by gafferSend
     ("pipeDev/scoutDev", "scout_api.py"),
     ("pipeDev/scoutDev", "scout_service.py"),
     ("pipeDev/scoutDev", "scout_worker.py"),
@@ -103,9 +115,30 @@ def config_name(index, shelf_dir):
             "shelf_config_%s.py" % os.path.basename(shelf_dir))
 
 
-def build():
+def gaffer_zip():
+    """The Gaffer release zip to bundle, or None."""
+    import glob
+    named = os.environ.get("MPPIPE_GAFFER_ZIP")
+    if named:
+        return named if os.path.isfile(named) else None
+    home = os.path.expanduser("~")
+    found = []
+    for folder in (os.path.join(home, "Documents", "maya"), os.path.join(home, "Downloads")):
+        found += glob.glob(os.path.join(folder, "gaffer-*-windows.zip"))
+    return sorted(found, key=os.path.basename)[-1] if found else None
+
+
+def build(with_gaffer=True):
     entries = [(os.path.join(HERE, n), "%s/%s" % (TOP, n))
                for n in ("install.py", "uninstall.py")]
+    gaffer = gaffer_zip() if with_gaffer else None
+    if with_gaffer and not gaffer:
+        sys.exit("No Gaffer zip found (MPPIPE_GAFFER_ZIP, or gaffer-*-windows.zip in "
+                 "Documents\\maya or Downloads). Use --no-gaffer to build without it.")
+    if gaffer:
+        entries += [(os.path.join(HERE, "gaffer", n), "%s/gaffer/%s" % (TOP, n))
+                    for n in ("install.py", "uninstall.py")]
+        entries.append((gaffer, "%s/gaffer/%s" % (TOP, os.path.basename(gaffer))))
     for i, shelf_dir in enumerate(SHELF_DIRS):
         entries.append((os.path.join(shelf_dir, "shelf_config.py"),
                         "%s/%s" % (TOP, config_name(i, shelf_dir))))
@@ -126,9 +159,12 @@ def build():
     out = os.path.join(dist, "mpPipe.zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for src, arc in entries:
-            z.write(src, arc)
+            # The Gaffer zip is already compressed: store it as it is.
+            z.write(src, arc, compress_type=zipfile.ZIP_STORED if src == gaffer else None)
         z.writestr(TOP + "/version.txt", version + "\n")
-    print("Built %s\n  build %s\n  %d files" % (out, version, len(entries) + 1))
+    print("Built %s\n  build %s\n  %d files%s" % (
+        out, version, len(entries) + 1,
+        "\n  Gaffer: %s" % os.path.basename(gaffer) if gaffer else "\n  without Gaffer"))
 
     if os.path.isdir(DROPBOX):
         os.makedirs(COPY_TO, exist_ok=True)
@@ -142,4 +178,4 @@ def build():
 
 
 if __name__ == "__main__":
-    build()
+    build(with_gaffer="--no-gaffer" not in sys.argv[1:])

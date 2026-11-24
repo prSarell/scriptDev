@@ -47,14 +47,16 @@ class ExportError(Exception):
 # Where it goes
 # ---------------------------------------------------------------------------
 
-def target(scene=None):
+def target(scene=None, app=TARGET_FOLDER, label="Substance Painter"):
     """(folder, name, kind, root) for the open scene: the artist's fromMaya
     folder, the asset or shot name, 'assets' or 'sequences', and the
-    film's substancePainter folder."""
+    film's folder for the receiving program (app: substancePainter here,
+    gaffer for gafferSend; one structure for every hand-off, user
+    2026-11-24). label names the program in messages."""
     scene = scene or cmds.file(query=True, sceneName=True)
     if not scene:
         raise ExportError("Save the scene in its asset or shot folder first: the export "
-                          "goes to that asset's or shot's Substance Painter folder.")
+                          "goes to that asset's or shot's %s folder." % label)
     parts = os.path.normpath(scene).split(os.sep)
     lowered = [p.lower() for p in parts]
     for i in range(len(parts) - 1, -1, -1):
@@ -68,13 +70,13 @@ def target(scene=None):
         film = os.sep.join(parts[:i]) or os.sep
         if film.endswith(":"):
             film += os.sep                                      # D: -> D:\
-        root = os.path.join(film, TARGET_FOLDER)
+        root = os.path.join(film, app)
         # scenes\<dept>\<login>\<file>: the login folder names the artist
         j = i + 2 + depth
         if lowered[j] != SCENES_FOLDER or j + 3 > len(parts) - 1:
             raise ExportError(
                 "Save the scene in your own folder, scenes\\<department>\\<your login>, so "
-                "the export goes to your folder in Substance Painter:\n  %s" % scene)
+                "the export goes to your folder in %s:\n  %s" % (label, scene))
         login = parts[j + 2]
         folder = os.path.join(root, *(rel + [login, EXPORT_FOLDER]))
         return folder, rel[-1], kind, root

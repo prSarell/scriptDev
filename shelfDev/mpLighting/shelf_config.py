@@ -9,7 +9,8 @@ SHELF_NAME = "mpLighting"
 # without restarting Maya (see shelfDev/mpPipe/shelf_config.py).
 RELOAD_ORDER = ("publishTool_api", "publishTool_camera", "pipeEnv",
                 "renderSub_api", "renderSub_flow", "scout_api", "renderSub_ui",
-                "renderPresets_api", "renderPresets_ui", "backdropCard")
+                "renderPresets_api", "renderPresets_ui", "backdropCard",
+                "fbxExport", "gafferSend")
 
 
 def _command(module, call):
@@ -54,5 +55,15 @@ BUTTONS = [
                    "another project is copied into this project's sourceimages/backdrops.",
         "icon": "iconBackdropCard.png",
         "command": _command("backdropCard", "convert"),
+    },
+    {
+        "label": "Gaffer",
+        "tooltip": "Send to Gaffer: send what's selected (geometry, cameras, lights, with their "
+                   "Arnold shaders, over the timeline) to Gaffer for lookdev and lighting, "
+                   "and open your Gaffer file. Sending again carries on in it (press Reload "
+                   "in Gaffer), or Start Again makes a new one. Goes to "
+                   "<film>\\gaffer\\...\\<login>\\fromMaya.",
+        "icon": "iconGaffer.png",
+        "command": _command("gafferSend", "run"),
     },
 ]
