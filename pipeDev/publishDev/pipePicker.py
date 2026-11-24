@@ -2,12 +2,17 @@
 Pipe Picker — the row of dropdowns the Publish and Build tools share
 (user, 2026-10-22): how a student says what they're publishing or building.
 
-    Film | Asset or Shot | Department | Type or Sequence | Asset or Shot   [-] [+]
+    Film | Asset or Shot | Department | Type or Sequence | Asset or Shot
+        [| Type | Item]   [-] [+]
 
 Asset or Shot is the student's choice; the Department list shows only
 that side's departments (Rigging is an asset department, Animation a shot
-one). The last two list what the tool says fits: asset types and assets,
+one). The next two list what the tool says fits: asset types and assets,
 or sequences and shots.
+Type and Item (Build's Add to list only, user 2026-11-25), on the Shot
+side: what the picked department published for the picked shot (Camera,
+Cache), then which one (scout_ABC, scout_USD...). Hidden on the Asset side
+and in tools that don't ask for them.
 + adds the picked thing to the tool's list, - takes the highlighted rows
 off it. Each tool does the adding and removing itself.
 """
@@ -55,16 +60,20 @@ class TargetPicker(QtWidgets.QWidget):
     the same as the side (Environment is listed under Shot but publishes
     to an environment asset, user 2026-10-26). items_for(film, code, lists)
     returns the [(group, name)] that fit, group being the asset type or
-    sequence."""
+    sequence. shot_items(film, code, seq, shot), if given, adds the Type
+    and Item dropdowns on the Shot side: it returns [(type label, type key,
+    [(item label, item key)])]."""
 
     add_clicked = QtCore.Signal()
     remove_clicked = QtCore.Signal()
 
-    def __init__(self, departments, items_for, parent=None):
+    def __init__(self, departments, items_for, parent=None, shot_items=None):
         super(TargetPicker, self).__init__(parent)
         self._take_departments(departments)
         self._items_for = items_for
+        self._shot_items = shot_items
         self._items = []
+        self._types = []
         # False: the last dropdown starts on "(pick one)" instead of the
         # first name, so nothing is chosen by default (user, 2026-10-26: a
         # scene was saved into ATKS just because it was listed first).
@@ -81,6 +90,12 @@ class TargetPicker(QtWidgets.QWidget):
         self.group_combo = QtWidgets.QComboBox()
         self.name_combo = QtWidgets.QComboBox()
         self.name_combo.setMinimumWidth(160)
+        self.type_combo = QtWidgets.QComboBox()
+        self.type_combo.setToolTip("What the department published for this shot: its "
+                                   "camera, its caches.")
+        self.item_combo = QtWidgets.QComboBox()
+        self.item_combo.setMinimumWidth(120)
+        self.item_combo.setToolTip("Which one to add.")
         self.remove_btn = QtWidgets.QPushButton("-")
         self.add_btn = QtWidgets.QPushButton("+")
         for button in (self.remove_btn, self.add_btn):
@@ -93,13 +108,19 @@ class TargetPicker(QtWidgets.QWidget):
         for combo in (self.film_combo, self.kind_combo, self.dept_combo, self.group_combo):
             row.addWidget(combo)
         row.addWidget(self.name_combo, 1)
+        row.addWidget(self.type_combo)
+        row.addWidget(self.item_combo)
         row.addWidget(self.remove_btn)
         row.addWidget(self.add_btn)
+        for combo in (self.type_combo, self.item_combo):
+            combo.setVisible(False)
 
         self.film_combo.currentIndexChanged.connect(lambda *_: self.refill())
         self.kind_combo.currentIndexChanged.connect(lambda *_: self._fill_departments(True))
         self.dept_combo.currentIndexChanged.connect(lambda *_: self.refill())
         self.group_combo.currentIndexChanged.connect(lambda *_: self._fill_names())
+        self.name_combo.currentIndexChanged.connect(lambda *_: self._fill_types())
+        self.type_combo.currentIndexChanged.connect(lambda *_: self._fill_shot_items())
         self.remove_btn.clicked.connect(self.remove_clicked)
         self.add_btn.clicked.connect(self.add_clicked)
 
@@ -119,6 +140,13 @@ class TargetPicker(QtWidgets.QWidget):
 
     def name(self):
         return self.name_combo.currentData()
+
+    def item_type(self):
+        return self.type_combo.currentData() if self.type_combo.isVisibleTo(self) else None
+
+    def item(self):
+        """The Item dropdown's pick (its key), or None when it isn't shown."""
+        return self.item_combo.currentData() if self.item_combo.isVisibleTo(self) else None
 
     # -- filling ----------------------------------------------------------
 
@@ -202,6 +230,36 @@ class TargetPicker(QtWidgets.QWidget):
         if items and not self.pick_first:
             items.insert(0, (PICK_TEXT, None, True))
         _set_items(self.name_combo, items or [(NONE_TEXT, None, False)], name or self.name())
+        self._fill_types()
+
+    def _listed_side(self):
+        lists = self._lists.get(self.department(), self.kind())
+        return self.kind() if lists == ANY else lists
+
+    def _fill_types(self, item_type=None, item=None):
+        """Type: what the department published for the picked shot. Only
+        with shot_items, on the Shot side."""
+        shown = bool(self._shot_items) and self._listed_side() == SHOT
+        for combo in (self.type_combo, self.item_combo):
+            combo.setVisible(shown)
+        film, code, group, name = self.film(), self.department(), self.group(), self.name()
+        self._types = (list(self._shot_items(film, code, group, name))
+                       if shown and film and code and group and name else [])
+        _set_items(self.type_combo, [(label, key, True) for label, key, _ in self._types]
+                   or [(NONE_TEXT, None, False)], item_type or self.type_combo.currentData())
+        self._fill_shot_items(item)
+
+    def _fill_shot_items(self, item=None):
+        """Item: which camera or cache of the picked Type."""
+        found = next((items for _, key, items in self._types
+                      if key == self.type_combo.currentData()), [])
+        _set_items(self.item_combo, [(label, key, True) for label, key in found]
+                   or [(NONE_TEXT, None, False)], item or self.item_combo.currentData())
+
+    def refill_shot_items(self, item_type=None, item=None):
+        """Re-read Type and Item, picking these if they're still there
+        (after a Refresh)."""
+        self._fill_types(item_type, item)
 
 
 # ---------------------------------------------------------------------------

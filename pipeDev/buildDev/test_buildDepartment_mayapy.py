@@ -3,7 +3,7 @@
 # Add to list (what's published) and Build into (Film | Asset or Shot |
 # department | Sequence | Shot), which starts on the Maya project and never
 # changes it. Add to list offers every department (2026-10-30); Build into starts on
-# the scene's (working folder, else file name). FX / Lighting coming soon.
+# the scene's (working folder, else file name). Every department builds everything (2026-11-25).
 # Run: mayapy test_buildDepartment_mayapy.py
 import sys, os, shutil, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -46,8 +46,8 @@ def scene_in(folder, *rel):
 d = api.department_of_scene
 check("shot working folder anim -> Animation", d(scene_in(shot_s, "anim", LOGIN, "a.ma")) == "anim")
 check("shot working folder layout -> Layout", d(scene_in(shot_s, "layout", LOGIN, "a.ma")) == "layout")
-check("shot lighting (coming soon) -> Layout",
-      d(scene_in(shot_s, "lighting", LOGIN, "a.ma")) == "layout")
+check("shot lighting -> Lighting (builds since 2026-11-25)",
+      d(scene_in(shot_s, "lighting", LOGIN, "a.ma")) == "lighting")
 check("shot scene by file name: SEQ010_120_layout_v002 -> Layout",
       d(scene_in(shot_s, LOGIN, "SEQ010_120_layout_v002.ma")) == "layout")
 check("shot scene, nothing to go on -> Animation", d(scene_in(shot_s, "shot.ma")) == "anim")
@@ -60,10 +60,11 @@ check("asset scene, nothing to go on -> Modeling", d(scene_in(asset_s, "scout.ma
 check("outside the pipe -> None", d(os.path.join(base, "loose.ma")) is None)
 
 # --- what each department builds
-check("Lighting / FX coming soon", api.builds_for("lighting") == [] and api.builds_for("fx") == [])
-check("Modeling: models only", api.builds_for("model") == ["model"])
-check("Animation: no lookDev", "lookDev" not in api.builds_for("anim")
-      and "rig" in api.builds_for("anim") and "cam" in api.builds_for("anim"))
+# Every department builds everything (project lead, 2026-11-25).
+everything = ["model", "rig", "creature", "lookDev", api.ENV_CODE, "cam", "cache"]
+check("every department, Lighting and FX included, builds everything",
+      all(api.builds_for(c) == everything for _, c, _ in api.BUILD_FOR)
+      and set(api.live_departments()) == set(c for _, c in api.DEPARTMENTS))
 
 
 # --- the Build tab: Add to list above, Build into below

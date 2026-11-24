@@ -1634,6 +1634,9 @@ The tools are developed side by side:
         (`<shot>_<item>_cache:`), beside the scene's own. The place's record
         says which shot each came from, so they come back on its list. A
         whole-scene Modeling publish leaves shot cameras out.
+        **CHANGED by the user, 2026-11-25: Type and Item dropdowns, and
+        every department builds everything.** See §4l. **+** on the Shot
+        side now adds only the one item picked, not all of them.
         DECIDED 2026-10-28 (Claude's call, user: "this was a good call"):
         Layout/Animation also get models (props and set dressing published
         as models would otherwise be stuck), and don't get Creature
@@ -4078,6 +4081,7 @@ Gaffer sits beside Maya, fed by files: there's no Maya plug-in.
 - **Built:** an Animation row in the Publish list has its own **ABC** and
   **USD** ticks, in the same format columns Modeling rows use (FBX and OBJ
   show "-": OBJ has no animation, and FBX of a rig is a separate job).
+  *FBX added 2026-11-25, see §4l.*
   Unticked by default and not remembered: each publish decides. Layout
   rows never cache.
 - **What a tick makes:** one cache per item, the same roots as before (a
@@ -4095,13 +4099,72 @@ Gaffer sits beside Maya, fed by files: there's no Maya plug-in.
   approval is checked for Animation any more. Camera, Layout and asset
   publishes still read their task's newest approved Version for the green
   border (`newest_approved`), unchanged.
-- **Not yet:** Build loading the USD caches (it lists the ABC ones), USD
-  caches to Send to Gaffer.
+- **Not yet:** USD caches to Send to Gaffer. (Build loading USD caches:
+  built 2026-11-25, §4l.)
 - Tests: `publishDev\test_animPublish_mayapy.py` (ABC + USD per item, USD
   ball moves 3 units over frames 1-10, static rock one frame, a failed
   publish leaves no USD behind, Layout ignores the ticks),
   `test_finalNotSticky_mayapy.py` (stage from the ticks, ShotGrid not
   asked).
+
+### 4l. Build: Type and Item dropdowns, caches in every format, every department builds everything — DECIDED + BUILT (2026-11-25)
+
+- **Why (user, 2026-11-25):** "Right now we have no way of loading a cache
+  or a camera published by animation for lighting." Add to list's Shot
+  side could only add everything a shot published at once (§4 Build by
+  department, CHANGED 2026-11-12), and Lighting built nothing.
+- **Two new dropdowns, last on Add to list's row, after the shot**
+  (user: "the very last drop down, farthest screen right"):
+
+      Film | Shot | Department | Sequence | Shot | Type | Item   [-] [+]
+
+  - **Type**: what the picked department published for the picked shot:
+    **Camera** and/or **Cache**. Only types that exist are listed.
+  - **Item**: which one. A camera shows as `camera` (or its shot name if a
+    shot ever has more than one). A cache shows as the cached asset and its
+    format, `scout_ABC`, `scout_USD`, `scout_FBX` (user: "we don't need the
+    full SEQ010_040_scout_rig name because the menu is defining the shot
+    and sequence"). Two items of the same asset in a shot use the
+    animator's item names instead (`scout1_ABC`, `scout2_ABC`).
+  - **+** adds just that one, ticked. There is no "all" entry (user: "No").
+  - Shot side only, Add to list only. Hidden on the Asset side and in
+    Build into. The first five dropdowns are unchanged.
+  - Refresh keeps what Type and Item had picked.
+- **Every department builds everything** (user: "Any department should be
+  able to build anything from any other department (I think - maybe this
+  will change in testing)"). `BUILD_FOR` gives every department, Lighting
+  and FX included, models, rigs, Creature, LookDev, environments, cameras
+  and caches. The only visible effect besides Lighting/FX working: every
+  department's list gets the shot's own **Alembic** caches unticked, as
+  Animation's did.
+- **Caches in three formats.** Publish's Animation row gets an **FBX** tick
+  beside ABC and USD (user picked "skeleton + skin"): the cache roots plus
+  the skeletons that skin them (skinCluster influences, up to the top
+  joint), joints and transforms baked over the timeline, skin weights and
+  blendshapes, no controls or constraints.
+  `<shot>\cache\fbx\anim\<login>\<shot>_<item>_anim_v###.fbx` + `.json`.
+  Deformers other than skin and blendshapes aren't in the FBX (the ABC and
+  USD carry every deformation). Like the Alembic, names keep the rig's
+  namespace (`scout_rig:hip_JNT`).
+- **How Build brings each in:**
+  - ABC: unchanged, referenced in `<item>_cache:` / `<item>_cache_GRP`,
+    display Reference, with its look.
+  - USD: always a **USD stage** (user: "build USD caches as a stage too"),
+    `<item>_usd_cache_USD` in its pipe group `<item>_usd_cache_GRP`,
+    reading the pulled `.usd` by its `$PIPE_SCRATCH` path. No edit layers
+    (§4i): a cache isn't edited. No look put on: it wears the shaders it
+    was published with (Arnold, when MtoA was loaded).
+  - FBX: referenced like the ABC, `<item>_fbx_cache:` /
+    `<item>_fbx_cache_GRP`, display Reference, with its look.
+  - Each format is its own list row and record (`<item>`, `<item>_usd`,
+    `<item>_fbx`); a cache from another shot is `<shot>_<item>[_fmt]`.
+- Built: `buildTool_api.list_shot_caches` / `label_caches` /
+  `_build_usd_cache`, `publishTool_anim.export_fbx_cache`,
+  `pipePicker.TargetPicker(shot_items=...)`,
+  `buildTool_ui.BuildShotTab._picker_shot_items` / `_add_shot_item`.
+- Tests: `buildDev\test_shotItemMenus_mayapy.py`.
+- **OPEN:** USD caches carry no look from Build: if Lighting wants the
+  LookDev look on a USD cache, that's a USD material binding job (later).
 
 ## 5. Context: what the existing tools assume
 

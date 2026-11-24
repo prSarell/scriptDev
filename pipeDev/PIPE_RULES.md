@@ -28,6 +28,12 @@ If a rule here gets in the way of a fix, **stop and ask the project lead**
    it) and, for Animation, its Final caches. **+** adds all of them, a
    row each. The dropdowns themselves (their layout, the department list)
    are unchanged and still locked.
+   *Changed by the project lead, 2026-11-25* (spec §4l): Add to list's
+   Shot side has two more dropdowns, last on the row after the shot:
+   **Type** (Camera, Cache) and **Item** (`scout_ABC`, `scout_USD`,
+   `scout_FBX`...); **+** adds only the one picked. And `BUILD_FOR` now
+   gives **every department everything** ("maybe this will change in
+   testing"). This layout is the locked one now.
 
 ## Design rules (the pipe's backbone)
 

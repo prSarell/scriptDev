@@ -13,8 +13,10 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
   Version for review; students ask for approval in the notes.
 - Caches are a tick, not an approval (user, 2026-11-24: tying them to the
   shot's Final approval in ShotGrid "over complicated this"). An Animation
-  row's ABC and USD ticks make an Alembic and/or a USD cache per item
-  (animated: whole timeline; static: one frame). A publish with caches is
+  row's ABC, USD and FBX ticks make an Alembic, USD and/or FBX cache per
+  item (animated: whole timeline; static: one frame). FBX (user,
+  2026-11-25) carries the skeleton and skin, joints baked, for other
+  software. A publish with caches is
   a Final publish (green thumbnail, Final task). Layout never caches.
 - One version number per publish, shared by everything in it.
 
@@ -26,7 +28,8 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
              <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\anim\\scout\\
                  EAP_010_010_backpack_anim_v001.abc       ABC ticked, per person
                  EAP_010_010_backpack_anim_v001.json      what it is, for Build
-             (USD ticked: the same in cache\\usd\\anim\\scout\\, .usd + .json)
+             (USD ticked: the same in cache\\usd\\anim\\scout\\, .usd + .json;
+              FBX ticked: cache\\fbx\\anim\\scout\\, .fbx + .json)
     scratch  <film>\\premiere\\shotgridMovs\\EAP_010_010.mp4  (replaced each time)
 
 Not in v0 (spec item 7): Build pulling animation back in, the camera
@@ -55,11 +58,12 @@ ANIM_LABEL = "Animation"
 LAYOUT_CODE = "layout"
 BLOCKING, FINAL, LAYOUT = "blocking", "final", "layout"
 ANIMATION = "animation"              # an Animation publish without caches
-# The cache formats an Animation row can tick (user, 2026-11-24), in the
-# order the publish list shows them (publishTool_outputs.FORMATS keys).
-CACHE_FORMATS = ("abc", "usd")
-CACHE_EXT = {"abc": ".abc", "usd": ".usd"}
-CACHE_FOLDER = {"abc": "alembic", "usd": "usd"}
+# The cache formats an Animation row can tick (user, 2026-11-24; FBX
+# 2026-11-25), in the order the publish list shows them
+# (publishTool_outputs.FORMATS keys).
+CACHE_FORMATS = ("abc", "usd", "fbx")
+CACHE_EXT = {"abc": ".abc", "usd": ".usd", "fbx": ".fbx"}
+CACHE_FOLDER = {"abc": "alembic", "usd": "usd", "fbx": "fbx"}
 # What a shot publish is for: the stage dropdown (user, 2026-10-19). Layout
 # publishes the same as animation, approved on the Layout task, never with
 # caches. Lighting and FX come later. (label, code, live)
@@ -507,8 +511,62 @@ def export_usd_cache(item, path, start, end):
     api._lock(path)
 
 
+def skin_joints(meshes):
+    """The top joints of the skeletons skinning these meshes (their
+    skinClusters' influences, walked up to the topmost joint), so an FBX
+    carries the whole skeleton the skin needs."""
+    tops = []
+    for mesh in meshes:
+        history = cmds.listHistory(mesh, pruneDagObjects=True) or []
+        for skin in cmds.ls(history, type="skinCluster"):
+            for joint in cmds.skinCluster(skin, query=True, influence=True) or []:
+                top = cmds.ls(joint, long=True)[0]
+                parent = cmds.listRelatives(top, parent=True, fullPath=True)
+                while parent and cmds.nodeType(parent[0]) == "joint":
+                    top = parent[0]
+                    parent = cmds.listRelatives(top, parent=True, fullPath=True)
+                if top not in tops:
+                    tops.append(top)
+    return tops
+
+
+def export_fbx_cache(item, path, start, end):
+    """FBX of the item (user, 2026-11-25: skeleton + skin): the same roots
+    as its Alembic plus the skeletons that skin them, joints and transforms
+    baked over the whole timeline if animated, one frame if not. Skin
+    weights and blendshapes go with the meshes; other deformers don't (the
+    Alembic and USD carry every deformation)."""
+    import maya.mel as mel
+    if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
+        cmds.loadPlugin("fbxmaya", quiet=True)
+    last = end if item["animated"] else start
+    roots = cache_roots(item)
+    meshes = cmds.listRelatives(roots, allDescendents=True, type="mesh", fullPath=True) or []
+    selection = cmds.ls(selection=True)
+    try:
+        cmds.select(roots + skin_joints(meshes), replace=True)
+        mel.eval("FBXResetExport")
+        for command in ("FBXExportSkins -v true", "FBXExportShapes -v true",
+                        "FBXExportSmoothingGroups -v true", "FBXExportInputConnections -v false",
+                        "FBXExportConstraints -v false", "FBXExportCameras -v false",
+                        "FBXExportLights -v false", "FBXExportEmbeddedTextures -v false",
+                        "FBXExportAnimationOnly -v false", "FBXExportBakeComplexAnimation -v true",
+                        "FBXExportBakeComplexStart -v %d" % start,
+                        "FBXExportBakeComplexEnd -v %d" % last,
+                        "FBXExportBakeComplexStep -v 1"):
+            mel.eval(command)
+        mel.eval('FBXExport -f "%s" -s' % path.replace("\\", "/"))
+    finally:
+        if selection:
+            cmds.select(selection, replace=True)
+        else:
+            cmds.select(clear=True)
+    api._lock(path)
+
+
 # Looked up by name when publishing, so a test can swap one.
-CACHE_EXPORTERS = {"abc": "export_cache", "usd": "export_usd_cache"}
+CACHE_EXPORTERS = {"abc": "export_cache", "usd": "export_usd_cache",
+                   "fbx": "export_fbx_cache"}
 
 
 def write_cache_info(item, files, plan, start, end, scene_path):

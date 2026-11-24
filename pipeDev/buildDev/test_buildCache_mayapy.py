@@ -234,15 +234,17 @@ check("fresh scene: cache in the list, unticked", len(rows) == 1 and not rows[0]
 tab._save_shot_list()
 check("an unbuilt cache isn't saved to the shot's list",
       not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT, "anim") or []))
-check("Layout doesn't build caches", api.CACHE_CODE not in api.builds_for("layout"))
-tab.target_picker.set_current(code="layout")
+# Every department builds caches since 2026-11-25 (Lighting needs them).
+check("Lighting builds caches", api.CACHE_CODE in api.builds_for("lighting"))
+tab.target_picker.set_current(code="lighting")
 cmds.file(new=True, force=True)
-layout_scene = os.path.join(shot_s, "scenes", "layout", LOGIN, "layout.ma")
-os.makedirs(os.path.dirname(layout_scene))
-cmds.file(rename=layout_scene); cmds.file(save=True, type="mayaAscii")
+light_scene = os.path.join(shot_s, "scenes", "lighting", LOGIN, "light.ma")
+os.makedirs(os.path.dirname(light_scene))
+cmds.file(rename=light_scene); cmds.file(save=True, type="mayaAscii")
 tab.refresh()
-check("a Layout scene's list has no caches", tab.department() == "layout"
-      and not [r for r in tab._rows if r.get("kind") == "cache"])
+rows = [r for r in tab._rows if r.get("kind") == "cache"]
+check("a Lighting scene's list has the shot's cache, unticked", tab.department() == "lighting"
+      and len(rows) == 1 and not rows[0]["checked"])
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, fs in os.walk(base):

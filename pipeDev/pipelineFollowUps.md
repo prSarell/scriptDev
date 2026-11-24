@@ -517,6 +517,20 @@ hand. One T7 session could cover most of it.
       in Maya and publish from Maya; the publish finds them through the
       shaders and copies them to H. A missing texture already stops the
       publish and names the node.
+- [ ] **Type and Item dropdowns, caches for Lighting** (spec §4l,
+      2026-11-25): on SEQ010_040, publish Animation with ABC, USD and FBX
+      ticked. Then in a Lighting scene on SEQ010_120, go to Add to list and
+      pick Shot | Animation | SEQ010 | SEQ010_040. Check that Type offers
+      Camera and Cache, and that Item shows `scout_ABC`, `scout_USD` and
+      `scout_FBX`. Add and Build each one:
+      - the ABC should come in as a reference wearing the LookDev look;
+      - the USD should come in as a stage that plays and renders with its
+        Arnold shaders;
+      - the FBX should come in as a reference with its skeleton, posed
+        correctly on the last frame.
+      Also open the FBX in Unreal or Blender to check the skin and joints
+      come through. And: is "every department builds everything" right
+      once tested?
 
 ## 2. Decisions waiting on you
 

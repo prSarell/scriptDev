@@ -3,7 +3,9 @@ Build Tool — UI
 Two tabs:
   Build Shot  — list the assets the open scene's shot needs (picker row:
                 Film, Asset or Shot, Department, Type or Sequence, Asset
-                or Shot, then - and +); one click pulls every ticked one
+                or Shot, and on the Shot side Type and Item: the camera
+                or cache to add, e.g. Cache, scout_ABC; then - and +);
+                one click pulls every ticked one
                 from the H drive and references it into the open scene.
                 Each asset's Keys dropdown puts a Layout/Animation
                 publish's keys back on it (from the picker's shot).
@@ -59,6 +61,8 @@ SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
 # Published for a shot itself, not an asset: its own come with it, and
 # Add to list's Shot side brings another shot's (user, 2026-11-12).
 SHOT_ITEMS = ("camera", "cache")
+# Add to list's Type dropdown, in order (user, 2026-11-25).
+SHOT_ITEM_TYPES = (("camera", "Camera"), ("cache", "Cache"))
 # The list's columns. USD (spec §4h, 2026-11-23): tick to load a model or
 # environment as a USD stage instead of a Maya reference.
 COL_NAME, COL_TYPE, COL_DEPT, COL_VERSION, COL_USD, COL_KEYS, COL_IN, COL_STATUS = range(8)
@@ -163,7 +167,10 @@ class BuildShotTab(QtWidgets.QWidget):
         self.project_banner = picker.ProjectBanner(self._match_project)
 
         # Add to list (see SOURCE_DEPARTMENTS), then - and +.
-        self.picker = picker.TargetPicker(SOURCE_DEPARTMENTS, self._items_for)
+        # Type and Item (user, 2026-11-25), Shot side only: what the
+        # department published for the shot, then which one.
+        self.picker = picker.TargetPicker(SOURCE_DEPARTMENTS, self._items_for,
+                                          shot_items=self._picker_shot_items)
         self.picker.dept_combo.setToolTip("What's published: a model, a rig, an "
                                           "environment... Every department is listed, "
                                           "whatever you're building as. Greyed out: "
@@ -178,7 +185,7 @@ class BuildShotTab(QtWidgets.QWidget):
         self.target_picker.kind_combo.setToolTip("Building into a shot or an asset.")
         self.target_picker.dept_combo.setToolTip(
             "Your department: each department has its own list for a shot, and "
-            "Animation brings in the shot's caches. FX and Lighting come later.")
+            "the shot's Alembic caches join it unticked.")
         self.target_picker.group_combo.setToolTip("Sequence, or asset type")
         self.target_picker.name_combo.setToolTip("Shot, or asset")
         for button in (self.target_picker.add_btn, self.target_picker.remove_btn):
@@ -488,6 +495,29 @@ class BuildShotTab(QtWidgets.QWidget):
             self._shot_items[key] = api.shot_items(self._get_roots()[0], film, seq, shot, code)
         return self._shot_items[key]
 
+    def _picker_shot_items(self, film, code, seq, shot):
+        """Add to list's Type and Item dropdowns (user, 2026-11-25): what
+        the department published for the shot, Camera then Cache, and of
+        each the ones there are (a cache as scout_ABC, scout_USD...),
+        keyed by their list key."""
+        h_root = self._get_roots()[0]
+        if not (h_root and os.path.isdir(h_root)):
+            return []
+        items = self._shot_items_for(film, seq, shot, code)
+        found = []
+        for kind, label in SHOT_ITEM_TYPES:
+            of_kind = [p for p in items if p.get("kind") == kind]
+            if of_kind:
+                found.append((label, kind, [(self._item_label(p, len(of_kind)), self._key(p))
+                                            for p in of_kind]))
+        return found
+
+    @staticmethod
+    def _item_label(p, count):
+        if p.get("kind") == "cache":
+            return p.get("label") or p["asset"]
+        return "camera" if count == 1 else p["asset"]
+
     def _add_other_shot_rows(self, wanted, manifest):
         """Rows for other shots' cameras and caches this place has: on its
         saved list, or built here (the manifest says from which shot)."""
@@ -609,7 +639,9 @@ class BuildShotTab(QtWidgets.QWidget):
         when the open scene already has one; unticked unless the scene's is
         out of date. They're per scene, never on the shot's saved list, so a
         cache built once doesn't come back ticked in every new scene of the
-        shot. Never taken off when the department changes."""
+        shot. Never taken off when the department changes. Only the
+        Alembics join on their own; a USD or FBX cache is listed once it's
+        in the scene, or added with Type and Item (user, 2026-11-25)."""
         builds = api.CACHE_CODE in api.builds_for(self.department())
         have = set(self._key(r) for r in self._rows) | self._removed
         for p in self._published:
@@ -617,7 +649,7 @@ class BuildShotTab(QtWidgets.QWidget):
                 continue
             row = self._row(p, p["latest"])
             if row.get("in_scene") is None:
-                if not builds:
+                if not builds or api.cache_format(p) != "abc":
                     continue
                 row["checked"] = False
             self._rows.append(row)
@@ -770,6 +802,7 @@ class BuildShotTab(QtWidgets.QWidget):
         usd_kept = dict((self._key(r), bool(r.get("usd_chosen"))) for r in self._rows)
         picked = (self.picker.film(), self.picker.department(), self.picker.group(),
                   self.picker.name())
+        picked_item = (self.picker.item_type(), self.picker.item())
         removed = self._removed
         self._load_shot()
         if not self._published:
@@ -800,6 +833,7 @@ class BuildShotTab(QtWidgets.QWidget):
             row["usd_chosen"] = usd_kept.get(key, False) and api.has_usd(row, row["chosen"])
             row["checked"] = checked
         self.picker.set_current(*picked)
+        self.picker.refill_shot_items(*picked_item)
         self._render_table()
         manifest = api.read_manifest(self._shot_dir()) if self._shot_dir() else {}
         newer = [r["asset"] for r in self._rows
@@ -965,7 +999,7 @@ class BuildShotTab(QtWidgets.QWidget):
                                      % self.target_picker.dept_combo.currentText(), ok=False)
             return
         if self.picker.kind() == picker.SHOT:
-            return self._add_shot_items(film, group, name, code)
+            return self._add_shot_item(film, group, name, code, self.picker.item())
         match = [p for p in self._published
                  if p.get("kind") not in SHOT_ITEMS
                  and (p["asset_type"], p["asset"], p["code"]) == (group, name, code)]
@@ -985,33 +1019,34 @@ class BuildShotTab(QtWidgets.QWidget):
             self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
 
-    def _add_shot_items(self, film, seq, shot, code):
-        """+ on Add to list's Shot side: everything that shot published for
-        the department (its camera, its caches), a row each, ticked. Untick
-        what isn't wanted (no extra dropdown: the dropdowns are locked)."""
+    def _add_shot_item(self, film, seq, shot, code, key):
+        """+ on Add to list's Shot side: the camera or cache picked in Type
+        and Item (user, 2026-11-25), one row, ticked."""
         items = self._shot_items_for(film, seq, shot, code) if seq and shot else []
         if not items:
             self.status.show_message("%s has nothing published by %s to build."
                                      % (shot or "This shot", api.DEPT_LABELS.get(code, code)),
                                      ok=False)
             return
-        have = set(self._key(r) for r in self._rows)
-        added = []
-        for p in items:
-            if self._key(p) in have:
-                continue
-            self._removed.discard(self._key(p))
-            row = self._row(p, p["latest"])
-            row["checked"] = True
-            self._rows.append(row)
-            added.append("%s %s" % (p["asset"], api.DEPT_LABELS.get(p["code"], p["code"])))
+        match = [p for p in items if self._key(p) == key]
+        if not match:
+            self.status.show_message("Pick what to add from %s in Type and Item." % shot,
+                                     ok=False)
+            return
+        p = match[0]
+        name = self._item_label(p, 1)
+        if any(self._key(r) == key for r in self._rows):
+            self.status.show_message("%s from %s is already in the list." % (name, shot),
+                                     ok=False)
+            return
+        self._removed.discard(key)
+        row = self._row(p, p["latest"])
+        row["checked"] = True
+        self._rows.append(row)
         if self.filter_combo.currentIndex() != 0:
-            self.filter_combo.setCurrentIndex(0)    # don't add them out of sight
+            self.filter_combo.setCurrentIndex(0)    # don't add it out of sight
         self._render_table()
-        self.status.show_message(
-            "Added from %s: %s. Untick what you don't need, then Build." % (shot, ", ".join(added))
-            if added else "Everything %s has for %s is already in the list."
-            % (shot, api.DEPT_LABELS.get(code, code)), ok=bool(added))
+        self.status.show_message("Added %s from %s. Build to bring it in." % (name, shot))
 
     def _remove_rows(self):
         """Take the selected rows off the list (user, 2026-10-21: list only).

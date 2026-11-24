@@ -80,31 +80,30 @@ def shot_of_scene(scene_path, scratch_root):
 
 
 # ---------------------------------------------------------------------------
-# Build by department (spec §4 "Build by department", user 2026-10-28): the
-# artist's department decides what Build offers, "it would basically filter
-# out rigs for the lighting team". Only what Build can build today is
-# listed; caches, lights and lookDev shaders on caches come later, and FX
-# and Lighting with them.
+# Build by department (spec §4 "Build by department"). Was a filter per
+# department (user 2026-10-28); changed by the project lead 2026-11-25:
+# "any department should be able to build anything from any other
+# department (maybe this will change in testing)". Every department,
+# Lighting and FX included, builds everything Build can build.
 # ---------------------------------------------------------------------------
 
 CAMERA_CODE = "cam"
 CACHE_CODE = "cache"
 DEPT_LABELS[CACHE_CODE] = "Anim Cache"
 ENV_CODE = pub.ENV_CODE
-# (label, department code, what it builds: published department codes,
-# "cam" for the shot camera, "env" for environments, "cache" for the shot's
-# animation caches; None = coming soon).
+# What Build can build: published department codes, "cam" for the shot
+# camera, "env" for environments, "cache" for the shot's animation caches.
+BUILDS_EVERYTHING = ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE, CACHE_CODE]
+# (label, department code, what it builds; None = coming soon).
 BUILD_FOR = [
-    ("Modeling", "model", ["model"]),
-    ("Rigging", "rig", ["model"]),
-    ("Creature", "creature", ["model", "rig", "creature", "lookDev", ENV_CODE, CAMERA_CODE,
-                              CACHE_CODE]),
-    ("LookDev", "lookDev", ["model", "lookDev"]),
-    ("Layout", "layout", ["model", "rig", ENV_CODE, CAMERA_CODE]),
-    # Caches too, "occasionally to compare changes" (user, 2026-10-28).
-    ("Animation", "anim", ["model", "rig", ENV_CODE, CAMERA_CODE, CACHE_CODE]),
-    ("FX", "fx", None),
-    ("Lighting", "lighting", None),
+    ("Modeling", "model", BUILDS_EVERYTHING),
+    ("Rigging", "rig", BUILDS_EVERYTHING),
+    ("Creature", "creature", BUILDS_EVERYTHING),
+    ("LookDev", "lookDev", BUILDS_EVERYTHING),
+    ("Layout", "layout", BUILDS_EVERYTHING),
+    ("Animation", "anim", BUILDS_EVERYTHING),
+    ("FX", "fx", BUILDS_EVERYTHING),
+    ("Lighting", "lighting", BUILDS_EVERYTHING),
 ]
 BUILD_FOR_LABELS = dict((code, label) for label, code, _ in BUILD_FOR)
 
@@ -309,11 +308,15 @@ def list_shot_cameras(h_root, film, seq, shot):
     return [_finish(entry)] if entry["files"] else []
 
 
-# A Final animation publish's caches (publishTool_anim): one Alembic per
-# item, in the shot's cache\alembic\anim\<login>\ (cache\alembic\<login>\
-# before 2026-11-23), with a .json beside it saying
-# what it is.
-CACHE_RE = re.compile(r"^(?P<item>.+)_anim_v(?P<version>\d{3})\.abc$", re.IGNORECASE)
+# A Final animation publish's caches (publishTool_anim): one file per item
+# and format ticked, in the shot's cache\<format folder>\anim\<login>\
+# (Alembic only: cache\alembic\<login>\ before 2026-11-23), with a .json
+# beside it saying what it is. ABC is referenced, USD loaded as a USD stage,
+# FBX (skeleton + skin) referenced (user, 2026-11-25).
+CACHE_FORMATS = ("abc", "usd", "fbx")
+CACHE_FOLDERS = {"abc": "alembic", "usd": "usd", "fbx": "fbx"}   # publishTool_anim.CACHE_FOLDER
+CACHE_RE = re.compile(r"^(?P<item>.+)_anim_v(?P<version>\d{3})\.(?P<ext>abc|usd|fbx)$",
+                      re.IGNORECASE)
 
 
 def _read_json(path):
@@ -324,19 +327,24 @@ def _read_json(path):
         return None
 
 
-def list_shot_caches(h_root, film, seq, shot):
-    """The shot's published animation caches on the H drive (everyone's),
-    one entry per item shaped like list_published()'s, plus 'kind':
-    'cache', 'cache_info': {vid: the .json beside it}. asset_type is the
-    cached asset's type ('shot' for something made in the shot), code
-    'cache'. Caches from before per-person folders, or without their .json
-    (published before 2026-10-28), are left out: republish them."""
-    caches = os.path.join(shot_folder(h_root, film, seq, shot), "cache", "alembic")
-    groups = {}
-    if not os.path.isdir(caches):
-        return []
-    # cache\alembic\<dept>\<login>\ (spec §4g) and, before 2026-11-23,
-    # cache\alembic\<login>\.
+def cache_format(published):
+    """'abc', 'usd' or 'fbx' for a cache entry (None for anything else)."""
+    if published.get("kind") != "cache":
+        return None
+    return published.get("format") or "abc"
+
+
+def cache_asset_name(item, fmt):
+    """A cache entry's asset name: the item for an Alembic (as before
+    2026-11-25, so scenes built then still match), item_usd / item_fbx for
+    the others, so each format is its own row, namespace and record."""
+    return item if fmt == "abc" else "%s_%s" % (item, fmt)
+
+
+def _cache_people(caches, fmt):
+    """[(login, folder)] under a shot's cache\\<format folder>: the
+    per-department folders (spec §4g) and, for Alembic, the per-person
+    ones from before 2026-11-23."""
     people = []
     for name in sorted(os.listdir(caches)):
         folder = os.path.join(caches, name)
@@ -345,26 +353,64 @@ def list_shot_caches(h_root, film, seq, shot):
         if name.lower() in [d.lower() for d in pub.DEPT_FOLDERS]:
             people += [(login, os.path.join(folder, login)) for login in sorted(os.listdir(folder))
                        if os.path.isdir(os.path.join(folder, login))]
-        else:
+        elif fmt == "abc":
             people.append((name, folder))
-    for login, folder in people:
-        for name in os.listdir(folder):
-            if not name.lower().startswith(shot.lower() + "_"):
-                continue
-            m = CACHE_RE.match(name[len(shot) + 1:])
-            path = os.path.join(folder, name)
-            info = _read_json(os.path.splitext(path)[0] + ".json") if m else None
-            if not info:
-                continue
-            stamp = info.get("asset") or {}
-            asset_type = stamp.get("assetType") or "shot"
-            key = (asset_type, info.get("item") or m.group("item"))
-            entry = groups.setdefault(key, {
-                "kind": "cache", "asset_type": key[0], "asset": key[1], "code": CACHE_CODE,
-                "versions": {}, "info": {}, "cache_info": {}})
-            _add_version(entry, login.lower(), int(m.group("version")), path)
-            entry["cache_info"][version_id(login.lower(), int(m.group("version")))] = info
-    return [_finish(groups[k]) for k in sorted(groups, key=lambda k: (k[0], k[1].lower()))]
+    return people
+
+
+def list_shot_caches(h_root, film, seq, shot):
+    """The shot's published animation caches on the H drive (everyone's),
+    one entry per item and format, shaped like list_published()'s, plus
+    'kind': 'cache', 'format': 'abc' / 'usd' / 'fbx', 'item', 'label' (what
+    the Item dropdown shows, e.g. scout_ABC), 'cache_info': {vid: the
+    .json beside it}. asset_type is the cached asset's type ('shot' for
+    something made in the shot), code 'cache'. Caches from before
+    per-person folders, or without their .json (published before
+    2026-10-28), are left out: republish them."""
+    groups = {}
+    for fmt in CACHE_FORMATS:
+        caches = os.path.join(shot_folder(h_root, film, seq, shot), "cache", CACHE_FOLDERS[fmt])
+        if not os.path.isdir(caches):
+            continue
+        for login, folder in _cache_people(caches, fmt):
+            for name in os.listdir(folder):
+                if not name.lower().startswith(shot.lower() + "_"):
+                    continue
+                m = CACHE_RE.match(name[len(shot) + 1:])
+                if not m or m.group("ext").lower() != fmt:
+                    continue
+                path = os.path.join(folder, name)
+                info = _read_json(os.path.splitext(path)[0] + ".json")
+                if not info:
+                    continue
+                stamp = info.get("asset") or {}
+                item = info.get("item") or m.group("item")
+                key = (stamp.get("assetType") or "shot", item, fmt)
+                entry = groups.setdefault(key, {
+                    "kind": "cache", "asset_type": key[0], "asset": cache_asset_name(item, fmt),
+                    "code": CACHE_CODE, "format": fmt, "item": item,
+                    "stamp_asset": stamp.get("asset") or item,
+                    "versions": {}, "info": {}, "cache_info": {}})
+                _add_version(entry, login.lower(), int(m.group("version")), path)
+                entry["cache_info"][version_id(login.lower(), int(m.group("version")))] = info
+    found = [_finish(groups[k]) for k in sorted(
+        groups, key=lambda k: (k[0], k[1].lower(), CACHE_FORMATS.index(k[2])))]
+    label_caches(found)
+    return found
+
+
+def label_caches(caches):
+    """What the Item dropdown calls each cache (user, 2026-11-25): the
+    cached asset and the format, scout_ABC, with no shot or rig in it; the
+    animator's item name (scout1_ABC, scout2_ABC) when two items share an
+    asset."""
+    assets = {}
+    for c in caches:
+        assets.setdefault((c["stamp_asset"], c["format"]), set()).add(c["item"])
+    for c in caches:
+        name = c["stamp_asset"] if len(assets[(c["stamp_asset"], c["format"])]) == 1 \
+            else c["item"]
+        c["label"] = "%s_%s" % (name, c["format"].upper())
 
 
 def _camera_map_format(path):
@@ -868,6 +914,8 @@ def scene_version(shot_dir, published):
         node, vid = shot_camera((published.get("from_shot") or (None, published["asset"]))[1])
         return (vid or "") if node else None
     stage = stage_of(published)
+    if stage and cache_format(published):
+        return cache_version_id(_absolute(stage[2])) or ""
     if stage:
         m = USD_RE.match(os.path.basename(_absolute(stage[2])))
         return version_id(m.group("login").lower(), int(m.group("version"))) if m else ""
@@ -926,7 +974,11 @@ def build_asset(shot_dir, published, vid, department=None, usd=False, replace=Fa
     DNA nodes can't read $PIPE_SCRATCH). A cache also gets its look, picked
     by the department building (apply_look). usd: load a model's USD
     export as a USD stage instead (spec §4h); replace: allow switching an
-    asset between a Maya reference and a USD stage (the other is removed)."""
+    asset between a Maya reference and a USD stage (the other is removed).
+    A USD cache is always a USD stage, wearing the shaders it was published
+    with (user, 2026-11-25)."""
+    if cache_format(published) == "usd":
+        return _build_usd_cache(shot_dir, published, vid)
     if usd:
         return _build_usd(shot_dir, published, vid, replace)
     done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
@@ -1979,16 +2031,18 @@ def reference_into_scene(path, namespace):
 
 
 def reference_cache(path, namespace):
-    """Reference an animation cache (Alembic) into the open scene beside the
-    live rig (user, 2026-10-28: Animation builds caches "occasionally to
-    compare changes"): its own namespace (scout_cache:) and group
-    (scout_cache_GRP), and display type Reference so it shows shaded but
-    can't be selected or edited by accident."""
-    if not cmds.pluginInfo("AbcImport", query=True, loaded=True):
-        cmds.loadPlugin("AbcImport", quiet=True)
+    """Reference an animation cache (Alembic, or FBX: user 2026-11-25) into
+    the open scene beside the live rig (user, 2026-10-28: Animation builds
+    caches "occasionally to compare changes"): its own namespace
+    (scout_cache:) and group (scout_cache_GRP), and display type Reference
+    so it shows shaded but can't be selected or edited by accident."""
+    fbx = path.lower().endswith(".fbx")
+    plugin = "fbxmaya" if fbx else "AbcImport"
+    if not cmds.pluginInfo(plugin, query=True, loaded=True):
+        cmds.loadPlugin(plugin, quiet=True)
     free_namespace(namespace)
     group = namespace + "_GRP"
-    cmds.file(path, reference=True, type="Alembic", namespace=namespace,
+    cmds.file(path, reference=True, type="FBX" if fbx else "Alembic", namespace=namespace,
               mergeNamespacesOnClash=False, groupReference=True, groupName=group)
     group = cmds.ls(group, long=True) or cmds.ls("*:" + group, long=True)
     if group:
@@ -2272,8 +2326,8 @@ def set_stage_source(transform, shape, shot_layer, source_var):
 
 def stage_of(published):
     """(transform, shape, file path as written) of the USD stage Build
-    loaded for this asset, or None."""
-    if not can_load_usd(published):
+    loaded for this asset (or USD cache), or None."""
+    if not (can_load_usd(published) or cache_format(published) == "usd"):
         return None
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     for transform, shape, written in usd_stages():
@@ -2405,6 +2459,52 @@ def _build_usd(shot_dir, published, vid, replace=False):
         os.path.basename(m) for m in missing)) if missing else None
     replaced = previous if previous and not pub._same_path(previous, dest) else None
     return done, warning, replaced
+
+
+def cache_version_id(path):
+    """The version id (login/v###) of a cache file, from its folder
+    (cache\\<format>\\<dept>\\<login>\\) and name; None if it isn't one."""
+    m = CACHE_RE.match(os.path.basename(path or ""))
+    return version_id(os.path.basename(os.path.dirname(path)).lower(),
+                      int(m.group("version"))) if m else None
+
+
+def _build_usd_cache(shot_dir, published, vid):
+    """A USD cache (user, 2026-11-25): pulled into scratch's publish folder
+    and read by a USD stage at its $PIPE_SCRATCH path, in its pipe group
+    (<item>_usd_cache_GRP), like a model loaded as USD (spec §4h) but with
+    no edit layers: a cache is never edited. A stage Build loaded before is
+    pointed at the new version. Returns (done, warning, replaced) like
+    _build_asset."""
+    if vid not in published["versions"]:
+        raise BuildError("%s of %s %s isn't on the H drive."
+                         % (vid, published["asset"], published["code"]))
+    load_usd_plugin()
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    entry = read_manifest(shot_dir).get(key)
+    previous = shared_path(shot_dir, entry) if entry else None
+    label = version_label(published, vid, mark_latest=False)
+    stage = stage_of(published)
+    dest = pull(shot_dir, published, vid)
+    pipeEnv.set_from_path(shot_dir)
+    file_path = pipeEnv.to_var_path(dest)
+    group_name = pub.pipe_group_name(published["asset"], published["code"])
+    if stage:
+        transform, shape, written = stage
+        usd_group(transform, group_name)
+        if written != file_path:
+            cmds.setAttr(shape + ".filePath", file_path, type="string")
+            old = cache_version_id(_absolute(written))
+            done = ["%s -> %s" % (version_label(published, old, False)
+                                  if old in published["info"] else "USD", label)]
+        else:
+            done = ["already up to date"]
+    else:
+        transform = make_stage(namespace_for(published["asset"], published["code"]), key,
+                               file_path, group_name)
+        done = ["%s loaded as a USD stage (%s)" % (label, transform.split("|")[-1])]
+    replaced = previous if previous and not pub._same_path(previous, dest) else None
+    return done, None, replaced
 
 
 # ---------------------------------------------------------------------------

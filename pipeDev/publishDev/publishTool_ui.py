@@ -252,7 +252,7 @@ def _cell(text, colour=None):
 
 # The publish list's columns: ..., Publishes as, then a tick per format for
 # other software (user, 2026-10-30): Modeling rows, and an Animation row's
-# caches (ABC, USD; user, 2026-11-24).
+# caches (ABC, USD; user, 2026-11-24; FBX 2026-11-25).
 OUTPUT_COLUMN = 5
 
 
