@@ -333,6 +333,46 @@ def place_label(place):
     return "%s %s" % (place["kind"], place["name"])
 
 
+# ---------------------------------------------------------------------------
+# Versioning up the working scene (renderSub 2026-11-20, Publish 2026-11-24):
+# a scene with changes is offered a save as its next version, and the artist
+# carries on in that one; an unchanged scene goes as it is, so re-publishes
+# and re-renders don't pile up working files. Shared by Publish and renderSub.
+# ---------------------------------------------------------------------------
+
+_NUMBERED = re.compile(r"^(.*?)(\d+)$")
+
+
+def version_up_path(path):
+    """The next free version of a working file: NFW_SEQ010_170_001.ma ->
+    NFW_SEQ010_170_002.ma (past any number already in the folder); a name
+    with no number gets _001."""
+    folder, name = os.path.split(path)
+    stem, ext = os.path.splitext(name)
+    m = _NUMBERED.match(stem)
+    base, width = (m.group(1), len(m.group(2))) if m else (stem + "_", 3)
+    pattern = re.compile(r"^%s(\d+)%s$" % (re.escape(base), re.escape(ext)), re.IGNORECASE)
+    try:
+        used = [int(p.group(1)) for p in map(pattern.match, os.listdir(folder or ".")) if p]
+    except OSError:
+        used = []
+    number = max(used + [int(m.group(2)) if m else 0]) + 1
+    return os.path.join(folder, "%s%0*d%s" % (base, width, number, ext))
+
+
+def save_version_up():
+    """Save the open scene as its next version and carry on in that one.
+    Returns the new path."""
+    scene = cmds.file(query=True, sceneName=True)
+    if not scene:
+        raise PublishError("Save the scene first (File > Save Scene As), then try again.")
+    path = version_up_path(os.path.normpath(scene))
+    kind = "mayaBinary" if path.lower().endswith(".mb") else "mayaAscii"
+    cmds.file(rename=path.replace("\\", "/"))
+    cmds.file(save=True, type=kind)
+    return os.path.normpath(cmds.file(query=True, sceneName=True))
+
+
 def project_mismatch():
     """{"scene": place, "project": place} when the open scene is in one shot
     or asset and the Maya project is set to another, else None. Untitled

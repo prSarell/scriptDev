@@ -1009,23 +1009,40 @@ class PublishToolUI(QtWidgets.QDialog):
             self.status.show_message("Not published: the open scene isn't in your Maya "
                                      "project.", ok=False)
             return
+        scene = cmds.file(query=True, sceneName=True)
         if cmds.file(query=True, modified=True):
+            # Changes: offer the next version, like renderSub (user,
+            # 2026-11-24); saving over stays as the artist's choice. An
+            # unchanged scene publishes as it is, with no new working file.
+            next_name = os.path.basename(api.version_up_path(scene)) if scene else None
             box = QtWidgets.QMessageBox(self)
             box.setIcon(QtWidgets.QMessageBox.Question)
             box.setWindowTitle("Unsaved changes")
             box.setText("Your scene has unsaved changes.\n"
-                        "Save it now and publish the saved version?")
-            save = box.addButton("Save and Publish", QtWidgets.QMessageBox.AcceptRole)
+                        + ("Save it as %s and publish that version?" % next_name if next_name
+                           else "Save it now and publish the saved version?"))
+            up = box.addButton("Version Up and Publish", QtWidgets.QMessageBox.AcceptRole) \
+                if next_name else None
+            save = box.addButton("Save Over and Publish" if next_name else "Save and Publish",
+                                 QtWidgets.QMessageBox.AcceptRole)
             box.addButton(QtWidgets.QMessageBox.Cancel)
-            box.setDefaultButton(save)
+            box.setDefaultButton(up or save)
             box.exec()
-            if box.clickedButton() != save:
+            clicked = box.clickedButton()
+            if clicked is None or clicked not in [b for b in (up, save) if b]:
                 # Never a silent no-op (user, 2026-10-26).
                 self.status.show_message("Not published: the scene has unsaved changes. "
-                                         "Save it, or press Publish and pick Save and Publish.",
+                                         "Save it, or press Publish and pick a save.",
                                          ok=False)
                 return
-            cmds.file(save=True)
+            if clicked is up:
+                try:
+                    api.save_version_up()
+                except (api.PublishError, RuntimeError) as e:
+                    self.status.show_message("Not published: %s" % e, ok=False)
+                    return
+            else:
+                cmds.file(save=True)
         try:
             self._publish_saved()
         finally:

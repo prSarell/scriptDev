@@ -564,37 +564,9 @@ def render_command(info):
 # renders as it is, so re-renders don't pile up working files)
 # ---------------------------------------------------------------------------
 
-_NUMBERED = re.compile(r"^(.*?)(\d+)$")
-
-
-def version_up_path(path):
-    """The next free version of a working file: NFW_SEQ010_170_001.ma ->
-    NFW_SEQ010_170_002.ma (past any number already in the folder); a name
-    with no number gets _001."""
-    folder, name = os.path.split(path)
-    stem, ext = os.path.splitext(name)
-    m = _NUMBERED.match(stem)
-    base, width = (m.group(1), len(m.group(2))) if m else (stem + "_", 3)
-    pattern = re.compile(r"^%s(\d+)%s$" % (re.escape(base), re.escape(ext)), re.IGNORECASE)
-    try:
-        used = [int(p.group(1)) for p in map(pattern.match, os.listdir(folder or ".")) if p]
-    except OSError:
-        used = []
-    number = max(used + [int(m.group(2)) if m else 0]) + 1
-    return os.path.join(folder, "%s%0*d%s" % (base, width, number, ext))
-
-
-def save_version_up():
-    """Save the open scene as its next version and carry on in that one.
-    Returns the new path."""
-    scene = cmds.file(query=True, sceneName=True)
-    if not scene:
-        raise PublishError("Save the scene first: renderSub renders the saved file.")
-    path = version_up_path(os.path.normpath(scene))
-    kind = "mayaBinary" if path.lower().endswith(".mb") else "mayaAscii"
-    cmds.file(rename=path.replace("\\", "/"))
-    cmds.file(save=True, type=kind)
-    return os.path.normpath(cmds.file(query=True, sceneName=True))
+# Shared with Publish (2026-11-24): both number working files the same way.
+version_up_path = pub.version_up_path
+save_version_up = pub.save_version_up
 
 
 def needs_save(changed=False):

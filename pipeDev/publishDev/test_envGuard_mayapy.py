@@ -204,13 +204,26 @@ del asked[:]; answers[:] = ["Cancel"]
 w._publish()
 check("unsaved + Cancel: not published, and the status says why",
       not calls and "Not published" in w.status._text)
-answers[:] = ["Save and Publish"]
+check("... the question offers the next version by name (user, 2026-11-24)",
+      "fieldB_002.ma" in asked[-1])
+answers[:] = ["Save Over and Publish"]
 w._publish()
-check("Save and Publish: saved, then published (cancelled in review)", calls == [1])
+check("Save Over and Publish: saved over, then published (cancelled in review)",
+      calls == [1] and os.path.basename(cmds.file(query=True, sceneName=True)) == "fieldB_001.ma")
 check("... and the scene isn't left looking changed", not cmds.file(query=True, modified=True))
 del asked[:]
 w._publish()
-check("Publish again: no save question, publish runs", not asked and calls == [1, 1])
+check("Publish again (no changes): no save question, no new version, publish runs",
+      not asked and calls == [1, 1]
+      and os.path.basename(cmds.file(query=True, sceneName=True)) == "fieldB_001.ma")
+cmds.file(modified=True)
+answers[:] = ["Version Up and Publish"]
+w._publish()
+now = cmds.file(query=True, sceneName=True)
+check("Version Up and Publish: saved as fieldB_002.ma, carries on in it, then published",
+      calls == [1, 1, 1] and os.path.basename(now) == "fieldB_002.ma"
+      and os.path.isfile(now) and os.path.isfile(dest))
+check("... and the scene isn't left looking changed", not cmds.file(query=True, modified=True))
 
 print("%d/%d passed" % (sum(ok), len(ok)))
 maya.standalone.uninitialize()
