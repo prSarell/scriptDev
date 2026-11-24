@@ -262,8 +262,8 @@ hand. One T7 session could cover most of it.
       2026-10-28): h_sync applied on the T7 2026-10-28 (363 working +
       3648 Studio Library folders; first apply since 2026-10-21). Set
       Project on SEQ010_140 and
-      check your `scenes\lighting\e131988\` etc. Publish Animation (Final
-      approved) and check the caches land in `cache\alembic\e131988\`.
+      check your `scenes\lighting\e131988\` etc. Publish Animation with
+      ABC ticked and check the caches land in `cache\alembic\anim\e131988\`.
 - [ ] **Asset department Tasks** (spec "Publish thumbnail borders"): run
       `python desktopDev/asset_tasks.py --project 157 --apply` (61 Tasks,
       dry run checked 2026-10-28). Until then asset publishes stay
@@ -292,11 +292,18 @@ hand. One T7 session could cover most of it.
       Set Project to the scene's. Set Project to another shot with the
       Project Tool: Build into follows. Open a rig scene: Asset | Rigging,
       the same Build button. Keys from: pick another shot, its keys listed.
+- [ ] **Animation caches are ticks** (spec §4k, built 2026-11-24): in a
+      shot, add your animated items for Animation, tick **ABC** and **USD**
+      on the row ("Publishes as" should end "+ ABC + USD cache"), publish.
+      Check the thumbnail is green in ShotGrid, and the caches are in
+      `cache\alembic\anim\<login>\` and `cache\usd\anim\<login>\`. Open a
+      USD cache in Gaffer or as a Maya stage: does it play, with shaders?
+      Then publish with no ticks: blue, no caches.
 - [ ] **Shaders on caches** (built 2026-10-28, spec "Shaders on caches"):
       republish Scout's rig (it gets `_look.ma` / `_look.json` beside it)
       and a textured model; check the look files open with only shaders
       in them. Rebuild the rig into SEQ010_140, publish Animation with
-      the Final approved, then in an Animation scene tick Scout's cache
+      ABC ticked (§4k), then in an Animation scene tick Scout's cache
       row (it's in the list by itself), Build: the cache sits in `scoutrig_cache_GRP` (Reference display)
       beside the rig, wearing the rig's shaders and textures. Does Scout's
       MetaHuman face come through? Does the Reference display suit

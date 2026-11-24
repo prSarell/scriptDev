@@ -45,7 +45,7 @@ check("group with a light AND geometry stays 'made in the shot'", by["mixedgrp"]
 check("label says light", by["keyLight"]["label"] == "keyLight (light, made in the shot, keyed)")
 
 plan = anim.plan_anim(scene, H, SC, items)
-plan["stage"] = anim.FINAL          # Final: models get caches, lights never do
+plan["stage"], plan["caches"] = anim.FINAL, ["abc"]   # caches ticked: models get them, lights never do
 files = plan["item_files"]
 written = anim.write_anim(items, plan, 1, 10, scene)
 check("light file for each light item", all(os.path.isfile(files[n]["light"]) for n in ("keyLight", "fill", "lightsgrp")))

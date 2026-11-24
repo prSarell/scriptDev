@@ -251,13 +251,21 @@ def _cell(text, colour=None):
 
 
 # The publish list's columns: ..., Publishes as, then a tick per format for
-# other software (user, 2026-10-30), Modeling rows only.
+# other software (user, 2026-10-30): Modeling rows, and an Animation row's
+# caches (ABC, USD; user, 2026-11-24).
 OUTPUT_COLUMN = 5
 
 
+def _is_anim_cache_row(row):
+    return row["code"] == anim.ANIM_CODE and row.get("publish_for") == anim.ANIM_CODE
+
+
 def _output_cell(row, key):
-    """A format's tick for a Modeling row (environments included), else -."""
-    if row["code"] not in (api.MODEL_CODE, env.ENV_CODE):
+    """A format's tick for a Modeling row (environments included) or an
+    Animation row's cache formats, else -."""
+    cache_row = _is_anim_cache_row(row)
+    if not (row["code"] in (api.MODEL_CODE, env.ENV_CODE)
+            or (cache_row and key in anim.CACHE_FORMATS)):
         item = _cell("-", "#666666")
         item.setFlags(QtCore.Qt.ItemIsEnabled)      # nothing to tick
         return item
@@ -265,8 +273,10 @@ def _output_cell(row, key):
     item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsUserCheckable)
     item.setCheckState(QtCore.Qt.Checked if key in row.get("outputs", [])
                        else QtCore.Qt.Unchecked)
-    item.setToolTip("Also publish %s, for other software. This asset remembers it."
-                    % outputs.LABELS[key])
+    item.setToolTip(
+        "Also publish a %s cache of it (for lighting, FX, other software).\n"
+        "Any cache makes this a Final publish." % outputs.LABELS[key] if cache_row else
+        "Also publish %s, for other software. This asset remembers it." % outputs.LABELS[key])
     return item
 
 
@@ -328,7 +338,7 @@ class PublishToolUI(QtWidgets.QDialog):
         self.picker = picker.TargetPicker(PICKER_DEPARTMENTS, self._items_for)
         self.picker.dept_combo.setToolTip(
             "Layout: publishes the camera and what's selected; never caches.\n"
-            "Animation: the same, plus caches when your last publish was approved for Final.\n"
+            "Animation: the same; tick ABC and/or USD on its row for caches (a Final publish).\n"
             "Ask for approval in the notes (e.g. \"please approve for lighting\").\n"
             "Environment: this scene's environment_SET (landscape, buildings, sky).")
         self.picker.add_clicked.connect(self._add_row)
@@ -611,6 +621,8 @@ class PublishToolUI(QtWidgets.QDialog):
                 elif row["code"] == anim.ANIM_CODE:
                     files = plan["item_files"][item["name"]]
                     settings = anim.carries_settings(item)
+                    caches = ([] if item["kind"] == anim.LIGHT_KIND else
+                              anim.cache_formats(stage, row.get("outputs")))
                     text = (os.path.basename(files["keys"]) + "  + map" if item["animated"]
                             else os.path.basename(files["map"]) + "  (unkeyed settings)"
                             if settings else "in the full shot file only (no keys)")
@@ -618,8 +630,9 @@ class PublishToolUI(QtWidgets.QDialog):
                         ["Full shot file: " + plan["dest"]] +
                         ([files["keys"], files["map"]] if item["animated"] else
                          [files["map"]] if settings else []) +
-                        (["If the shot's Final is approved, also: " + files["cache"]]
-                         if stage == anim.ANIM_CODE else []))
+                        [files["caches"][fmt][0] for fmt in caches])
+                    if caches:
+                        text += "  + %s cache" % " + ".join(f.upper() for f in caches)
                 self.table.setItem(r, 4, _cell(text))
                 self.table.item(r, 4).setToolTip(dest)
             except api.PublishError as e:
@@ -654,6 +667,8 @@ class PublishToolUI(QtWidgets.QDialog):
             wanted = set(row.get("outputs", []))
             (wanted.add if item.checkState() == QtCore.Qt.Checked else wanted.discard)(key)
             row["outputs"] = [k for k in outputs.FORMAT_KEYS if k in wanted]
+            if _is_anim_cache_row(row):     # "Publishes as" names the caches
+                QtCore.QTimer.singleShot(0, self._render_table)
             return
         if item.column() != 0:
             return
@@ -1113,12 +1128,13 @@ class PublishToolUI(QtWidgets.QDialog):
                         plan = anim.publish_anim(scene, *self._roots(),
                                                  objects=row["objects"], notes=notes,
                                                  publish_for=row["publish_for"],
-                                                 review=review, camera=row.get("camera"))
-                        label += {
-                            anim.FINAL: " (Final approved: caches made)",
-                            anim.ANIMATION: " (no caches: they're made when the shot's last "
-                                            "publish is approved for Final)",
-                        }.get(plan["stage"], "")
+                                                 review=review, camera=row.get("camera"),
+                                                 caches=row.get("outputs"))
+                        if plan.get("caches"):
+                            label += " (Final: %s caches)" % " + ".join(
+                                f.upper() for f in plan.get("caches"))
+                        elif plan["stage"] == anim.ANIMATION:
+                            label += " (no caches: tick ABC or USD on the row for them)"
                     else:
                         plan = api.publish(scene, *self._roots(), code=row["code"],
                                            frame_count=frames, notes=notes,

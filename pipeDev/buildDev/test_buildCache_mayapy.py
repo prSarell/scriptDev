@@ -93,7 +93,7 @@ cmds.file(rename=anim_scene); cmds.file(save=True, type="mayaAscii")
 def publish_final():
     items = anim.classify([ctl])
     p = anim.plan_anim(anim_scene, H, SC, items, anim.ANIM_CODE)
-    p["stage"] = anim.FINAL
+    p["stage"], p["caches"] = anim.FINAL, ["abc"]
     anim.write_anim(items, p, 1, 10, anim_scene)
     return items[0], p
 

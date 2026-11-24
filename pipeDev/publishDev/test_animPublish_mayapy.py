@@ -101,6 +101,7 @@ api.task_on = lambda shot, name: {"type": "Task", "id": TASKS[name.lower()], "co
 h_scenes = os.path.join(H, *shot_rel, "scenes", "anim", "scout")
 h_layout = os.path.join(H, *shot_rel, "scenes", "layout", "scout")
 caches = os.path.join(H, *shot_rel, "cache", "alembic", "anim", "scout")   # per person
+usd_caches = os.path.join(H, *shot_rel, "cache", "usd", "anim", "scout")
 
 
 def frames_left():
@@ -111,14 +112,14 @@ def listing(folder):
     return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
 
 
-# -- nothing approved: still publishes (iterative), no caches --------------
+# -- no cache ticked: publishes (iterative), no caches ----------------------
 plan = anim.publish_anim(scene, H, SC, objs)
 names = listing(h_scenes)
-check("not approved: publishes anyway, full file + keys/map for keyed items", names == [
+check("no caches ticked: full file + keys/map for keyed items", names == [
     "EAP_010_010_scout_anim_v001.ma",
     "EAP_010_010_scout_backpack_anim_v001.json", "EAP_010_010_scout_backpack_anim_v001.ma",
     "EAP_010_010_scout_ball_anim_v001.json", "EAP_010_010_scout_ball_anim_v001.ma"])
-check("not approved: no caches", not listing(caches) and plan["stage"] == "animation")
+check("no caches ticked: no caches", not listing(caches) and plan["stage"] == "animation")
 check("every publish makes a ShotGrid Version", plan["sg_version"] == {"type": "Version", "id": 55})
 m = json.load(open(os.path.join(h_scenes, "EAP_010_010_scout_backpack_anim_v001.json")))
 check("keys map: names without namespace, stamp and stage recorded",
@@ -128,18 +129,20 @@ text = open(os.path.join(h_scenes, "EAP_010_010_scout_backpack_anim_v001.ma")).r
 check("keys file holds the curve", "animCurveTL" in text and "backpack__backPack_geo_translateX" in text)
 check("Animation Version goes on the Final task (for approval)",
       ("Version", 55, {"sg_task": {"type": "Task", "id": 12}}) in updates)
-approvals = {"blocking": {"type": "Task", "id": 11}}
+approvals = {"final": {"type": "Task", "id": 12}}
 plan2 = anim.publish_anim(scene, H, SC, objs)
-check("an approved Blocking doesn't trigger caches", not listing(caches) and plan2["stage"] == "animation")
+check("an approved Final no longer triggers caches (it's the tick)",
+      not listing(caches) and plan2["stage"] == "animation")
 names = listing(h_scenes)
 check("scene untouched: no leftover curve copies", not cmds.ls("*__*", type="animCurve"))
 check("no frames left on scratch", not frames_left())
 check("all published files read-only", all(not os.access(os.path.join(h_scenes, n), os.W_OK) for n in names))
 
-# -- approved Final: also an Alembic per item -----------------------------
-approvals = {"blocking": {"type": "Task", "id": 11}, "final": {"type": "Task", "id": 12}}
-plan = anim.publish_anim(scene, H, SC, objs)
-check("approved Final: the republish is final", plan["stage"] == "final" and plan["version"] == 3)
+# -- ABC + USD ticked: a cache per item in each, a Final publish -----------
+approvals = {}
+plan = anim.publish_anim(scene, H, SC, objs, caches=["usd", "abc"])
+check("caches ticked: the publish is final", plan["stage"] == "final" and plan["version"] == 3
+      and plan["caches"] == ["abc", "usd"] and plan["final"])
 check("final: one Alembic per item, the static one too, each with its .json", listing(caches) == [
     "EAP_010_010_backpack_anim_v003.abc", "EAP_010_010_backpack_anim_v003.json",
     "EAP_010_010_ball_anim_v003.abc", "EAP_010_010_ball_anim_v003.json",
@@ -147,7 +150,26 @@ check("final: one Alembic per item, the static one too, each with its .json", li
 info = json.load(open(os.path.join(caches, "EAP_010_010_backpack_anim_v003.json")))
 check("cache .json: the item and the asset version it came from",
       info["item"] == "backpack" and info["kind"] == "model" and info["version"] == 3
-      and info["asset"]["sgAssetId"] == 1577 and info["asset"]["version"] == 8)
+      and info["asset"]["sgAssetId"] == 1577 and info["asset"]["version"] == 8
+      and info["format"] == "abc")
+check("USD: one per item, each with its .json", listing(usd_caches) == [
+    "EAP_010_010_backpack_anim_v003.json", "EAP_010_010_backpack_anim_v003.usd",
+    "EAP_010_010_ball_anim_v003.json", "EAP_010_010_ball_anim_v003.usd",
+    "EAP_010_010_rock_anim_v003.json", "EAP_010_010_rock_anim_v003.usd"])
+check("USD .json says usd", json.load(open(os.path.join(
+    usd_caches, "EAP_010_010_ball_anim_v003.json")))["format"] == "usd")
+from pxr import Usd, UsdGeom
+stage = Usd.Stage.Open(os.path.join(usd_caches, "EAP_010_010_ball_anim_v003.usd"))
+balls = [p for p in stage.Traverse() if p.IsA(UsdGeom.Mesh)]
+y = [UsdGeom.BBoxCache(t, ["default", "render"]).ComputeWorldBound(stage.GetPseudoRoot())
+     .ComputeAlignedRange().GetMax()[1] for t in (1, 10)]
+check("USD ball: a mesh, frames 1-10, moves 3 units",
+      balls and stage.GetStartTimeCode() == 1 and stage.GetEndTimeCode() == 10
+      and abs((y[1] - y[0]) - 3) < 0.05)
+rock = Usd.Stage.Open(os.path.join(usd_caches, "EAP_010_010_rock_anim_v003.usd"))
+check("USD static rock: one frame", rock.GetStartTimeCode() == rock.GetEndTimeCode())
+check("USD caches read-only", not os.access(os.path.join(
+    usd_caches, "EAP_010_010_ball_anim_v003.usd"), os.W_OK))
 cmds.file(new=True, force=True)
 cmds.loadPlugin("AbcImport", quiet=True)
 cmds.AbcImport(os.path.join(caches, "EAP_010_010_ball_anim_v003.abc"), mode="import")
@@ -169,27 +191,28 @@ def flaky(item, path, s, e):
 
 
 anim.export_cache = flaky
-before = listing(h_scenes), listing(caches)
+before = listing(h_scenes), listing(caches), listing(usd_caches)
 try:
-    anim.publish_anim(scene, H, SC, objs)
+    anim.publish_anim(scene, H, SC, objs, caches=["abc", "usd"])
     check("failed publish raised", False)
 except RuntimeError:
     check("failed publish raised", True)
-check("failed publish: nothing new on the H drive", (listing(h_scenes), listing(caches)) == before)
+check("failed publish: nothing new on the H drive, USD caches too",
+      (listing(h_scenes), listing(caches), listing(usd_caches)) == before)
 check("failed publish: no frames left", not frames_left())
 anim.export_cache = real
 
 # -- Layout: same as animation, on the Layout task, never caches ----------
-approvals = {"final": {"type": "Task", "id": 12}}       # no Layout approval needed
-caches_before = listing(caches)
+caches_before = listing(caches), listing(usd_caches)
 updates[:] = []
-plan = anim.publish_anim(scene, H, SC, objs, publish_for=anim.LAYOUT_CODE)
+plan = anim.publish_anim(scene, H, SC, objs, publish_for=anim.LAYOUT_CODE, caches=["abc", "usd"])
 layout_files = [n for n in listing(h_layout) if "_layout_" in n]
 check("Layout publish: own series, full file + keys for keyed items", layout_files == [
     "EAP_010_010_scout_backpack_layout_v001.json", "EAP_010_010_scout_backpack_layout_v001.ma",
     "EAP_010_010_scout_ball_layout_v001.json", "EAP_010_010_scout_ball_layout_v001.ma",
     "EAP_010_010_scout_layout_v001.ma"])
-check("Layout publish: no caches, even with Final approved", listing(caches) == caches_before)
+check("Layout publish: no caches, even ticked",
+      (listing(caches), listing(usd_caches)) == caches_before and not plan["caches"])
 check("Layout publish: Version linked to the Layout task",
       ("Version", 55, {"sg_task": {"type": "Task", "id": 10}}) in updates)
 try:

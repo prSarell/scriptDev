@@ -66,6 +66,8 @@ each department." So:
 - **Final publish**: the same publish, plus that department's caches/outputs.
   It happens when the department's approval is in place (for shots, an
   Approved Version on the Final task, 2026-10-19).
+  **Changed 2026-11-24 for Animation:** the caches are a tick on the
+  Animation row (ABC, USD), not an approval; see §4k.
 - Approval gates nothing except those caches/outputs.
 
 The original 2026-10 plan, kept for history: once the shot is approved, the
@@ -2144,6 +2146,7 @@ The tools are developed side by side:
                   Final task. Once a Version on the Final task is Approved,
                   the next Animation publish makes the caches. Approved
                   Blocking still doesn't cache; Layout never caches.
+                  (Replaced 2026-11-24: caches are ticked, §4k.)
                 - Built 2026-10-19 (`publish_stage()` replaces the gate);
                   `test_animPublish_mayapy.py` 32/32.
               - **Camera from Animation (DECIDED 2026-10-19):** allowed,
@@ -2875,7 +2878,8 @@ The tools are developed side by side:
                    the 3 Graphic assets and Farm Equipment (no type).
                    NOT APPLIED yet.
                  - Test: `publishDev/test_thumbnailBorder_mayapy.py`.
-               - **The cache rule (DECIDED 2026-10-19):** approved
+               - **The cache rule (DECIDED 2026-10-19, REPLACED 2026-11-24
+                 by §4k: caches are ticked in Publish):** approved
                  **Blocking** = no cache; approved **Final** = cache. Told
                  apart by the Version's task (Blocking / Final tasks on
                  every shot, created 2026-10-19). Earlier note, kept for
@@ -4063,6 +4067,41 @@ Gaffer sits beside Maya, fed by files: there's no Maya plug-in.
   Arnold render). GUI run 2026-11-24: an `aiStandardSurface` arrived in
   Gaffer as `ai:surface` standard_surface with Maya's base colour, and an
   `aiAreaLight` as a light.
+
+### 4k. Animation caches are a tick in Publish — DECIDED + BUILT (2026-11-24)
+
+- **Decision (user, 2026-11-24):** "I think our original design over
+  complicated this, tying it to a shot approval in shotgrid. Instead I
+  would just like to make it a checkbox in publish options for an
+  animation publish." And: "We defo want to be able to publish as USD as
+  well as the other formats."
+- **Built:** an Animation row in the Publish list has its own **ABC** and
+  **USD** ticks, in the same format columns Modeling rows use (FBX and OBJ
+  show "-": OBJ has no animation, and FBX of a rig is a separate job).
+  Unticked by default and not remembered: each publish decides. Layout
+  rows never cache.
+- **What a tick makes:** one cache per item, the same roots as before (a
+  rig's `cache_SET`, otherwise the whole item; lights never cache); the
+  whole timeline if keyed, one frame if not; read-only; a `.json` beside
+  each cache (now with `"format"`), all or nothing with the rest of the
+  publish.
+  - ABC: `<shot>\cache\alembic\anim\<login>\<shot>_<item>_anim_v###.abc`
+    (unchanged; Build lists these).
+  - USD: `<shot>\cache\usd\anim\<login>\<shot>_<item>_anim_v###.usd`
+    (binary .usd, UVs, visibility, control curves left out, Arnold
+    shaders when MtoA is loaded, for Gaffer/Solaris).
+- **Final:** any cache ticked makes it a Final publish (green thumbnail,
+  stage `final` in the keys map, Version on the Final task). No ShotGrid
+  approval is checked for Animation any more. Camera, Layout and asset
+  publishes still read their task's newest approved Version for the green
+  border (`newest_approved`), unchanged.
+- **Not yet:** Build loading the USD caches (it lists the ABC ones), USD
+  caches to Send to Gaffer.
+- Tests: `publishDev\test_animPublish_mayapy.py` (ABC + USD per item, USD
+  ball moves 3 units over frames 1-10, static rock one frame, a failed
+  publish leaves no USD behind, Layout ignores the ticks),
+  `test_finalNotSticky_mayapy.py` (stage from the ticks, ShotGrid not
+  asked).
 
 ## 5. Context: what the existing tools assume
 

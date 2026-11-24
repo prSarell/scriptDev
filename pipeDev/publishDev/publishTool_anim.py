@@ -1,8 +1,7 @@
 """
 Publish Tool — shot animation publish (v0)
-Publishes the animation in a shot scene on scratch, after the shot has been
-approved in ShotGrid through shotSub review. No UI, so it can be tested
-under mayapy.
+Publishes the animation in a shot scene on scratch. No UI, so it can be
+tested under mayapy.
 
 Design: pipeDev/filmPipeline_spec.md §4 "Shot (animation) publish v0" and
 item 6a (all DECIDED 2026-10-15 / 2026-10-19):
@@ -11,10 +10,12 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
   (<asset>_<dept>_GRP, pipe_sgAssetId...); no stamp = made in the shot.
 - Nothing is blocked by approval (changed 2026-10-19): every Layout or
   Animation publish writes keys + the full file and makes a ShotGrid
-  Version for review; students ask for approval in the notes. When the
-  newest Version on the shot's Final task is Approved, the next Animation publish
-  also makes an Alembic cache per item (animated: whole timeline; static:
-  one frame). The newest final is the true source. Layout never caches.
+  Version for review; students ask for approval in the notes.
+- Caches are a tick, not an approval (user, 2026-11-24: tying them to the
+  shot's Final approval in ShotGrid "over complicated this"). An Animation
+  row's ABC and USD ticks make an Alembic and/or a USD cache per item
+  (animated: whole timeline; static: one frame). A publish with caches is
+  a Final publish (green thumbnail, Final task). Layout never caches.
 - One version number per publish, shared by everything in it.
 
     H drive  <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\scenes\\anim\\scout\\
@@ -23,11 +24,13 @@ item 6a (all DECIDED 2026-10-15 / 2026-10-19):
                  EAP_010_010_scout_backpack_anim_v001.json   + the map
              (a Layout publish: scenes\\layout\\scout\\; spec §4g)
              <film>\\maya\\sequences\\EAP_010\\EAP_010_010\\cache\\alembic\\anim\\scout\\
-                 EAP_010_010_backpack_anim_v001.abc       final only, per person
+                 EAP_010_010_backpack_anim_v001.abc       ABC ticked, per person
+                 EAP_010_010_backpack_anim_v001.json      what it is, for Build
+             (USD ticked: the same in cache\\usd\\anim\\scout\\, .usd + .json)
     scratch  <film>\\premiere\\shotgridMovs\\EAP_010_010.mp4  (replaced each time)
 
 Not in v0 (spec item 7): Build pulling animation back in, the camera
-fingerprint, USD, final-publish checkboxes, renaming items. Keys are the
+fingerprint, renaming items. Keys are the
 animator's own time-based curves (not baked); constraints, expressions and
 driven keys aren't carried in the keys file. Settings with no keys (a
 master control placed, a space switch) go in the map, for every published
@@ -51,7 +54,12 @@ ANIM_CODE = "anim"
 ANIM_LABEL = "Animation"
 LAYOUT_CODE = "layout"
 BLOCKING, FINAL, LAYOUT = "blocking", "final", "layout"
-ANIMATION = "animation"              # an Animation publish before any Final approval
+ANIMATION = "animation"              # an Animation publish without caches
+# The cache formats an Animation row can tick (user, 2026-11-24), in the
+# order the publish list shows them (publishTool_outputs.FORMATS keys).
+CACHE_FORMATS = ("abc", "usd")
+CACHE_EXT = {"abc": ".abc", "usd": ".usd"}
+CACHE_FOLDER = {"abc": "alembic", "usd": "usd"}
 # What a shot publish is for: the stage dropdown (user, 2026-10-19). Layout
 # publishes the same as animation, approved on the Layout task, never with
 # caches. Lighting and FX come later. (label, code, live)
@@ -330,6 +338,8 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
         # per person, like the publishes: versions are per person, so two
         # people's v003 caches can't collide; per department (spec §4g)
         "cache_folder": os.path.join(h_shot, "cache", "alembic", code, login),
+        "cache_folders": dict((fmt, os.path.join(h_shot, "cache", CACHE_FOLDER[fmt], code, login))
+                              for fmt in CACHE_FORMATS),
     })
     for key in ("keys_dest", "map_dest"):
         plan.pop(key, None)
@@ -346,28 +356,35 @@ def plan_anim(scene_path, h_root, scratch_root, items=None, publish_for=ANIM_COD
             "cache_info": os.path.join(plan["cache_folder"], "%s_%s_%s_v%03d.json"
                                        % (shot, item["name"], code, version)),
         }
+        for fmt in CACHE_FORMATS:       # {fmt: (cache, its .json)}
+            cache_base = os.path.join(plan["cache_folders"][fmt], "%s_%s_%s_v%03d"
+                                % (shot, item["name"], code, version))
+            plan["item_files"][item["name"]].setdefault("caches", {})[fmt] = (
+                cache_base + CACHE_EXT[fmt], cache_base + ".json")
         if item["kind"] == LIGHT_KIND:
             plan["item_files"][item["name"]]["light"] = os.path.join(folder, base + "_light.ma")
     return plan
 
 
-def publish_stage(sg_shot, publish_for=ANIM_CODE):
+def cache_formats(publish_for, caches):
+    """The cache formats this publish makes: what's ticked, Animation only."""
+    if publish_for != ANIM_CODE:
+        return []
+    return [fmt for fmt in CACHE_FORMATS if fmt in (caches or ())]
+
+
+def publish_stage(sg_shot, publish_for=ANIM_CODE, caches=()):
     """(stage, the Task its ShotGrid Version goes on). Nothing is blocked
     (user, 2026-10-19: iterative publishes must populate the pipe; students
-    ask for approval in the publish notes, e.g. "please approve for
-    lighting"). Only caches wait for approval:
+    ask for approval in the publish notes). Caches are the student's tick
+    (user, 2026-11-24), not a ShotGrid approval:
       Layout     -> ("layout", Layout task), never caches;
-      Animation  -> ("final", Final task) if the newest Version on the
-                    shot's Final task is Approved: this publish makes the
-                    caches; otherwise ("animation", Final task), no caches.
-                    Final doesn't stick: the publish after a final one is
-                    iterative unless its Version is approved too."""
+      Animation  -> ("final", Final task) with caches ticked, otherwise
+                    ("animation", Final task)."""
     if publish_for == LAYOUT_CODE:
         return LAYOUT, api.task_on(sg_shot, "Layout")
-    approved = api.approved_tasks(sg_shot)
-    if FINAL in approved:
-        return FINAL, dict(approved[FINAL], content="Final")
-    return ANIMATION, api.task_on(sg_shot, "Final")
+    return (FINAL if cache_formats(publish_for, caches) else ANIMATION,
+            api.task_on(sg_shot, "Final"))
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +482,35 @@ def export_cache(item, path, start, end):
     api._lock(path)
 
 
+def export_usd_cache(item, path, start, end):
+    """USD of the item, like its Alembic: the same roots, the whole
+    timeline if animated, one frame if not. Control curves are left out (a
+    rig's cache_SET holds geometry anyway); with Arnold loaded its shaders
+    go too, for USD-reading renderers (Gaffer, Solaris)."""
+    if not cmds.pluginInfo("mayaUsdPlugin", query=True, loaded=True):
+        cmds.loadPlugin("mayaUsdPlugin", quiet=True)
+    last = end if item["animated"] else start
+    options = dict(file=path.replace("\\", "/"), selection=True, frameRange=(start, last),
+                   defaultUSDFormat="usdc", exportUVs=True, exportVisibility=True,
+                   filterTypes=["nurbsCurve"])
+    if cmds.pluginInfo("mtoa", query=True, loaded=True):
+        options["jobContext"] = ["Arnold"]
+    selection = cmds.ls(selection=True)
+    try:
+        cmds.select(cache_roots(item), replace=True)
+        cmds.mayaUSDExport(**options)
+    finally:
+        if selection:
+            cmds.select(selection, replace=True)
+        else:
+            cmds.select(clear=True)
+    api._lock(path)
+
+
+# Looked up by name when publishing, so a test can swap one.
+CACHE_EXPORTERS = {"abc": "export_cache", "usd": "export_usd_cache"}
+
+
 def write_cache_info(item, files, plan, start, end, scene_path):
     """The .json beside a cache: which item and asset version it is, and
     its frames. Build lists caches by it (spec "Shaders on caches")."""
@@ -481,6 +527,7 @@ def write_cache_info(item, files, plan, start, end, scene_path):
         "source_scene": os.path.basename(scene_path),
         "roots": [r.split("|")[-1].split(":")[-1] for r in cache_roots(item)],
     }
+    info["format"] = files.get("format", "abc")
     with open(files["cache_info"], "w") as f:
         json.dump(info, f, indent=2, sort_keys=True)
     api._lock(files["cache_info"])
@@ -508,8 +555,9 @@ def write_anim(items, plan, start, end, scene_path):
             targets.append(files["map"])
         if item["kind"] == LIGHT_KIND:
             targets.append(files["light"])
-        elif plan["stage"] == FINAL:
-            targets += [files["cache"], files["cache_info"]]
+        else:
+            for fmt in plan.get("caches") or ():
+                targets += list(files["caches"][fmt])
     for path in targets:
         if os.path.exists(path):
             raise PublishError("%s already exists — try again." % path)
@@ -532,11 +580,14 @@ def write_anim(items, plan, start, end, scene_path):
             if item["kind"] == LIGHT_KIND:
                 export_light(item, files["light"])
                 written.append(files["light"])
-            elif plan["stage"] == FINAL:
-                export_cache(item, files["cache"], start, end)
-                written.append(files["cache"])
-                write_cache_info(item, files, plan, start, end, scene_path)
-                written.append(files["cache_info"])
+            else:
+                for fmt in plan.get("caches") or ():
+                    cache, cache_info = files["caches"][fmt]
+                    globals()[CACHE_EXPORTERS[fmt]](item, cache, start, end)
+                    written.append(cache)
+                    write_cache_info(item, {"cache_info": cache_info, "format": fmt},
+                                     plan, start, end, scene_path)
+                    written.append(cache_info)
     except Exception:
         for path in written:
             _writable_remove(path)
@@ -568,10 +619,13 @@ def copy_movie_for_edit(plan):
 # ---------------------------------------------------------------------------
 
 def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_for=ANIM_CODE,
-                 review=None, camera=None):
-    """Approval check -> playblast through the shot camera -> keys, full
-    file (and caches if Final) to the H drive -> ShotGrid Version on the
-    Shot, linked to its task -> movie copy for the edit.
+                 review=None, camera=None, caches=()):
+    """Playblast through the shot camera -> keys, full file (and the
+    ticked caches) to the H drive -> ShotGrid Version on the Shot, linked
+    to its task -> movie copy for the edit.
+
+    caches: the cache formats ticked ("abc", "usd"); Animation only. Any
+    cache makes it a Final publish (user, 2026-11-24).
 
     camera: the shot camera, when it's published with the same stage. It
     goes out in this publish (user, 2026-10-28: "We don't need a mov per
@@ -579,7 +633,7 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     written with its own camera version (plan["camera_plan"]), but there's
     one movie and one ShotGrid Version for everything.
 
-    Everything that can refuse (what's selected, approval, RV) happens
+    Everything that can refuse (what's selected, RV) happens
     before the playblast and any H-drive write."""
     h_root = api.resolve_root(h_root)
     api.check_script_nodes()
@@ -588,10 +642,11 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     plan["items"] = items
     plan["objects"] = [i["root"] for i in items]
     plan["sg_shot"] = cam.find_shotgrid_shot(plan, h_root)
-    plan["stage"], plan["sg_task"] = publish_stage(plan["sg_shot"], publish_for)
-    # Final = green thumbnail border (user, 2026-10-28). Animation: the
-    # caching stage. Layout: Final when the Layout task's newest Version is
-    # Approved, but still never caches.
+    plan["caches"] = cache_formats(publish_for, caches)
+    plan["stage"], plan["sg_task"] = publish_stage(plan["sg_shot"], publish_for, plan["caches"])
+    # Final = green thumbnail border (user, 2026-10-28). Animation: a
+    # publish with caches. Layout: Final when the Layout task's newest
+    # Version is Approved, but still never caches.
     plan["final"] = plan["stage"] == FINAL or (
         plan["stage"] == LAYOUT and api.newest_approved(plan["sg_shot"], plan["sg_task"]))
     cam_plan = edit_warning = None
@@ -632,7 +687,8 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
 
     lines = ["%s publish v%03d%s: %s" % (
         PUBLISH_FOR_LABELS[publish_for], plan["version"],
-        " (Final approved: caches made)" if plan["stage"] == FINAL else "",
+        " (Final: %s caches)" % " + ".join(f.upper() for f in plan["caches"])
+        if plan["caches"] else "",
         ", ".join(i["label"] for i in items))]
     if cam_plan:
         lines.append("Camera v%03d (%s, keys baked %d-%d)" % (
