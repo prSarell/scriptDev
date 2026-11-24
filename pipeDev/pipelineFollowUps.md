@@ -420,6 +420,33 @@ hand. One T7 session could cover most of it.
       the original meshes in through the `*_pgcombined` face sets (Scout
       model v001 has the model twice) and those sets must be kept. Needs its
       own publish: how to detect it, what it keeps, where it goes next, name.
+- [ ] **Send to Gaffer** (built 2026-11-24, spec §4j): in a shot scene saved
+      in `scenes\lighting\<login>`, select a character, a light and the
+      camera, press Gaffer on mpLighting. First time: locate the Arnold SDK
+      (get 7.5.2.0 to match MtoA). Gaffer opens on the new `.gfr`; check the
+      shaders, light and animation, and render. Change something in Maya,
+      send again, Carry On: Gaffer isn't opened twice; press Reload on
+      fromMaya. Start Again: a new `_v002.gfr`.
+- [ ] **Gaffer bundle**: build mpPipe (with Gaffer), on another machine drag
+      `gaffer\install.py` in: unzips to Documents\maya\gaffer, desktop
+      shortcut works; `uninstall.py` removes it but leaves film files.
+- [ ] **Gaffer renders in Scout** (OPEN, user 2026-11-24): a Gaffer
+      dispatcher that hands renders to Scout's render service.
+- [ ] Add `gaffer\` to h_sync's film structure (like `substancePainter\`).
+- [ ] **Set Project Cancel** (built 2026-11-24, spec §4e): with a shot
+      scene open, Set Project an asset and press Cancel on "Switch scene?".
+      The Maya project, Studio Library and the scene stay as they were.
+      Try Cancel on the unsaved-changes question too.
+- [ ] **Publish versions up** (built 2026-11-24, spec renderSub "Publish
+      does the same"): change your environment scene and press Publish. The
+      question names the next file (e.g. `_004.ma`); Version Up and Publish
+      saves it and you carry on in it. Publish again with no changes: no
+      question, same file. Try Save Over once too.
+- [ ] **MetaHuman face board not rendering** (built 2026-11-24, spec
+      "Rig publish group + DNA"): republish Scout's rig, Build it into a
+      shot and do a test render (renderSub). The face board shouldn't show;
+      it should still show in the viewport and its sliders should still
+      pick. The publish summary says how many meshes were set.
 - [ ] Scout v004 in a shot: can animators click-select controls inside
       the dagContainer group? Try it once with
       `selectPref -containerCentricSelection` on as well (review #9).

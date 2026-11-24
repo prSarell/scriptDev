@@ -1434,7 +1434,17 @@ The tools are developed side by side:
           - **The working file is saved and versioned up** on every render
             ("save and version up the file it is rendering from and not
             just save over"): `..._001.ma` -> `..._002.ma`, and the artist
-            carries on in the new one.
+            carries on in the new one. Only when the scene has changes
+            (2026-11-20); an unchanged scene renders as it is.
+          - **Publish does the same (2026-11-24).** User: "there were
+            changes in the file and the pipe didn't offer to version up the
+            file before publishing ... I think we need this in the publish
+            workflow too." A scene with changes is asked: **Version Up and
+            Publish** (the default, names the next file), **Save Over and
+            Publish**, or Cancel. An unchanged scene publishes as it is, no
+            question and no new file. `version_up_path` /
+            `save_version_up` now live in `publishTool_api`, shared with
+            renderSub. Test: `test_envGuard_mayapy.py`.
           - **Maya closing:** cloud renders already uploaded carry on; local
             batch renders (running or queued) are stopped ("I think the
             batch renders should probably not"), and the artist is warned in
@@ -2557,7 +2567,20 @@ The tools are developed side by side:
                      path, portable `$PIPE_SCRATCH` path), `pipe_plugins`
                      (loaded plug-ins whose node types the scene uses, with
                      versions), `pipe_rigRulesVersion`,
-                     `pipe_metahumanFaceControls`, `pipe_faceControlsAdded`.
+                     `pipe_metahumanFaceControls`, `pipe_faceControlsAdded`,
+                     `pipe_faceGuiNotRenderable`.
+                   - **MetaHuman face board doesn't render (built
+                     2026-11-24).** User: "When publishing a metahuman the
+                     pipe needs to set the geo in the metahuman face rig as
+                     non renderable", at the rig publish stage. Every mesh /
+                     NURBS surface under `headGui_grp` (Scout: 412 frames,
+                     sliders, text) gets its render stats off in the
+                     published file only (`NOT_RENDERABLE`: primary
+                     visibility, shadows, reflections, refractions and the
+                     Arnold `aiVisible*` rays). Viewport visibility is
+                     untouched. Locks kept; a stat driven by a connection
+                     is left alone with a warning. Working scene ends as it
+                     was. Test: `test_rigFaceGuiRender_mayapy.py`.
                      JSON text, locked. Shot publishes recognise the rig
                      by its `pipe_sgAssetId` like other pipe groups.
                    - DNA (`publishTool_textures.collect_dna()`): every
@@ -3673,7 +3696,11 @@ to the user):
   shot or asset (or is unsaved with changes), the Project Tool asks: Open
   <newest scene in the new project> / New Scene / Keep Current Scene, and
   Save / Don't Save / Cancel for unsaved changes before switching. Its old
-  "Set the project anyway?" prompt is gone.
+  "Set the project anyway?" prompt is gone. **Cancel added 2026-11-24**
+  ("would be nice to be able to cancel if needed"): both questions are now
+  asked *before* the project is set, so Cancel on either one leaves the
+  Maya project, Studio Library and the scene as they were ("Project not
+  changed").
 - **Mismatch: warn, let me carry on.** When the open scene and the Maya
   project are in different pipe shots/assets, Build and Publish show a red
   banner ("Your open scene is in shot SEQ010_140, but your Maya project is
@@ -3968,6 +3995,74 @@ files". The case for it: grassB v003 is 440 MB as `.ma`, 23 MB as `.usd`.
   Publish's own USD writer). Hand test: Build SEQ010_120 with grassB's USD
   ticked, check it draws, renders and reopens; untick and Build to switch
   back.
+
+### 4j. Gaffer: Send to Gaffer and the Gaffer bundle — DECIDED + BUILT (2026-11-24)
+
+The user: "We are going to integrate [Gaffer] into our pipeline" (research:
+`pipeDev\gafferResearch\reports\Gaffer pipeline integration research.md`).
+Gaffer sits beside Maya, fed by files: there's no Maya plug-in.
+
+**Decided by the user (2026-11-24):**
+- A **Send to Gaffer** button on **mpLighting**. Students "select what they
+  want to send in the scene and send whatever they want pipe approved or
+  not": only what's selected, never the shot camera automatically.
+- Sending again **carries on** in their Gaffer work, "but they should have
+  the option to start again". The **timeline range** is sent.
+- Gaffer ships **in the mpPipe bundle, like Studio Library**: "there for
+  the students to install but not handled by the drag and drop". It's
+  copied to the student's machine (`Documents\maya\gaffer\`).
+- Renders launched from Gaffer must show up and be managed in **Scout**.
+  OPEN: not built yet (a Gaffer dispatcher that hands jobs to Scout's
+  render service).
+
+**Built** (`lightingDev\gafferSend.py`, `lightingDev\gafferPipeStartup.py`):
+- Folders follow the cross-program rule, in a new `<film>\gaffer\` software
+  folder: `gaffer\<assets\<type>\<asset> | sequences\<SEQ>\<SHOT>>\<login>\`
+  holds the student's Gaffer files (`<name>_v###.gfr`); each send is
+  `fromMaya\<name>_v###.usd`, never overwritten; `fromMaya\<name>_latest.usda`
+  sublayers the newest send (relative path) and carries its frame range.
+  The Gaffer file's SceneReader (`fromMaya`) reads `_latest`, so a resend
+  only needs Reload in Gaffer. Start Again makes the next `.gfr`, old kept.
+  The scene must be saved in `scenes\<dept>\<login>` (fbxExport's rule;
+  `fbxExport.target` now takes the receiving program).
+  The `gaffer\` folder is made on scratch by the first send. OPEN: add it to
+  h_sync's film structure like `substancePainter\`.
+- Export: `mayaUSDExport` of the selection over the timeline, Arnold job
+  context (MtoA). Arnold shaders and lights only come through in the Maya
+  **GUI** (mayapy writes empty materials). Build's driven camera
+  (`camera1_DATA`) comes through animated without baking. Locators are left
+  out with the reason; NURBS curves (rig controls) are filtered out.
+  **USD stages** (Build's USD models) go as references to the stage's own
+  `.usd`, never copied: mayaUSD writes them as an `over` referencing the
+  file by an absolute path, which the send rewrites relative to itself
+  (works from any drive). Unsaved USD edits on a stage are flagged, not sent.
+  Found 2026-11-24: the user's first SEQ010_120 send had no hillShed.
+- Paths in the Gaffer file are `${PIPE_SCRATCH}/...`. Gaffer reads `${...}`
+  from context variables first and doesn't see `os.environ` changes made
+  from Python, so `gafferPipeStartup` sets `PIPE_SCRATCH` on each opened
+  script's context (from where the `.gfr` is), for the gui, execute and
+  dispatch apps. Tested from a second drive.
+- Gaffer and the Arnold SDK are pipe settings (`gaffer_root`,
+  `arnold_root`); the first send asks for any missing (refuse with a fix).
+  MtoA's own Arnold can't be used (no `include\ai_version.h`): students
+  download the Arnold SDK with their education licence, matching MtoA's
+  version (7.5.2.0 here; Gaffer 1.7.7 needs 7.5.1.0+).
+- Each send rewrites `<gaffer home>\gaffer_pipe.cmd` (ARNOLD_ROOT, the
+  startup stubs, and Maya's Python/USD/MtoA variables cleared: Maya's
+  `PXR_USD_WINDOWS_DLL_PATH` made Gaffer load Maya's USD 25.11 DLLs and
+  fail) and `pipeStartup\`. The desktop shortcut points at it.
+- The starter Gaffer file: SceneReader -> StandardOptions -> ArnoldOptions
+  -> Outputs (beauty to `<login>\renders\<gaffer file>\beauty\`) ->
+  ArnoldRender; script frame range and fps from Maya.
+- Bundle: `build_zip.py` adds `mpPipe\gaffer\` (the Gaffer release zip as
+  downloaded, stored, never in git, plus `gaffer\install.py` /
+  `uninstall.py`); `--no-gaffer` for quick builds. The Arnold SDK is never
+  bundled (Autodesk's licence).
+- Tests: `lightingDev\test_gafferSend_mayapy.py` (19 checks, uses this
+  computer's Gaffer and Arnold SDK when found, incl. a `gaffer execute`
+  Arnold render). GUI run 2026-11-24: an `aiStandardSurface` arrived in
+  Gaffer as `ai:surface` standard_surface with Maya's base colour, and an
+  `aiAreaLight` as a light.
 
 ## 5. Context: what the existing tools assume
 
