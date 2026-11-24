@@ -151,6 +151,11 @@ fj.progress = 1005
 flow.UPLOAD_WARN_MB = 1
 usd = os.path.splitext(scene)[0] + "_defaultRenderLayer__%d__%d.usd" % (os.getpid(), fj.job_number)
 with open(usd, "wb") as out:
+    out.write(b"0" * 30000)                     # the export just started: a few KB
+check("a USD of a few KB doesn't trip it up (2026-11-24 v005/v006: 'max() iterable argument "
+      "is empty' stopped renderSub watching)",
+      job.poll() is None and "error" not in job.info["flow"])
+with open(usd, "wb") as out:
     out.write(b"0" * 2000000)
 check("uploading: no frames yet, the upload's size noted and a big one flagged",
       job.poll() is None and job.info["flow"]["upload_mb"] == 2

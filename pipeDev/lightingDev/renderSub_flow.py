@@ -685,11 +685,14 @@ class FlowJob(object):
             return
         if mb <= (part.get("upload_mb") or 0):
             return
-        part["upload_mb"] = round(mb)
+        # 0.1 MB steps: the USD is a few KB while the export starts (a whole
+        # MB rounded that to 0 and the sum below found no parts: 2026-11-24)
+        part["upload_mb"] = round(mb, 1)
         flow = self.info["flow"]
-        sized = [p for p in _parts(self.info) if p.get("upload_mb")]
-        flow["upload_mb"] = sum(p["upload_mb"] for p in sized)
-        flow["mb_per_frame"] = round(max(p["upload_mb"] / float(p["frames"]) for p in sized), 2)
+        sized = [p for p in _parts(self.info) if p.get("upload_mb") and p.get("frames")]
+        if sized:
+            flow["upload_mb"] = round(sum(p["upload_mb"] for p in sized), 1)
+            flow["mb_per_frame"] = round(max(p["upload_mb"] / float(p["frames"]) for p in sized), 2)
         self._save()
         if mb > UPLOAD_WARN_MB and not self._warned_size:
             self._warned_size = True
