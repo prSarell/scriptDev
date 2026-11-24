@@ -64,12 +64,14 @@ class FakeJob(object):
 
 
 class FakeQueue(object):
-    jobs, started, cancelled = [], [], []
+    jobs, started, cancelled, made = [], [], [], 0
     @classmethod
     def instance(cls): return cls
     @classmethod
     def createNewJob(cls):
-        cls.jobs.append(FakeJob(len(cls.jobs) + 1)); return cls.jobs[-1]
+        cls.made += 1
+        cls.jobs.append(FakeJob(cls.made)); cls.jobs[-1].job_number = cls.made
+        return cls.jobs[-1]
     @classmethod
     def startNextJob(cls): cls.started.append(cls.jobs[-1])
     @classmethod
@@ -112,6 +114,7 @@ flow._modules = lambda: (FakeQueue, FakeSubmitModule)
 flow.available = lambda: (True, "")
 flow.signed_in = lambda: True
 flow.CHECK_EVERY, flow.SETTLE = 0, -1
+flow.FLOW_LOG = os.path.join(scratch, "Logs", "FlowRenderMaya.log")   # none yet
 rs.make_review_media = lambda info: None         # the frames here aren't real EXRs
 
 # --- submit ------------------------------------------------------------------------
@@ -146,7 +149,7 @@ check("exporting: says so", job.poll() is None and "ready to upload" in job.desc
 
 fj.progress = 1005
 flow.UPLOAD_WARN_MB = 1
-usd = os.path.splitext(scene)[0] + "_defaultRenderLayer__%d__1.usd" % os.getpid()
+usd = os.path.splitext(scene)[0] + "_defaultRenderLayer__%d__%d.usd" % (os.getpid(), fj.job_number)
 with open(usd, "wb") as out:
     out.write(b"0" * 2000000)
 check("uploading: no frames yet, the upload's size noted and a big one flagged",
@@ -243,12 +246,120 @@ check("only some frames back: it stays stopped (a partial publish is still there
 # --- when it goes wrong ---------------------------------------------------------------
 early = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
 check("cancel before the upload finishes: Arnold's queue cancels it",
-      early.cancel() is None and FakeQueue.cancelled[-1].job_id == early.info["flow"]["local"]
+      early.cancel() is None and FakeQueue.cancelled[-1].job_id == early.info["flow"]["parts"][0]["local"]
       and early.finish()["status"] == rs.CANCELLED)
 
 lost = flow.FlowJob.submit(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW))
 FakeQueue.jobs[-1].failed = True
 check("the export or upload failing fails the render", lost.poll() == 1)
+
+# --- parts and the upload log (2026-11-24, SEQ010_120 v004: Flow Render's upload
+# link ran out on the USD landscape, it logged it "already uploaded" and sent the
+# job without it) --------------------------------------------------------------------
+sizes = [len(p) for p in flow.plan_parts(list(range(1001, 1102)), 3.5)]
+check("101 frames at 3.5 MB a frame: three even parts, each under PART_MB",
+      sizes == [34, 34, 33] and max(sizes) * 3.5 <= flow.PART_MB)
+stepped = flow.plan_parts(list(range(1001, 1200, 2)), 3.5)
+check("... a range every 2 frames keeps its step in every part",
+      sum(map(len, stepped)) == 100 and all(flow.is_range(p) for p in stepped))
+check("a short render is one part", flow.plan_parts([1001, 1002, 1003], 3.5) == [[1001, 1002, 1003]])
+check("MB a frame comes from the shot's last cloud render (the first one here: 2 MB, 3 frames)",
+      round(flow.mb_per_frame(rs.plan_render(ctx, scene, [1001], cam, how=rs.FLOW)), 2) == 0.67)
+
+os.makedirs(os.path.dirname(flow.FLOW_LOG))
+def log(*lines):
+    with open(flow.FLOW_LOG, "a") as out:
+        for line in lines:
+            out.write("2026-11-24 10:17:50 DEBUG | %s\n" % line)
+def put(path, parts=1):
+    return "[client] sending http put request with file %s in %d part (size: 1 MB)" % (path, parts)
+FAIL = ("ERROR [client] http request failed: [403] 403 Client Error: Forbidden (0)",
+        "ERROR Failed to upload asset: 403 Client Error: Forbidden")
+land = r"D:\NWF_SHF\maya\publish\assets\environment\hillShed\hillShed_model_v002.usd"
+log("an earlier job's upload", put(r"D:\other\stale.usd"), *FAIL)
+log("Submitting job")
+
+real = flow.mb_per_frame
+flow.mb_per_frame = lambda info: 50.0            # 3 frames a part at PART_MB 150
+FakeQueue.started[:] = []
+long_ = flow.FlowJob.submit(rs.plan_render(ctx, scene, list(range(1001, 1007)), cam, how=rs.FLOW))
+p1, p2 = long_.info["flow"]["parts"]
+j1, j2 = FakeQueue.jobs[-2:]
+check("a long render goes as parts: one Flow Render job each, a range each, queued together",
+      [p1["range"], p2["range"]] == [[1001, 1003, 1], [1004, 1006, 1]]
+      and [(j1.start, j1.end), (j2.start, j2.end)] == [(1001, 1003), (1004, 1006)]
+      and len(FakeQueue.started) == 1 and j1.autoDownloadLocation == j2.autoDownloadLocation)
+check("... named with the part in Flow Render's queue, each knowing its USD's name",
+      j1.job_name.endswith("part 1 of 2 (%s)" % long_.info["render_id"])
+      and p2["usd"] == "light_001_defaultRenderLayer__%d__%d.usd" % (os.getpid(), j2.job_number))
+check("... the log read from where it was when they were sent", long_.info["flow"]["log_pos"] > 0)
+j2.pending = True
+check("part 1 uploading: says which part", long_.poll() is None
+      and "part 1 of 2 (frames 1001-1003)" in long_.describe())
+
+FakeQueue.removeJob(j1)                         # part 1 is in the cloud
+log("generating resource id of %s" % p1["usd"], put(p1["usd"], 4), "[client] auth token granted",
+    put(land), *FAIL)
+log("renew upload URLs and retry upload", "  %s is already uploaded" % land, put("pathmap.json"))
+check("part 1 sent, its upload not all in the log yet: nothing decided",
+      long_.poll() is None and p1["state"] == flow.SENT and not p1.get("log")
+      and long_.info["flow"]["state"] == flow.UPLOADING and "part 2 of 2" in long_.describe())
+log("Assets uploaded", "Submitting job")
+long_.poll()
+saved = rs.read_info(long_.info["folder"])
+check("part 1 lost the landscape on the way up: its frames are marked lost, the file named",
+      saved["flow"]["parts"][0]["lost"] == ["hillShed_model_v002.usd"]
+      and saved["flow"]["lost_frames"] == [1001, 1002, 1003]
+      and "hillShed_model_v002.usd" in saved["flow"]["error"] and "1001-1003" in saved["flow"]["error"]
+      and "part 1 of 2" in saved["flow"]["error"] and "1001-1003 lost a file" in long_.describe())
+check("an earlier job's failed upload (before this part's USD) isn't counted",
+      "stale.usd" not in saved["flow"]["error"])
+
+j2.pending = False
+FakeQueue.removeJob(j2)
+log("generating resource id of %s" % p2["usd"], put(p2["usd"]), "[client] auth token granted",
+    put(land), *FAIL)
+log(put(land), "[client] auth token granted", "Submitting job")   # tried again, and it went up
+long_.poll()
+check("part 2: a file that failed then went up on another try isn't lost",
+      p2["log"] == "ok" and rs.in_cloud(rs.read_info(long_.info["folder"]))
+      and "0 of 3 frame(s) downloaded" in long_.describe())
+
+download(long_.info["folder"], long_.info, range(1001, 1007))
+check("every frame back: the lost part's frames are dropped (they've no landscape)",
+      long_.poll() == 1 and not os.path.exists(rs.beauty_path(long_.info, 1001))
+      and not os.path.exists(rs.frame_path(os.path.join(long_.info["folder"], "N_noice"),
+                                           long_.info["prefix"], 1002))
+      and os.path.isfile(rs.beauty_path(long_.info, 1004)))
+# (the fake frames aren't EXRs, so api.finished_frames may doubt the last one, 1006)
+done = long_.finish()
+check("... and the version fails with them missing, saying what to render again",
+      done["status"] == rs.FAILED and done["missing"][:3] == [1001, 1002, 1003] and 1004 not in done["missing"]
+      and "render frames 1001-1003 again" in done["flow"]["error"])
+history = len(rs.read_history(shot_dir))
+download(long_.info["folder"], long_.info, [1001])
+caught = flow.catch_up(rs.read_info(long_.info["folder"]))
+check("a lost frame turning up later is dropped, and the version stays failed (not re-finished)",
+      caught["status"] == rs.FAILED and not os.path.exists(rs.beauty_path(long_.info, 1001))
+      and len(rs.read_history(shot_dir)) == history)
+
+halfway = flow.FlowJob.submit(rs.plan_render(ctx, scene, list(range(1001, 1007)), cam, how=rs.FLOW))
+FakeQueue.removeJob(FakeQueue.jobs[-2])         # part 1 in the cloud, part 2 still to go
+halfway.poll()
+note = halfway.cancel()
+check("cancel with part 1 in the cloud: part 2 is cancelled in Arnold's queue, the Job Monitor opened",
+      FakeQueue.cancelled[-1] is FakeQueue.jobs[-1] and note and "Job Monitor" in note)
+flow.mb_per_frame = real
+
+old = rs.plan_render(ctx, scene, [1001, 1002], cam, how=rs.FLOW)
+old.update(status=rs.RENDERING, flow={"local": "gone", "state": flow.SENT, "range": [1001, 1002, 1],
+                                       "upload_mb": 3})
+os.makedirs(old["folder"], exist_ok=True)
+before = flow.FlowJob(old)
+download(old["folder"], old, [1001, 1002])
+check("a render sent before parts (one job, no parts in render.json) still finishes",
+      before.poll() == 0 and before.finish()["status"] == rs.DONE
+      and old["flow"]["parts"][0]["log"] == "before parts")
 
 shutil.rmtree(scratch, ignore_errors=True); shutil.rmtree(h_root, ignore_errors=True)
 print("\n%d/%d passed" % (sum(ok), len(ok)))
