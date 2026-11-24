@@ -36,6 +36,7 @@ import projectTool_api as api
 MINE_COLOUR = "#7fbf7f"
 DIM_COLOUR = "#888888"
 ROLE_REL = QtCore.Qt.UserRole
+CANCEL = "cancel"       # _ask_scene_switch: don't set the project at all
 
 
 def _maya_main_window():
@@ -322,9 +323,15 @@ class ProjectToolUI(QtWidgets.QDialog):
         rel = items[0].data(0, ROLE_REL) if items else None
         if not rel:
             return
-        # Unsaved changes are asked about only if the scene is switched
-        # (_offer_scene_switch).
+        # Asked before anything is set, so Cancel leaves the project, Studio
+        # Library and the scene as they were (user, 2026-11-24). Unsaved
+        # changes are asked about only if the scene is switched.
         h_root, scratch_root = self._roots()
+        target = api.scratch_project(pub.resolve_root(scratch_root), list(rel))
+        choice = self._ask_scene_switch(target)
+        if choice == CANCEL:
+            self._message("Project not changed: still %s." % api.current_project())
+            return
         dialog, step = self._progress("Building %s on your scratch drive..." % rel[0])
         try:
             path, done = api.set_project(h_root, scratch_root, list(rel), progress=step)
@@ -335,16 +342,18 @@ class ProjectToolUI(QtWidgets.QDialog):
             dialog.close()
         self._fill_film()
         self._message("%s: %s.\n%s" % (rel[-1], "; ".join(done), path))
-        switched = self._offer_scene_switch(path)
+        switched = self._switch_scene(choice)
         if switched:
             self._message("%s: %s; %s.\n%s" % (rel[-1], "; ".join(done), switched, path))
 
-    def _offer_scene_switch(self, project):
-        """The open scene is in another shot or asset than the project just
-        set: offer to open the newest scene here, or start a new one, so
-        the scene, the project, Build and Publish all agree (user,
-        2026-10-28: Build and Publish go by the open scene). Returns what
-        was done, or None if the scene was kept."""
+    def _ask_scene_switch(self, project):
+        """The open scene is in another shot or asset than the project about
+        to be set: offer to open the newest scene there, start a new one,
+        keep the current scene, or cancel the Set Project, so the scene, the
+        project, Build and Publish all agree (user, 2026-10-28: Build and
+        Publish go by the open scene). Unsaved changes are asked about here
+        too, before anything changes. Returns None (keep the scene), CANCEL,
+        or ("open", path) / ("new", None) for _switch_scene."""
         scene = cmds.file(query=True, sceneName=True) or ""
         here = pub.pipe_place(project)
         there = pub.pipe_place(scene)
@@ -356,20 +365,33 @@ class ProjectToolUI(QtWidgets.QDialog):
         box = QtWidgets.QMessageBox(self)
         box.setIcon(QtWidgets.QMessageBox.Question)
         box.setWindowTitle("Switch scene?")
-        box.setText("The project is now %s, but the open scene is %s.\n\n"
+        box.setText("The project will be %s, but the open scene is %s.\n\n"
                     "Build and Publish go by the open scene. Switch to a scene in %s?"
                     % (pub.place_label(here), pub.place_label(there) if there else
                        (os.path.basename(scene) or "an unsaved scene"), here["name"]))
         open_btn = (box.addButton("Open %s" % os.path.basename(latest),
                                   QtWidgets.QMessageBox.AcceptRole) if latest else None)
         new_btn = box.addButton("New Scene", QtWidgets.QMessageBox.AcceptRole)
-        box.addButton("Keep Current Scene", QtWidgets.QMessageBox.RejectRole)
+        keep_btn = box.addButton("Keep Current Scene", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
         box.setDefaultButton(open_btn or new_btn)
         box.exec()
         clicked = box.clickedButton()
-        if clicked not in (open_btn, new_btn) or not self._save_or_discard(scene):
+        if clicked is None or clicked is keep_btn:
+            return None if clicked is keep_btn else CANCEL
+        if clicked not in [b for b in (open_btn, new_btn) if b]:
+            return CANCEL       # Cancel, or the window closed
+        if not self._save_or_discard(scene):
+            return CANCEL
+        return ("open", latest) if clicked is open_btn else ("new", None)
+
+    def _switch_scene(self, choice):
+        """Carry out _ask_scene_switch's choice once the project is set.
+        Returns what was done, or None if the scene was kept."""
+        if not choice or choice == CANCEL:
             return None
-        if clicked is open_btn:
+        kind, latest = choice
+        if kind == "open":
             cmds.file(latest, open=True, force=True)
             return "opened %s" % os.path.basename(latest)
         cmds.file(new=True, force=True)

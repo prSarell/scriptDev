@@ -124,12 +124,13 @@ QtWidgets.QMessageBox.exec = lambda box: 0
 QtWidgets.QMessageBox.clickedButton = lambda box: next(
     (b for b in box.buttons() if b.text().startswith(chosen[0])), None)
 pw = prui.ProjectToolUI(PARENT)
+offer = lambda project: pw._switch_scene(pw._ask_scene_switch(project))
 cmds.file(shot_scene, open=True, force=True)
 chosen[:] = ["Keep"]
-check("Set Project: keep the current scene", pw._offer_scene_switch(shed_dir) is None
+check("Set Project: keep the current scene", offer(shed_dir) is None
       and pub._same_path(cmds.file(query=True, sceneName=True), shot_scene))
 chosen[:] = ["Open"]
-done = pw._offer_scene_switch(shed_dir)
+done = offer(shed_dir)
 check("Set Project: open the newest scene in the new project",
       done == "opened shed_002.ma"
       and pub._same_path(cmds.file(query=True, sceneName=True), shed_scene))
@@ -139,14 +140,39 @@ chosen[:] = ["New"]
 asked = []
 real_save = pw._save_or_discard
 pw._save_or_discard = lambda scene: (asked.append(scene), False)[1]     # Cancel
-check("Set Project: unsaved changes asked about, Cancel stays put",
-      pw._offer_scene_switch(shed_dir) is None and asked
+check("Set Project: unsaved changes asked about, Cancel there cancels the Set Project",
+      pw._ask_scene_switch(shed_dir) == prui.CANCEL and asked
       and pub._same_path(cmds.file(query=True, sceneName=True), shot_scene))
 pw._save_or_discard = real_save
+
+# Cancel on the switch question: the project isn't set at all, nothing
+# changes (user, 2026-11-24). set_project is stubbed to see if it's called.
+import projectTool_api as prapi
+pub.set_maya_project(shot_dir)
+set_calls = []
+real_set, real_items, real_roots = prapi.set_project, pw.tree.selectedItems, pw._roots
+prapi.set_project = lambda *a, **k: (set_calls.append(a), (shed_dir, ["Maya project set"]))[1]
+class _Item(object):
+    def data(self, col, role):
+        return tuple(SHED)
+pw.tree.selectedItems = lambda: [_Item()]
+pw._roots = lambda: (H, S)
+pw._save_or_discard = lambda scene: True
+chosen[:] = ["Cancel"]
+pw._set_project()
+check("Set Project + Cancel: project not set, scene kept, status says so",
+      not set_calls and pub._same_path(prapi.current_project(), shot_dir)
+      and pub._same_path(cmds.file(query=True, sceneName=True), shot_scene)
+      and "Project not changed" in pw.status.text())
+chosen[:] = ["Keep"]
+pw._set_project()
+check("Set Project + Keep Current Scene: project set, scene kept",
+      len(set_calls) == 1 and pub._same_path(cmds.file(query=True, sceneName=True), shot_scene))
+prapi.set_project, pw.tree.selectedItems, pw._roots = real_set, real_items, real_roots
 chosen[:] = ["New Scene"]
 pw._save_or_discard = lambda scene: True
-check("Set Project: new scene", pw._offer_scene_switch(shed_dir) == "started a new scene"
+check("Set Project: new scene", offer(shed_dir) == "started a new scene"
       and not cmds.file(query=True, sceneName=True))
 check("Set Project: scene already in the new project, nothing asked",
-      pw._offer_scene_switch(shed_dir) is None)
+      offer(shed_dir) is None)
 print("%d/%d passed" % (sum(ok), len(ok)))
