@@ -127,6 +127,36 @@ def time_curves(nodes):
 # the layered result to one curve per channel, a key every frame; the
 # animator's scene keeps its layers.
 
+TRANSFORM_CHANNELS = ("translate", "rotate", "scale", "visibility", "offsetParentMatrix") + tuple(
+    a + x for a in ("translate", "rotate", "scale") for x in "XYZ")
+CONSTRAINTS = ("constraint", "pairBlend", "motionPath", "expression")
+
+
+def driven(nodes):
+    """True if something other than its own keys moves a transform in
+    nodes: a constraint (a walking stick on the hand), an expression, a
+    connection from outside (2026-11-25: SEQ010_120's walking stick and
+    power pack cached as one frame)."""
+    inside = set(cmds.ls(nodes, uuid=True) or [])
+    if cmds.ls(nodes, type=CONSTRAINTS):
+        return True
+    for node in cmds.ls(nodes, type="transform", long=True) or []:
+        plugs = ["%s.%s" % (node, a) for a in TRANSFORM_CHANNELS]
+        for src in cmds.listConnections(plugs, source=True, destination=False,
+                                        skipConversionNodes=True) or []:
+            if cmds.nodeType(src) in TIME_CURVES:
+                continue            # keys: counted as animated already
+            if cmds.ls(src, type=CONSTRAINTS) or not set(cmds.ls(src, uuid=True)) & inside:
+                return True
+    return False
+
+
+def moves(item):
+    """Whether an item's caches take the whole timeline: keyed, or (not a
+    rig, whose own constraints always look driven) driven by something."""
+    return item["animated"] or item.get("driven", False)
+
+
 def layered_plugs(nodes):
     """[(node, attr)] for the channels on nodes driven by an animation
     layer, attr a single channel (rotateX, not rotate)."""
@@ -213,7 +243,111 @@ def carries_settings(item):
     """Published assets get a map even with no keys, so Build can put their
     unkeyed settings back (things made in the shot only live in the full
     file)."""
-    return item["kind"] not in ("shot", LIGHT_KIND)
+    return item["kind"] not in ("shot", LIGHT_KIND, STAGE_KIND)
+
+
+# USD stages Build loaded (spec §4h) can be cached too (user, 2026-11-25:
+# "If a student wants it as an alembic cache even though it is a usd they
+# should be able to select it and publish it as an ABC and vice versa").
+# The stage is copied into Maya geometry for the export (mayaUsdDuplicate,
+# following the stage's placement, proxy and guide prims left out), then
+# the copy is deleted. Its stamp is the model publish it reads, so Build
+# puts that model's look on the cache. No keys file: the stage itself only
+# moves by its transform.
+STAGE_KIND = "usdStage"
+USD_SHAPE = "mayaUsdProxyShape"
+USD_KEY_ATTR = "pipe_buildKey"          # buildTool_api.USD_KEY_ATTR
+USD_SOURCE_ATTR = "pipe_usdSource"      # buildTool_api.USD_SOURCE_ATTR
+STAGE_TEMP_NAMESPACE = "pipeStageCopy"
+_PUBLISHED_RE = re.compile(r"^(?P<asset>.+)_(?P<login>[^_]+)_(?P<dept>[^_]+)_v(?P<version>\d{3})"
+                           r"\.usd[ac]?$", re.IGNORECASE)
+
+
+def stage_shapes(obj):
+    """The USD stage shapes at or under obj (long names)."""
+    if not cmds.pluginInfo("mayaUsdPlugin", query=True, loaded=True):
+        return []
+    nodes = cmds.ls(obj, long=True) + (cmds.listRelatives(obj, allDescendents=True,
+                                                          fullPath=True) or [])
+    return cmds.ls(nodes, type=USD_SHAPE, long=True) or []
+
+
+def stage_stamp(transform):
+    """The asset stamp of a Build-loaded stage, from its manifest key and
+    the publish it reads ({} for a stage Build didn't make)."""
+    def attr(name):
+        plug = "%s.%s" % (transform, name)
+        return cmds.getAttr(plug) if cmds.objExists(plug) else None
+    key, source = attr(USD_KEY_ATTR), attr(USD_SOURCE_ATTR)
+    parts = (key or "").split("/")
+    m = _PUBLISHED_RE.match(os.path.basename(source or "").replace("\\", "/").split("/")[-1])
+    if len(parts) != 3:
+        return {}
+    stamp = {"assetType": parts[0], "asset": parts[1], "department": parts[2]}
+    if m:
+        stamp.update(artistId=m.group("login"), version=int(m.group("version")))
+    return stamp
+
+
+class _StageAsMaya(object):
+    """For the length of a cache export: the item's stage as Maya geometry
+    in a temporary group that follows the stage's transform. cache_roots()
+    gives the copy's top nodes meanwhile."""
+
+    def __init__(self, item):
+        self.item, self.group = item, None
+
+    def __enter__(self):
+        if self.item["kind"] != STAGE_KIND:
+            return self
+        import mayaUsd.ufe
+        from pxr import UsdGeom
+        shape, transform = self.item["shape"], self.item["root"]
+        stage = mayaUsd.ufe.getStage(shape)
+        if not cmds.namespace(exists=":" + STAGE_TEMP_NAMESPACE):
+            cmds.namespace(add=STAGE_TEMP_NAMESPACE)
+        self.group = cmds.group(empty=True, world=True,
+                                name="%s:%s_copy" % (STAGE_TEMP_NAMESPACE, self.item["name"]))
+        self.group = cmds.ls(self.group, long=True)[0]
+        cmds.parentConstraint(transform, self.group)
+        cmds.scaleConstraint(transform, self.group)
+        current = cmds.namespaceInfo(currentNamespace=True, absoluteName=True)
+        cmds.namespace(setNamespace=":" + STAGE_TEMP_NAMESPACE)
+        try:
+            for prim in stage.GetPseudoRoot().GetChildren():
+                if prim.IsActive() and prim.IsDefined():
+                    cmds.mayaUsdDuplicate(shape + "," + prim.GetPath().pathString, self.group)
+        finally:
+            cmds.namespace(setNamespace=current)
+        # Proxy and guide prims stay out: only what renders is cached.
+        by_path = {}
+        for node in cmds.listRelatives(self.group, allDescendents=True, fullPath=True,
+                                       type="transform") or []:
+            rel = node[len(self.group):].split("|")
+            by_path["/".join(p.split(":")[-1] for p in rel)] = node
+        doomed = []
+        for prim in stage.Traverse():
+            if prim.IsA(UsdGeom.Imageable) and UsdGeom.Imageable(prim).ComputePurpose() in (
+                    UsdGeom.Tokens.proxy, UsdGeom.Tokens.guide):
+                node = by_path.get(prim.GetPath().pathString)
+                if node and not any(node.startswith(d + "|") for d in doomed):
+                    doomed.append(node)
+        for node in doomed:
+            if cmds.objExists(node):
+                cmds.delete(node)
+        children = cmds.listRelatives(self.group, children=True, fullPath=True,
+                                      type="transform") or []
+        self.item["_temp_roots"] = [c for c in children if not cmds.ls(c, type="constraint")]
+        return self
+
+    def __exit__(self, *exc):
+        self.item.pop("_temp_roots", None)
+        if self.group and cmds.objExists(self.group):
+            cmds.delete(self.group)
+        if cmds.namespace(exists=":" + STAGE_TEMP_NAMESPACE):
+            cmds.namespace(removeNamespace=":" + STAGE_TEMP_NAMESPACE,
+                           deleteNamespaceContent=True)
+        return False
 
 
 # Lights made in the shot (user, 2026-10-20: "publish lights as part of the
@@ -257,19 +391,27 @@ def classify(objects):
     if cameras:
         raise PublishError("Cameras go in their own Camera row, not Animation: %s"
                            % ", ".join(cameras))
-    # A model Build loaded as a USD stage (spec §4h): its keys and settings
-    # can't go in an Animation publish yet (they stay in the full scene).
-    stages = [o for o in cmds.ls(objects, long=True) or []
-              if cmds.ls([o] + (cmds.listRelatives(o, allDescendents=True, fullPath=True) or []),
-                         type="mayaUsdProxyShape")] \
-        if cmds.pluginInfo("mayaUsdPlugin", query=True, loaded=True) else []
-    if stages:
-        raise PublishError(
-            "%s is a USD stage. Animation publishes can't carry USD stages yet: take it "
-            "off the list (it stays in the full scene file). To animate it, build it as a "
-            "Maya reference (untick USD in Build)." % ", ".join(s.split("|")[-1] for s in stages))
     items, roots = [], set()
+    # USD stages (Build's, spec §4h): cached through a Maya copy, see
+    # STAGE_KIND. Their keys stay in the full scene file.
+    rest = []
     for obj in cmds.ls(objects, long=True) or []:
+        shapes = stage_shapes(obj)
+        if not shapes:
+            rest.append(obj)
+            continue
+        for shape in shapes:
+            root = cmds.listRelatives(shape, parent=True, fullPath=True)[0]
+            if root in roots:
+                continue
+            roots.add(root)
+            stamp = stage_stamp(root)
+            name = stamp.get("asset") or root.split("|")[-1].split(":")[-1]
+            moved = bool(time_curves([root])) or bool(layered_plugs([root])) or driven([root])
+            items.append({"name": _clean(name), "kind": STAGE_KIND, "root": root,
+                          "shape": shape, "nodes": [root, shape], "stamp": stamp,
+                          "animated": False, "driven": moved})
+    for obj in rest:
         root = stamped_root(obj)
         if root:
             stamp = _stamp(root)
@@ -294,7 +436,8 @@ def classify(objects):
             kind = LIGHT_KIND
         animated = bool(time_curves(nodes)) or bool(layered_plugs(nodes))
         items.append({"name": _clean(name), "kind": kind, "root": root, "nodes": nodes,
-                      "stamp": stamp, "animated": animated})
+                      "stamp": stamp, "animated": animated,
+                      "driven": kind != api.RIG_CODE and not animated and driven(nodes)})
     seen = {}
     for item in items:
         if item["name"] in seen:
@@ -303,9 +446,13 @@ def classify(objects):
         seen[item["name"]] = item["root"]
         what = ("made in the shot" if item["kind"] == "shot" else
                 "light, made in the shot" if item["kind"] == LIGHT_KIND else
+                "USD stage, %s v%03d" % (item["stamp"].get("department", "?"),
+                                         item["stamp"].get("version") or 0)
+                if item["kind"] == STAGE_KIND else
                 "%s v%03d" % (item["kind"], item["stamp"].get("version") or 0))
         item["label"] = "%s (%s, %s)" % (item["name"], what,
-                                         "keyed" if item["animated"] else "no keys")
+                                         "keyed" if item["animated"] else
+                                         "constrained" if item["driven"] else "no keys")
     return items
 
 
@@ -460,7 +607,10 @@ def export_keys(item, files, plan, start, end, scene_path):
 
 def cache_roots(item):
     """What an item's Alembic holds: a rig's cache_SET members (spec
-    "cache_SET"), otherwise the whole item."""
+    "cache_SET"), a USD stage's Maya copy (_StageAsMaya), otherwise the
+    whole item."""
+    if item.get("_temp_roots") is not None:
+        return item["_temp_roots"]
     if item["kind"] == api.RIG_CODE:
         namespace = _namespace(item["root"])
         cache_set = ("%s:%s" % (namespace, api.CACHE_SET)) if namespace else api.CACHE_SET
@@ -478,10 +628,11 @@ def export_cache(item, path, start, end):
     if not (spec item 4: keyframed get the full range, static ones one)."""
     if not cmds.pluginInfo("AbcExport", query=True, loaded=True):
         cmds.loadPlugin("AbcExport", quiet=True)
-    last = end if item["animated"] else start
+    last = end if moves(item) else start
     roots = " ".join("-root %s" % r for r in cache_roots(item))
-    job = ("-frameRange %d %d -uvWrite -worldSpace -writeVisibility -dataFormat ogawa "
-           "%s -file \"%s\"" % (start, last, roots, path.replace("\\", "/")))
+    strip = "-stripNamespaces " if item["kind"] == STAGE_KIND else ""   # the copy's namespace
+    job = ("-frameRange %d %d -uvWrite -worldSpace -writeVisibility -dataFormat ogawa %s"
+           "%s -file \"%s\"" % (start, last, strip, roots, path.replace("\\", "/")))
     cmds.AbcExport(jobArg=job)
     api._lock(path)
 
@@ -493,12 +644,17 @@ def export_usd_cache(item, path, start, end):
     go too, for USD-reading renderers (Gaffer, Solaris)."""
     if not cmds.pluginInfo("mayaUsdPlugin", query=True, loaded=True):
         cmds.loadPlugin("mayaUsdPlugin", quiet=True)
-    last = end if item["animated"] else start
+    last = end if moves(item) else start
     options = dict(file=path.replace("\\", "/"), selection=True, frameRange=(start, last),
                    defaultUSDFormat="usdc", exportUVs=True, exportVisibility=True,
                    filterTypes=["nurbsCurve"])
     if cmds.pluginInfo("mtoa", query=True, loaded=True):
         options["jobContext"] = ["Arnold"]
+    if item["kind"] == STAGE_KIND:
+        # The copy's own roots in world space: not its temporary group (or
+        # the constraints that make it follow the stage), nor its namespace.
+        options.update(stripNamespaces=True, worldspace=True,
+                       exportRoots=cache_roots(item))
     selection = cmds.ls(selection=True)
     try:
         cmds.select(cache_roots(item), replace=True)
@@ -539,7 +695,7 @@ def export_fbx_cache(item, path, start, end):
     import maya.mel as mel
     if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
         cmds.loadPlugin("fbxmaya", quiet=True)
-    last = end if item["animated"] else start
+    last = end if moves(item) else start
     roots = cache_roots(item)
     meshes = cmds.listRelatives(roots, allDescendents=True, type="mesh", fullPath=True) or []
     selection = cmds.ls(selection=True)
@@ -580,15 +736,42 @@ def write_cache_info(item, files, plan, start, end, scene_path):
         "login": plan["login"],
         "version": plan["version"],
         "start": start,
-        "end": end if item["animated"] else start,
+        "end": end if moves(item) else start,
         "fps": api._scene_fps(),
         "source_scene": os.path.basename(scene_path),
         "roots": [r.split("|")[-1].split(":")[-1] for r in cache_roots(item)],
     }
     info["format"] = files.get("format", "abc")
+    if files.get("look"):
+        info["look"] = files["look"]
     with open(files["cache_info"], "w") as f:
         json.dump(info, f, indent=2, sort_keys=True)
     api._lock(files["cache_info"])
+
+
+def export_shot_look(item, files, plan):
+    """The shaders of something made in the shot, for its caches (user,
+    2026-11-25: SEQ010_120's walking stick and power pack came through
+    grey): a look like a rig's (publishTool_look) beside its keys file,
+    <keys>_look.ma / .json, its textures copied to the shot's
+    sourceimages\\<login>\\<keys name>\\. Returns (the look .ma's path
+    from the shot folder, e.g. scenes/anim/scout/..._look.ma, or None if
+    it only has Maya's default shader; the files written)."""
+    import publishTool_look as look
+    import publishTool_textures as tex
+    look_plan = {"dest": files["keys"], "h_folder": os.path.dirname(files["keys"]),
+                 "login": plan["login"], "asset": item["name"], "code": ANIM_CODE,
+                 "version": plan["version"], "root": plan.get("root", "")}
+    with tex.PublishedTextures(tex.collect([item["root"]]), look_plan):
+        paths = look.export_look(look_plan, [item["root"]])
+    written = list(paths or [])
+    folder = (look_plan.get("textures") or {}).get("folder")
+    for dirpath, _, names in os.walk(folder) if folder else ():
+        written += [os.path.join(dirpath, n) for n in names]
+    if not paths:
+        return None, written
+    shot_dir = api.project_of_publish(files["keys"])
+    return os.path.relpath(paths[0], shot_dir).replace("\\", "/"), written
 
 
 def export_light(item, path):
@@ -599,6 +782,115 @@ def export_light(item, path):
               constructionHistory=True, channels=True, constraints=True,
               expressions=True, shader=False, preserveReferences=False)
     api._lock(path)
+
+
+class _Nothing(object):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+# What the scene had (user, 2026-11-25: "We want to know everything in the
+# animation scene is 1:1 in the lighting scene"; passing it "down the pipe
+# so they don't have to chase it"): beside the full file,
+# <published>_contents.json lists every pipe asset (Maya reference or USD
+# stage, which version), everything made in the shot, and what this
+# publish wrote for each (keys, caches by format). Build fills the next
+# departments' lists from it.
+CONTENTS_FORMAT = 1
+CONTENTS_SUFFIX = "_contents.json"
+
+
+def contents_path(plan):
+    return os.path.splitext(plan["dest"])[0] + CONTENTS_SUFFIX
+
+
+def _top_most(nodes):
+    nodes = sorted(set(cmds.ls(nodes, long=True) or []))
+    return [n for n in nodes if not any(n.startswith(o + "|") for o in nodes if o != n)]
+
+
+def scene_contents(items, plan):
+    """[entry] for the scene: {"name", "kind", "key", "load", "version",
+    "login", "node", "published"}. kind: the asset's department, "usdStage"
+    or "shot"; load: "maya" (referenced), "imported", "usd" or "shot";
+    published: what this publish wrote for it (None if it isn't in it)."""
+    shot_dir = api.project_of_publish(plan["dest"])
+    rel = lambda p: os.path.relpath(p, shot_dir).replace("\\", "/")
+    by_root = dict((item["root"], item) for item in items)
+    entries, covered = [], []
+
+    def published(item):
+        if item is None:
+            return None
+        files = plan["item_files"][item["name"]]
+        out = {"item": item["name"],
+               "caches": dict((fmt, rel(files["caches"][fmt][0]))
+                              for fmt in plan.get("caches") or () if item["kind"] != LIGHT_KIND),
+               "keys": rel(files["keys"]) if item["animated"] else None}
+        if item["kind"] == LIGHT_KIND:
+            out["light"] = rel(files["light"])
+        return out
+
+    groups = cmds.ls("*." + api.ID_ATTR, objectsOnly=True, recursive=True, long=True) or []
+    for group in _top_most(groups):
+        if cmds.ls(group, long=True)[0].split("|")[1].startswith(STAGE_TEMP_NAMESPACE + ":"):
+            continue
+        stamp = _stamp(group)
+        covered.append(group)
+        entries.append({
+            "name": _namespace(group) or stamp.get("asset"), "kind": stamp.get("department"),
+            "key": "%s/%s/%s" % (stamp.get("assetType"), stamp.get("asset"),
+                                 stamp.get("department")),
+            "load": "maya" if cmds.referenceQuery(group, isNodeReferenced=True) else "imported",
+            "version": stamp.get("version"), "login": stamp.get("artistId"),
+            "node": group.split("|")[-1], "published": published(by_root.get(group))})
+    stages = cmds.ls("*." + USD_KEY_ATTR, objectsOnly=True, recursive=True, long=True) or []
+    for stage in sorted(set(cmds.ls(stages, long=True))):
+        stamp = stage_stamp(stage)
+        covered.append(stage)
+        entries.append({
+            "name": stamp.get("asset"), "kind": STAGE_KIND,
+            "key": cmds.getAttr(stage + "." + USD_KEY_ATTR), "load": "usd",
+            "version": stamp.get("version"), "login": stamp.get("artistId"),
+            "node": stage.split("|")[-1], "source": cmds.getAttr(stage + "." + USD_SOURCE_ATTR)
+            if cmds.objExists(stage + "." + USD_SOURCE_ATTR) else None,
+            "published": published(by_root.get(stage))})
+    # Made in the shot: what this publish took, and any other top-level
+    # geometry it didn't (so the next department knows it's missing).
+    for item in items:
+        if item["root"] not in covered:
+            covered.append(item["root"])
+            entries.append({"name": item["name"], "kind": item["kind"], "key": None,
+                            "load": "shot", "version": None, "login": None,
+                            "node": item["root"].split("|")[-1], "published": published(item)})
+    for top in cmds.ls(assemblies=True, long=True) or []:
+        if any(c == top or c.startswith(top + "|") or top.startswith(c + "|") for c in covered):
+            continue
+        if top.split("|")[-1].startswith(STAGE_TEMP_NAMESPACE + ":"):
+            continue
+        if not cmds.listRelatives(top, allDescendents=True, type=GEOMETRY_TYPES):
+            continue
+        entries.append({"name": _clean(top.split("|")[-1].split(":")[-1]), "kind": "shot",
+                        "key": None, "load": "shot", "version": None, "login": None,
+                        "node": top.split("|")[-1], "published": None})
+    return entries
+
+
+def write_contents(items, plan, scene_path):
+    data = {"format": CONTENTS_FORMAT, "shot": plan["shot"], "department": plan["code"],
+            "login": plan["login"], "version": plan["version"],
+            "published": os.path.basename(plan["dest"]),
+            "source_scene": os.path.basename(scene_path),
+            "caches": list(plan.get("caches") or ()),
+            "contents": scene_contents(items, plan)}
+    path = contents_path(plan)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    api._lock(path)
+    return path
 
 
 def write_anim(items, plan, start, end, scene_path):
@@ -616,6 +908,7 @@ def write_anim(items, plan, start, end, scene_path):
         else:
             for fmt in plan.get("caches") or ():
                 targets += list(files["caches"][fmt])
+    targets.append(contents_path(plan))
     for path in targets:
         if os.path.exists(path):
             raise PublishError("%s already exists — try again." % path)
@@ -639,13 +932,21 @@ def write_anim(items, plan, start, end, scene_path):
                 export_light(item, files["light"])
                 written.append(files["light"])
             else:
-                for fmt in plan.get("caches") or ():
-                    cache, cache_info = files["caches"][fmt]
-                    globals()[CACHE_EXPORTERS[fmt]](item, cache, start, end)
-                    written.append(cache)
-                    write_cache_info(item, {"cache_info": cache_info, "format": fmt},
-                                     plan, start, end, scene_path)
-                    written.append(cache_info)
+                shot_look = None
+                if item["kind"] == "shot" and plan.get("caches"):
+                    shot_look, look_files = export_shot_look(item, files, plan)
+                    written += look_files
+                with _StageAsMaya(item) if plan.get("caches") else _Nothing():
+                    for fmt in plan.get("caches") or ():
+                        cache, cache_info = files["caches"][fmt]
+                        globals()[CACHE_EXPORTERS[fmt]](item, cache, start, end)
+                        written.append(cache)
+                        write_cache_info(item, {"cache_info": cache_info, "format": fmt,
+                                                "look": shot_look},
+                                         plan, start, end, scene_path)
+                        written.append(cache_info)
+        write_contents(items, plan, scene_path)
+        written.append(contents_path(plan))
     except Exception:
         for path in written:
             _writable_remove(path)

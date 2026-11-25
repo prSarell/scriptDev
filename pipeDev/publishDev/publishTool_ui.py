@@ -597,8 +597,12 @@ class PublishToolUI(QtWidgets.QDialog):
                 try:
                     item = anim.classify(row["objects"])[0]
                     type_label = ("made in the shot" if item["kind"] == "shot" else
+                                  "USD stage, %s v%03d" % (item["stamp"].get("department", "?"),
+                                                           item["stamp"].get("version") or 0)
+                                  if item["kind"] == anim.STAGE_KIND else
                                   "%s v%03d" % (item["kind"], item["stamp"].get("version") or 0))
-                    objects = "%s (%s)" % (objects, "keyed" if item["animated"] else "no keys")
+                    objects = "%s (%s)" % (objects, "keyed" if item["animated"] else
+                                           "constrained" if item.get("driven") else "no keys")
                 except api.PublishError:
                     pass        # shown as "can't publish" in the last column
             self.table.setItem(r, 0, _check_cell(row["asset"], row["checked"]))

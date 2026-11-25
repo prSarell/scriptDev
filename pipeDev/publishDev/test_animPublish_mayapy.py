@@ -116,7 +116,7 @@ def listing(folder):
 plan = anim.publish_anim(scene, H, SC, objs)
 names = listing(h_scenes)
 check("no caches ticked: full file + keys/map for keyed items", names == [
-    "EAP_010_010_scout_anim_v001.ma",
+    "EAP_010_010_scout_anim_v001.ma", "EAP_010_010_scout_anim_v001_contents.json",
     "EAP_010_010_scout_backpack_anim_v001.json", "EAP_010_010_scout_backpack_anim_v001.ma",
     "EAP_010_010_scout_ball_anim_v001.json", "EAP_010_010_scout_ball_anim_v001.ma"])
 check("no caches ticked: no caches", not listing(caches) and plan["stage"] == "animation")
@@ -210,7 +210,7 @@ layout_files = [n for n in listing(h_layout) if "_layout_" in n]
 check("Layout publish: own series, full file + keys for keyed items", layout_files == [
     "EAP_010_010_scout_backpack_layout_v001.json", "EAP_010_010_scout_backpack_layout_v001.ma",
     "EAP_010_010_scout_ball_layout_v001.json", "EAP_010_010_scout_ball_layout_v001.ma",
-    "EAP_010_010_scout_layout_v001.ma"])
+    "EAP_010_010_scout_layout_v001.ma", "EAP_010_010_scout_layout_v001_contents.json"])
 check("Layout publish: no caches, even ticked",
       (listing(caches), listing(usd_caches)) == caches_before and not plan["caches"])
 check("Layout publish: Version linked to the Layout task",

@@ -4166,6 +4166,40 @@ Gaffer sits beside Maya, fed by files: there's no Maya plug-in.
 - **OPEN:** USD caches carry no look from Build: if Lighting wants the
   LookDev look on a USD cache, that's a USD material binding job (later).
 
+### 4m. Down the pipe: everything in the shot reaches the next department 1:1 — DECIDED, step (a) BUILT (2026-11-25)
+
+User, 2026-11-25: "passing it to lighting down the pipe so they don't have
+to chase it is good"; "We want to know everything in the animation scene is
+1:1 in the lighting scene"; "If a student wants it as an alembic cache even
+though it is a usd they should be able to select it and publish it as an
+ABC and vice versa"; "we want the artist to be able to choose"; "lighting
+might need to pick up work from FX or creature"; overlaps (Creature's
+simmed dress and Animation's unsimmed one): "lighting just delete scouts
+unsimmed dress".
+
+- DECIDED: every shot publish (Layout, Animation; later Creature, FX)
+  writes `<published>_contents.json` beside its full file: every pipe asset
+  (key, version, Maya reference or USD stage), everything made in the shot
+  (published or not), and what the publish wrote for each (keys, caches by
+  format).
+- DECIDED: Build fills a department's list from the other departments'
+  newest contents, a row per item per department (no merging: the artist
+  deletes overlaps). Each row's form is the artist's choice: the published
+  asset (Maya or USD) or a cache (ABC, USD, FBX); it starts as what the
+  publishing department made. A republish shows what's new or changed.
+- BUILT (a): the contents record (`publishTool_anim.write_contents`); USD
+  stages can be Animation items (`STAGE_KIND`), cached as ABC / USD / FBX
+  through a Maya copy that follows the stage (proxy and guide prims left
+  out), stamped as the model so Build puts the model's look on. Also:
+  constrained props cache the whole timeline (`driven`), things made in
+  the shot publish a look with their caches (`export_shot_look`), and
+  caches come in under a pipe group (`<item>_cache_GRP` > `_REF`).
+- Tests: `buildDev\test_stageCache_mayapy.py`,
+  `buildDev\test_shotItemCaches_mayapy.py`.
+- To do: (b) Build fills Lighting's list from the contents, with the
+  per-row choice of form; (c) Creature and FX publish rows and contents;
+  cameras as ABC / USD / FBX (for Lighting, Unreal, Gaffer).
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:

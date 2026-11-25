@@ -223,14 +223,12 @@ check("Repair writes missing edit layers again",
       and any("edit layers were missing" in f for f in fixed)
       and mayaUsd.ufe.getStage(api.stage_of(grass)[1]).GetPrimAtPath(blade).IsValid())
 
-# -- Animation publish refuses a stage -----------------------------------------
-try:
-    anim.classify(["grassB_USD"])
-    refusal = ""
-except pub.PublishError as e:
-    refusal = str(e)
-check("Animation publish refuses a USD stage, saying how to animate it",
-      "is a USD stage" in refusal and "untick USD" in refusal)
+# -- Animation publish takes a stage as an item (cached through a Maya copy:
+# user, 2026-11-25; test_stageCache) -----------------------------------------
+staged = anim.classify(["grassB_USD"])
+check("Animation publish takes a USD stage as an item, stamped as the model",
+      len(staged) == 1 and staged[0]["kind"] == anim.STAGE_KIND
+      and staged[0]["stamp"].get("asset") == "grassB")
 
 # -- switching to a Maya reference and back --------------------------------------
 check("as a Maya reference while it's a stage: refused unless asked",

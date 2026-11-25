@@ -2041,13 +2041,20 @@ def reference_cache(path, namespace):
     if not cmds.pluginInfo(plugin, query=True, loaded=True):
         cmds.loadPlugin(plugin, quiet=True)
     free_namespace(namespace)
-    group = namespace + "_GRP"
+    inner = namespace + "_REF"
     cmds.file(path, reference=True, type="FBX" if fbx else "Alembic", namespace=namespace,
-              mergeNamespacesOnClash=False, groupReference=True, groupName=group)
-    group = cmds.ls(group, long=True) or cmds.ls("*:" + group, long=True)
-    if group:
-        cmds.setAttr(group[0] + ".overrideEnabled", 1)
-        cmds.setAttr(group[0] + ".overrideDisplayType", 2)     # Reference
+              mergeNamespacesOnClash=False, groupReference=True, groupName=inner)
+    inner = (cmds.ls(inner, long=True) or [None])[0]
+    # In a pipe group, with the pipe icon, like everything Build brings in
+    # (user, 2026-11-25: caches came in without the RMIT group above them).
+    # A container can't hold referenced nodes, so the reference keeps its
+    # own plain group inside it.
+    group = pub.make_pipe_group(namespace + "_GRP")
+    pub.finish_pipe_group(group)
+    if inner:
+        cmds.parent(inner, group)
+    cmds.setAttr(group + ".overrideEnabled", 1)
+    cmds.setAttr(group + ".overrideDisplayType", 2)     # Reference
     return path
 
 
@@ -2547,11 +2554,25 @@ def _look_of(path):
     return files if all(os.path.isfile(f) for f in files) else None
 
 
-def look_for_cache(h_root, film, info, department=None):
+def look_for_cache(h_root, film, info, department=None, cache_path=None):
     """(look .ma, look .json, the publish it belongs to) for a cache's
-    .json info, or None (made in the shot, or published without a look).
-    Lighting: the asset's newest LookDev publish with a look first."""
+    .json info, or None (published without a look). Lighting: the asset's
+    newest LookDev publish with a look first. Something made in the shot:
+    the look its Animation publish wrote (info["look"], from the shot
+    folder; user 2026-11-25)."""
     stamp = info.get("asset") or {}
+    if not stamp.get("asset"):
+        if not (info.get("look") and cache_path):
+            return None
+        # <shot>\cache\<format>\<dept>\<login>\<cache>
+        shot_dir = cache_path
+        for _ in range(5):
+            shot_dir = os.path.dirname(shot_dir)
+        ma = os.path.join(shot_dir, *info["look"].split("/"))
+        files = (ma, os.path.splitext(ma)[0] + ".json")
+        if not all(os.path.isfile(f) for f in files):
+            return None
+        return files + (ma[:-len(LOOK_SUFFIX + ".ma")] + ".ma",)
     if department == "lighting" and stamp.get("asset"):
         lookdev = [p for p in list_published(h_root, film)
                    if (p["asset_type"], p["asset"], p["code"])
@@ -2632,11 +2653,15 @@ def apply_look(shot_dir, published, vid, department=None):
     is left alone. Returns (done lines, warning or None)."""
     info = (published.get("cache_info") or {}).get(vid) or {}
     namespace = namespace_for(published["asset"], published["code"])
+    # The pipe group (or the plain group caches had before 2026-11-25)
+    # records the look; meshes are matched from the reference's own group
+    # inside it (reference_cache).
     group = (cmds.ls(namespace + "_GRP", long=True) or [None])[0]
     if not group:
         return [], None
+    mesh_group = (cmds.ls(namespace + "_REF", long=True) or [group])[0]
     h_root, rel = pub.find_film_folder(published["versions"][vid])
-    look = look_for_cache(h_root, rel[0], info, department)
+    look = look_for_cache(h_root, rel[0], info, department, published["versions"][vid])
     if not look:
         if info.get("kind") in ("rig", "model"):
             return [], ("no look to put on the cache: %s v%03d was published without one "
@@ -2662,7 +2687,7 @@ def apply_look(shot_dir, published, vid, department=None):
     cmds.file(local, i=True, type="mayaAscii", namespace=look_ns,
               mergeNamespacesOnClash=False, preserveReferences=False)
 
-    matches = _match_meshes(group, [m["path"] for e in data["shading_groups"].values()
+    matches = _match_meshes(mesh_group, [m["path"] for e in data["shading_groups"].values()
                                     for m in e["members"]])
     missed = []
     split = set()       # meshes moved to per-face shading

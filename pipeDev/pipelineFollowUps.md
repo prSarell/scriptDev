@@ -531,6 +531,14 @@ hand. One T7 session could cover most of it.
       Also open the FBX in Unreal or Blender to check the skin and joints
       come through. And: is "every department builds everything" right
       once tested?
+- [ ] **Shot props, USD stages, contents** (spec §4m, 2026-11-25): in
+      SEQ010_120's anim scene, rename polySurface10 to walkingStick and
+      the power pack's `group` to powerPack, then add them, scout and
+      hillShed's USD stage to Publish and publish with ABC ticked. Check:
+      the rows say "constrained" / "USD stage, model v002"; in a Lighting
+      scene the stick and power pack follow scout's hand and wear their
+      shaders; hillShed's ABC wears its model look; every cache sits under
+      an RMIT pipe group; `..._anim_v###_contents.json` lists everything.
 
 ## 2. Decisions waiting on you
 
