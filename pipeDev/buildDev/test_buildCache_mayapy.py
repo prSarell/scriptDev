@@ -203,6 +203,26 @@ check("Animation: the rig's look", pick("anim") == "scout_scout_rig_v001_look.ma
 check("Lighting: the LookDev look", pick("lighting") == "scout_scout_lookDev_v001_look.ma")
 os.chmod(lookdev + "_look.ma", stat.S_IWRITE); os.remove(lookdev + "_look.ma")
 check("Lighting, LookDev has no look: the rig's", pick("lighting") == "scout_scout_rig_v001_look.ma")
+# A rig republished to fix its look (2026-11-26: scout's boots): Lighting
+# takes the newest rig look without the shot being recached; Animation keeps
+# the cached version's, unless that version has none.
+import time
+rig_v2 = rig_file.replace("_rig_v001", "_rig_v002")
+for src, dst in ((rig_file, rig_v2), (rig_look + ".ma", rig_v2[:-3] + "_look.ma"),
+                 (rig_look + ".json", rig_v2[:-3] + "_look.json")):
+    shutil.copy(src, dst)
+    os.utime(dst, (time.time() + 60, time.time() + 60))
+check("Lighting, a newer rig publish with a look: the newer one",
+      pick("lighting") == "scout_scout_rig_v002_look.ma")
+check("Animation: still the cached version's look", pick("anim") == "scout_scout_rig_v001_look.ma")
+for ext in (".ma", ".json"):
+    os.chmod(rig_look + ext, stat.S_IWRITE); os.rename(rig_look + ext, rig_look + ext + ".off")
+check("Animation, the cached version has no look: the newest one",
+      pick("anim") == "scout_scout_rig_v002_look.ma")
+for ext in (".ma", ".json"):
+    os.rename(rig_look + ext + ".off", rig_look + ext)
+for f in (rig_v2, rig_v2[:-3] + "_look.ma", rig_v2[:-3] + "_look.json"):
+    os.chmod(f, stat.S_IWRITE); os.remove(f)
 check("made in the shot: no look", api.look_for_cache(H, FILM, {"kind": "shot", "asset": {}}) is None)
 
 # --- the Build tab: Animation's list gets the shot's caches by itself

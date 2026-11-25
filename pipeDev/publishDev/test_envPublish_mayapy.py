@@ -148,6 +148,13 @@ check("published from the shot's layout scene to the environment asset, as Model
       and os.sep + os.path.join("environment", "scoutsHouseLandscape", "scenes", "model",
                                 "scout") in plan["dest"])
 check("read-only on H", not os.access(plan["dest"], os.W_OK))
+# Its look, for caches of it (2026-11-26: hillShed's cache lost its shaders).
+look_ma = os.path.splitext(plan["dest"])[0] + "_look.ma"
+look_js = json.load(open(os.path.splitext(look_ma)[0] + ".json")) if os.path.isfile(
+    os.path.splitext(look_ma)[0] + ".json") else {}
+check("a look beside it, with the ground's shader",
+      os.path.isfile(look_ma) and "snowMatSG" in look_js.get("shading_groups", {})
+      and look_js["shading_groups"]["snowMatSG"]["members"][0]["path"].endswith("|landscape|ground"))
 check("one-frame reference cache beside it", os.path.isfile(env.cache_path(plan)))
 check("working scene unchanged (names, placements, history, sets, image path)", before == after)
 check("playblast showed the environment's things",
@@ -161,6 +168,7 @@ cmds.file(new=True, force=True); cmds.file(plan["dest"], open=True, force=True)
 G = "scoutsHouseLandscape_model_GRP"
 check("top is the stamped pipe group (Modeling), locked", cmds.nodeType(G) == "dagContainer"
       and cmds.getAttr(G + ".pipe_department") == "model" and cmds.getAttr(G + ".tx", lock=True))
+check("group stamp names its look", cmds.getAttr(G + ".pipe_look") == os.path.basename(look_ma))
 check("laid out by role, no locators group made", sorted(cmds.listRelatives(G, children=True))
       == ["buildings", "landscape", "sky"] and not cmds.ls(type="locator"))
 check("the buildings group was unpacked: buildings > shed, not buildings > buildings",

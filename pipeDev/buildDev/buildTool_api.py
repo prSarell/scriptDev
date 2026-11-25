@@ -2573,18 +2573,29 @@ def look_for_cache(h_root, film, info, department=None, cache_path=None):
         if not all(os.path.isfile(f) for f in files):
             return None
         return files + (ma[:-len(LOOK_SUFFIX + ".ma")] + ".ma",)
-    if department == "lighting" and stamp.get("asset"):
-        lookdev = [p for p in list_published(h_root, film)
-                   if (p["asset_type"], p["asset"], p["code"])
-                   == (stamp.get("assetType"), stamp["asset"], "lookDev")]
-        for p in lookdev:
-            for vid in sorted_versions(p):
-                look = _look_of(p["versions"][vid])
-                if look:
-                    return look + (p["versions"][vid],)
+    def newest_look(code):
+        for p in list_published(h_root, film):
+            if (p["asset_type"], p["asset"], p["code"]) == (stamp.get("assetType"),
+                                                             stamp["asset"], code):
+                for vid in sorted_versions(p):
+                    look = _look_of(p["versions"][vid])
+                    if look:
+                        return look + (p["versions"][vid],)
+        return None
+
+    if department == "lighting":
+        # The newest look (2026-11-26): LookDev's, else the newest publish
+        # of the department the cache came from (a republished rig or
+        # environment fixes its look without the shot being recached).
+        found = newest_look("lookDev") or newest_look(stamp.get("department"))
+        if found:
+            return found
     source = _published_source(h_root, film, stamp)
     look = _look_of(source) if source else None
-    return look + (source,) if look else None
+    if look:
+        return look + (source,)
+    # Published without a look (environments before 2026-11-26): a later one's.
+    return newest_look(stamp.get("department"))
 
 
 def _pull_textures(source, maya_dir):

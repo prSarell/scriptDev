@@ -102,6 +102,15 @@ scene_b = shot("SEQ010_020")
 cmds.file(rename=scene_b); cmds.file(save=True, type="mayaAscii")
 check("another shot of the film sees the same presets",
       rp.list_presets() == ["blocking_001", "lookdev_001"])
+# A scene not saved yet (fresh from Build, 2026-11-26): the shot's project
+# says which film, so the film's presets still show.
+cmds.file(new=True, force=True)
+check("unsaved scene in a shot's project: the film's presets",
+      rp.list_presets() == ["blocking_001", "lookdev_001"]
+      and rp.where_label().startswith("Film RPT_TST")
+      and not os.path.isdir(os.path.join(os.path.dirname(scene_b), "..", "..", "..", "data",
+                                         "renderPresets")))
+cmds.file(rename=scene_b); cmds.file(save=True, type="mayaAscii")
 rp.ensure_arnold()
 cmds.setAttr("defaultRenderGlobals.startFrame", 1001)
 rp._aov_interface().addAOV("diffuse", aovType="rgb")

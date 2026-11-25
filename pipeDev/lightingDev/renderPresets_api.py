@@ -82,10 +82,21 @@ def _film_folder(scene_path):
     return os.path.join(root, rel[0], "maya") if len(rel) > 1 else None
 
 
+def _film_of(scene_path):
+    """The film folder for the scene, or for the Maya project when the scene
+    isn't saved yet (2026-11-26: a Lighting scene fresh from Build is
+    untitled, so the film's presets didn't show)."""
+    for path in (scene_path, cmds.workspace(q=True, rootDirectory=True)):
+        film = _film_folder(path) if path else None
+        if film:
+            return film
+    return None
+
+
 def preset_folder(scene_path=None):
     """The folder presets are saved in and listed from (made if missing)."""
     scene_path = cmds.file(q=True, sceneName=True) if scene_path is None else scene_path
-    film = _film_folder(scene_path) if scene_path else None
+    film = _film_of(scene_path)
     if film:
         folder = os.path.join(film, FOLDER)
     else:
@@ -98,7 +109,7 @@ def preset_folder(scene_path=None):
 def where_label(scene_path=None):
     """Where presets are shared, for the window."""
     scene_path = cmds.file(q=True, sceneName=True) if scene_path is None else scene_path
-    film = _film_folder(scene_path) if scene_path else None
+    film = _film_of(scene_path)
     if film:
         return "Film %s: shared by every shot" % os.path.basename(os.path.dirname(film))
     project = os.path.basename(os.path.normpath(cmds.workspace(q=True, rootDirectory=True) or ""))

@@ -342,12 +342,19 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                 entries = tex.collect(texture_nodes, image_planes=True)
                 warnings += source_image_warnings(entries, plan)
                 with tex.PublishedTextures(entries, plan) as files:
+                    # The environment's look, for caches of it (2026-11-26:
+                    # hillShed's cache came into Lighting without shaders,
+                    # sky included: environments wrote no look). Written
+                    # while the textures point at their published copies.
+                    import publishTool_look as look
+                    with api._CopiesDriveShaders(twins):
+                        looks = look.export_look(plan, [cmds.ls(group, long=True)[0]])
                     api._stamp(group, info + [
                         ("buildings", json.dumps([cmds.ls(u)[0].split("|")[-1]
                                                   for u in copies[BUILDINGS]])),
                         ("locators", json.dumps(locators)),
                         ("textures", json.dumps(files.stamp_textures)),
-                    ])
+                    ] + ([("look", os.path.basename(looks[0]))] if looks else []))
                     api.finish_pipe_group(group)
                     cmds.select(group, replace=True)
                     cmds.select(cmds.ls(made[1:]), add=True, noExpand=True)
@@ -382,7 +389,10 @@ def export_environment_to_h_drive(plan, scene_path, found, warnings):
                     if cmds.ls(uuid):
                         cmds.rename(cmds.ls(uuid)[0], short)
     except Exception:
-        for path in (plan["dest"], cache_path(plan)):
+        look_files = plan.get("look") or {}
+        for path in (plan["dest"], cache_path(plan), look_files.get("file"), look_files.get("map")):
+            if not path:
+                continue
             if os.path.exists(path):
                 os.chmod(path, 0o666)
                 os.remove(path)
