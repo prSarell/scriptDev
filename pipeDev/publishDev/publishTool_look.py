@@ -96,8 +96,16 @@ def collect(roots):
         members = _members(engine, roots)
         inputs = _inputs(engine)
         if members and inputs:
-            look[_clean(engine)] = {"inputs": dict((a, _clean(p)) for a, p in inputs.items()),
-                                    "members": members, "_inputs": inputs}
+            # Without namespaces two shading groups can share a name
+            # (boots:lambert3SG and lambert3SG): number the later one, or
+            # it overwrites the first (2026-11-25: scout's boots were lost).
+            key, n = _clean(engine), 1
+            while key in look:
+                key, n = "%s%d" % (_clean(engine), n), n + 1
+            # Inputs keep their namespaces: the look .ma does too, and
+            # stripped, a:mat and b:mat would be the same name.
+            look[key] = {"inputs": dict((a, p.lstrip(":")) for a, p in inputs.items()),
+                         "members": members, "_inputs": inputs}
     return look
 
 

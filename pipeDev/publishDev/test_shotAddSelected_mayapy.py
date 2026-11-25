@@ -106,7 +106,7 @@ cam.publish_camera = lambda *a, **k: (calls.append(("cam", k["camera"])), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None})[1]
 anim.publish_anim = lambda *a, **k: (calls.append((k["publish_for"], sorted(k["objects"]),
-                                                    k.get("camera"))), {
+                                                    k.get("camera"), k.get("caches"))), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None, "stage": "blocking"})[1]
 w._publish()
@@ -122,6 +122,18 @@ calls[:] = []
 w._publish()
 check("an unticked row isn't published", [c[1] for c in calls if c[0] == "anim"]
       == [["backpack:backpack_model_GRP"]])
+check("no cache ticked: no caches asked for", calls[0][3] == [])
+
+# The row's cache ticks reach the publish (2026-11-25: they were dropped).
+row = [i for i, r in enumerate(w._rows) if r["asset"] == "backpack"][0]
+for key in ("abc", "fbx"):
+    w.table.item(row, ui.OUTPUT_COLUMN + ui.outputs.FORMAT_KEYS.index(key)).setCheckState(
+        ui.QtCore.Qt.Checked)
+app.processEvents()
+calls[:] = []
+w._publish()
+check("ABC and FBX ticked on the row: the publish makes ABC and FBX caches",
+      [c[3] for c in calls if c[0] == "anim"] == [["abc", "fbx"]])
 
 # Take them off and add them again for Layout: Layout publish.
 w.table.selectAll()

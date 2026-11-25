@@ -2604,6 +2604,27 @@ def _match_meshes(group, paths):
     return found
 
 
+def _look_node(look_ns, name):
+    """A material node imported from a look: look_ns:name, or the one node
+    of that name in a namespace under it. A material that was namespaced
+    in the rig scene keeps its namespace in the look .ma, but the .json
+    names it without (2026-11-25: scout's dress and hair)."""
+    if cmds.objExists("%s:%s" % (look_ns, name)):
+        return "%s:%s" % (look_ns, name)
+    found = [n for n in cmds.ls(name, recursive=True) or []
+             if n.startswith(look_ns + ":")]
+    return found[0] if len(found) == 1 else None
+
+
+def _all_faces(target, faces):
+    """True if a face list like "f[0:7087]" is every face of the mesh."""
+    m = re.match(r"^f\[0(?::(\d+))?\]$", faces)
+    if not m:
+        return False
+    count = cmds.polyEvaluate(target, face=True)
+    return isinstance(count, int) and count == int(m.group(1) or 0) + 1
+
+
 def apply_look(shot_dir, published, vid, department=None):
     """Put the look on a cache built into the open scene: import the look's
     materials (namespace <cache namespace>_look), make its shading groups
@@ -2644,20 +2665,29 @@ def apply_look(shot_dir, published, vid, department=None):
     matches = _match_meshes(group, [m["path"] for e in data["shading_groups"].values()
                                     for m in e["members"]])
     missed = []
+    split = set()       # meshes moved to per-face shading
     for sg_name, entry in sorted(data["shading_groups"].items()):
         sg = cmds.sets(renderable=True, noSurfaceShader=True, empty=True,
                        name="%s:%s" % (look_ns, sg_name))
         for attr, src in entry["inputs"].items():
-            plug = "%s:%s" % (look_ns, src)
-            if cmds.objExists(plug.split(".")[0]):
-                cmds.connectAttr(plug, "%s.%s" % (sg, attr), force=True)
+            node = _look_node(look_ns, src.split(".")[0])
+            if node:
+                cmds.connectAttr(node + "." + src.split(".", 1)[1], "%s.%s" % (sg, attr),
+                                 force=True)
         for member in entry["members"]:
             target = matches.get(member["path"])
             if not target:
                 missed.append(member["path"].split("|")[-1])
                 continue
-            cmds.sets(target + ("." + member["faces"] if member["faces"] else ""),
-                      edit=True, forceElement=sg)
+            faces = member["faces"]
+            if faces and _all_faces(target, faces):
+                faces = None
+            if faces and target not in split:
+                # Faces only: the mesh goes per-face first, or its whole-mesh
+                # default shader still wins (2026-11-25: scout's dress).
+                cmds.sets(target + ".f[*]", edit=True, forceElement="initialShadingGroup")
+                split.add(target)
+            cmds.sets(target + ("." + faces if faces else ""), edit=True, forceElement=sg)
     if not cmds.attributeQuery(LOOK_ATTR, node=group, exists=True):
         cmds.addAttr(group, longName=LOOK_ATTR, dataType="string")
     cmds.setAttr(group + "." + LOOK_ATTR, name, type="string")

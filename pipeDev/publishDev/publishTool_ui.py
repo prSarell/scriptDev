@@ -1092,7 +1092,12 @@ class PublishToolUI(QtWidgets.QDialog):
             if items:
                 job = {"asset_type": "shot", "asset": ", ".join(r["asset"] for r in items),
                        "code": anim.ANIM_CODE, "publish_for": stage,
-                       "objects": [r["objects"][0] for r in items]}
+                       "objects": [r["objects"][0] for r in items],
+                       # The rows' cache ticks: one publish, so any row's
+                       # tick caches every item (2026-11-25: the job
+                       # dropped them, so no cache was ever written).
+                       "outputs": [k for k in outputs.FORMAT_KEYS
+                                   if any(k in (r.get("outputs") or ()) for r in items)]}
                 # The shot camera for the same stage goes in the same publish:
                 # one movie, one ShotGrid Version (user, 2026-10-28).
                 camera = next((r for r in jobs if r["code"] == cam.CAM_CODE
