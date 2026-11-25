@@ -106,7 +106,8 @@ cam.publish_camera = lambda *a, **k: (calls.append(("cam", k["camera"])), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None})[1]
 anim.publish_anim = lambda *a, **k: (calls.append((k["publish_for"], sorted(k["objects"]),
-                                                    k.get("camera"), k.get("caches"))), {
+                                                    k.get("camera"), k.get("caches"),
+                                                    k.get("camera_outputs"))), {
     "version": 1, "login": "scout", "sg_error": None, "sg_shot": {"code": "EAP_010_010"},
     "movie_warning": None, "stage": "blocking"})[1]
 w._publish()
@@ -134,6 +135,27 @@ calls[:] = []
 w._publish()
 check("ABC and FBX ticked on the row: the publish makes ABC and FBX caches",
       [c[3] for c in calls if c[0] == "anim"] == [["abc", "fbx"]])
+check("no camera format ticked: none asked for", calls[0][4] == [])
+
+# The Camera row ticks the camera for other software (user, 2026-11-26).
+row = [i for i, r in enumerate(w._rows) if r["code"] == cam.CAM_CODE][0]
+obj_col = ui.OUTPUT_COLUMN + ui.outputs.FORMAT_KEYS.index("obj")
+check("Camera row: ABC, USD, FBX tickable, OBJ not",
+      all(w.table.item(row, ui.OUTPUT_COLUMN + ui.outputs.FORMAT_KEYS.index(k)).flags()
+          & ui.QtCore.Qt.ItemIsUserCheckable for k in ("abc", "usd", "fbx"))
+      and not w.table.item(row, obj_col).flags() & ui.QtCore.Qt.ItemIsUserCheckable)
+for key in ("usd", "fbx"):
+    w.table.item(row, ui.OUTPUT_COLUMN + ui.outputs.FORMAT_KEYS.index(key)).setCheckState(
+        ui.QtCore.Qt.Checked)
+app.processEvents()
+text = w.table.item(row, 4).text()
+print("    tooltip:", w.table.item(row, 4).toolTip())
+check("Camera row says it publishes USD + FBX too: " + text, text.endswith("+ keys  + USD + FBX")
+      and "cache\\usd\\anim\\scout\\EAP_010_010_scout_cam_v001.usd" in w.table.item(row, 4).toolTip())
+calls[:] = []
+w._publish()
+check("the camera's ticks reach the publish it goes out with",
+      [c[4] for c in calls if c[0] == "anim"] == [["usd", "fbx"]])
 
 # Take them off and add them again for Layout: Layout publish.
 w.table.selectAll()

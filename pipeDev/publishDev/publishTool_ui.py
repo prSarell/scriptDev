@@ -252,7 +252,8 @@ def _cell(text, colour=None):
 
 # The publish list's columns: ..., Publishes as, then a tick per format for
 # other software (user, 2026-10-30): Modeling rows, and an Animation row's
-# caches (ABC, USD; user, 2026-11-24; FBX 2026-11-25).
+# caches (ABC, USD; user, 2026-11-24; FBX 2026-11-25), and a Camera row's
+# camera for other software (ABC, USD, FBX; user, 2026-11-26).
 OUTPUT_COLUMN = 5
 
 
@@ -261,11 +262,13 @@ def _is_anim_cache_row(row):
 
 
 def _output_cell(row, key):
-    """A format's tick for a Modeling row (environments included) or an
-    Animation row's cache formats, else -."""
+    """A format's tick for a Modeling row (environments included), an
+    Animation row's cache formats or a Camera row's formats, else -."""
     cache_row = _is_anim_cache_row(row)
+    camera_row = row["code"] == cam.CAM_CODE
     if not (row["code"] in (api.MODEL_CODE, env.ENV_CODE)
-            or (cache_row and key in anim.CACHE_FORMATS)):
+            or (cache_row and key in anim.CACHE_FORMATS)
+            or (camera_row and key in cam.EXPORT_FORMATS)):
         item = _cell("-", "#666666")
         item.setFlags(QtCore.Qt.ItemIsEnabled)      # nothing to tick
         return item
@@ -274,6 +277,9 @@ def _output_cell(row, key):
     item.setCheckState(QtCore.Qt.Checked if key in row.get("outputs", [])
                        else QtCore.Qt.Unchecked)
     item.setToolTip(
+        "Also publish the camera as %s, baked every frame, for other software\n"
+        "(Unreal, Houdini, Blender, Gaffer...), in the shot's cache folder."
+        % outputs.LABELS[key] if camera_row else
         "Also publish a %s cache of it (for lighting, FX, other software).\n"
         "Any cache makes this a Final publish." % outputs.LABELS[key] if cache_row else
         "Also publish %s, for other software. This asset remembers it." % outputs.LABELS[key])
@@ -553,7 +559,10 @@ class PublishToolUI(QtWidgets.QDialog):
     def _plan(self, row):
         scene = cmds.file(query=True, sceneName=True)
         if row["code"] == cam.CAM_CODE:
-            return cam.plan_camera(scene, *self._roots(), camera=row["objects"][0])
+            # In the stage's folder, as publish_camera does (the list showed
+            # scenes\layout\ for an Animation camera; 2026-11-26).
+            return cam.plan_camera(scene, *self._roots(), camera=row["objects"][0],
+                                   department=row.get("publish_for"))
         if row["code"] == anim.ANIM_CODE:
             return anim.plan_anim(scene, *self._roots(), items=anim.classify(row["objects"]),
                                   publish_for=row["publish_for"])
@@ -622,6 +631,10 @@ class PublishToolUI(QtWidgets.QDialog):
                 if row["code"] == cam.CAM_CODE:
                     text += "  + keys"
                     dest += "\n" + plan["keys_dest"]
+                    formats = cam.export_formats(row.get("outputs"))
+                    if formats:
+                        text += "  + %s" % " + ".join(f.upper() for f in formats)
+                        dest += "".join("\n" + plan["exports"][f][0] for f in formats)
                 elif row["code"] == anim.ANIM_CODE:
                     files = plan["item_files"][item["name"]]
                     settings = anim.carries_settings(item)
@@ -671,7 +684,7 @@ class PublishToolUI(QtWidgets.QDialog):
             wanted = set(row.get("outputs", []))
             (wanted.add if item.checkState() == QtCore.Qt.Checked else wanted.discard)(key)
             row["outputs"] = [k for k in outputs.FORMAT_KEYS if k in wanted]
-            if _is_anim_cache_row(row):     # "Publishes as" names the caches
+            if _is_anim_cache_row(row) or row["code"] == cam.CAM_CODE:  # "Publishes as" names them
                 QtCore.QTimer.singleShot(0, self._render_table)
             return
         if item.column() != 0:
@@ -1109,6 +1122,7 @@ class PublishToolUI(QtWidgets.QDialog):
                 if camera:
                     jobs.remove(camera)
                     job["camera"] = camera["objects"][0]
+                    job["camera_outputs"] = camera.get("outputs") or []
                     job["asset"] += " + camera"
                 jobs.append(job)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
@@ -1132,13 +1146,14 @@ class PublishToolUI(QtWidgets.QDialog):
                                                   camera=row["objects"][0],
                                                   frame_count=frames, notes=notes,
                                                   publish_for=row["publish_for"],
-                                                  review=review)
+                                                  review=review, outputs=row.get("outputs"))
                     elif row["code"] == anim.ANIM_CODE:
                         plan = anim.publish_anim(scene, *self._roots(),
                                                  objects=row["objects"], notes=notes,
                                                  publish_for=row["publish_for"],
                                                  review=review, camera=row.get("camera"),
-                                                 caches=row.get("outputs"))
+                                                 caches=row.get("outputs"),
+                                                 camera_outputs=row.get("camera_outputs"))
                         if plan.get("caches"):
                             label += " (Final: %s caches)" % " + ".join(
                                 f.upper() for f in plan.get("caches"))

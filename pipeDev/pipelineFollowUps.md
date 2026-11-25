@@ -539,6 +539,14 @@ hand. One T7 session could cover most of it.
       scene the stick and power pack follow scout's hand and wear their
       shaders; hillShed's ABC wears its model look; every cache sits under
       an RMIT pipe group; `..._anim_v###_contents.json` lists everything.
+- [ ] **Camera to other software** (spec §4m, 2026-11-26): on a Camera
+      row tick ABC, USD and FBX and publish (with or without Animation
+      rows). Check `<shot>\cache\{alembic,usd,fbx}\<dept>\<login>\`
+      has `<shot>_<login>_cam_v###` files, then open each where it's
+      going: FBX in Unreal (Sequencer, import onto a CineCamera) and
+      Blender, ABC in Houdini / Blender, USD in Gaffer / Unreal. The move,
+      focal length and film back should match Maya's camera1 frame for
+      frame. Check the scale too (Maya cm vs Unreal cm, Blender/Houdini m).
 
 ## 2. Decisions waiting on you
 

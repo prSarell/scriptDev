@@ -4197,8 +4197,20 @@ unsimmed dress".
 - Tests: `buildDev\test_stageCache_mayapy.py`,
   `buildDev\test_shotItemCaches_mayapy.py`.
 - To do: (b) Build fills Lighting's list from the contents, with the
-  per-row choice of form; (c) Creature and FX publish rows and contents;
-  cameras as ABC / USD / FBX (for Lighting, Unreal, Gaffer).
+  per-row choice of form; (c) Creature and FX publish rows and contents.
+- BUILT 2026-11-26, cameras for other software (user: "we need to be able
+  to send camera to blender houdini Unreal gaffer etc"): a Camera row has
+  ABC / USD / FBX ticks (Layout and Animation alike; never remembered,
+  like the Animation row's). Each writes the baked, world-space camera
+  (bake_camera's copy, keys on it, scale 1; not the Maya file's data node)
+  beside the shot's caches, in the stage's folder:
+  `<shot>\cache\{alembic,usd,fbx}\<department>\<login>\<shot>_<login>_cam_v###.<ext>`
+  with a `.json` (kind camera, frames, fps, cm, film back in mm). The
+  camera's version, all or nothing with its Maya files. ABC: Houdini,
+  Blender, Gaffer; USD: Gaffer, Solaris, Unreal; FBX: Unreal Sequencer,
+  Blender. Build doesn't list them (Lighting in Maya builds the Maya
+  camera). The per-app `fromMaya` folders stay for app-specific exports
+  (fbxExport.py). Test: `publishDev\test_cameraExports_mayapy.py`.
 
 ## 5. Context: what the existing tools assume
 

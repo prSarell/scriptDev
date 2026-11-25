@@ -978,7 +978,7 @@ def copy_movie_for_edit(plan):
 # ---------------------------------------------------------------------------
 
 def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_for=ANIM_CODE,
-                 review=None, camera=None, caches=()):
+                 review=None, camera=None, caches=(), camera_outputs=()):
     """Playblast through the shot camera -> keys, full file (and the
     ticked caches) to the H drive -> ShotGrid Version on the Shot, linked
     to its task -> movie copy for the edit.
@@ -990,7 +990,8 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     goes out in this publish (user, 2026-10-28: "We don't need a mov per
     asset in a publish"): the movie is made through it, and its files are
     written with its own camera version (plan["camera_plan"]), but there's
-    one movie and one ShotGrid Version for everything.
+    one movie and one ShotGrid Version for everything. camera_outputs: the
+    formats ticked on its row ("abc", "usd", "fbx": for other software).
 
     Everything that can refuse (what's selected, RV) happens
     before the playblast and any H-drive write."""
@@ -1034,9 +1035,10 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
     cam_written = []
     try:
         if cam_plan:
-            plan["warnings"] = list(cam.export_camera(camera, cam_plan, start, end, scene_path)
+            plan["warnings"] = list(cam.export_camera(camera, cam_plan, start, end, scene_path,
+                                                      camera_outputs)
                                     or []) + ([edit_warning] if edit_warning else [])
-            cam_written = [cam_plan[k] for k in ("dest", "keys_dest", "map_dest")]
+            cam_written = list(cam_plan["written"])
         plan["written"] = cam_written + write_anim(items, plan, start, end, scene_path)
     except Exception:
         for path in cam_written:        # all or nothing, the camera too
@@ -1050,8 +1052,10 @@ def publish_anim(scene_path, h_root, scratch_root, objects, notes="", publish_fo
         if plan["caches"] else "",
         ", ".join(i["label"] for i in items))]
     if cam_plan:
-        lines.append("Camera v%03d (%s, keys baked %d-%d)" % (
-            cam_plan["version"], cam_plan["objects"][0], start, end))
+        lines.append("Camera v%03d (%s, keys baked %d-%d)%s" % (
+            cam_plan["version"], cam_plan["objects"][0], start, end,
+            "".join("\n  " + cam_plan["exports"][f][0]
+                    for f in cam.export_formats(camera_outputs))))
     lines += ["%s: %d unkeyed control settings carried" % (i["name"], i["settings"])
               for i in items if i.get("settings")]
     baked = ["%s: on an animation layer, baked every frame: %s" % (i["name"], ", ".join(i["baked"]))

@@ -12,6 +12,8 @@ Design: pipeDev/filmPipeline_spec.md §3i "Cameras" and "The ID rule".
                EAP_010_010_s1234567_cam_v001.ma
                EAP_010_010_s1234567_camAnim_v001.ma
                EAP_010_010_s1234567_camAnim_v001.json
+             cache\{alembic,usd,fbx}\layout\s1234567\    (ticked on the row:
+               EAP_010_010_s1234567_cam_v001.abc/.usd/.fbx  + .json  other software)
 
 Rules (DECIDED 2026-10-12):
 - A camera belongs to a shot; the ShotGrid Version goes on the Shot.
@@ -35,6 +37,7 @@ referenced one (driven, locked) with no reference path to manage.
 import os
 import re
 import json
+import stat
 
 import maya.cmds as cmds
 
@@ -52,6 +55,14 @@ STARTUP_CAMERAS = ("persp", "top", "front", "side")
 TRANSFORM_ATTRS = ("translateX", "translateY", "translateZ",
                    "rotateX", "rotateY", "rotateZ")
 SCALE_ATTRS = ("scaleX", "scaleY", "scaleZ")
+# The camera for other software (user, 2026-11-26: "send camera to blender
+# houdini Unreal gaffer etc"): ticked per Camera row, written baked, in
+# world space, beside the shot's caches in the department's folder:
+#   <shot>\cache\{alembic,usd,fbx}\<department>\<login>\<shot>_<login>_cam_v###.<ext>
+# with a .json beside each saying what it is.
+EXPORT_FORMATS = ("abc", "usd", "fbx")
+EXPORT_EXT = {"abc": ".abc", "usd": ".usd", "fbx": ".fbx"}
+EXPORT_FOLDER = {"abc": "alembic", "usd": "usd", "fbx": "fbx"}
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +209,11 @@ def plan_camera(scene_path, h_root, scratch_root, camera=None, department=None):
     versions = published_camera_versions(h_root, ctx["rel_folder"][:5], ctx["shot"], login)
     version = (versions[-1] + 1) if versions else 1
     names = camera_file_names(ctx["shot"], login, version)
+    exports = {}
+    for fmt in EXPORT_FORMATS:          # {fmt: (file, its .json)}
+        base = os.path.join(h_shot, "cache", EXPORT_FOLDER[fmt], department, login,
+                            api.published_name(ctx["shot"], login, CAM_CODE, version, ""))
+        exports[fmt] = (base + EXPORT_EXT[fmt], base + ".json")
     ctx.update({
         "login": login,
         "code": CAM_CODE,
@@ -209,6 +225,7 @@ def plan_camera(scene_path, h_root, scratch_root, camera=None, department=None):
         "dest": os.path.join(h_folder, names["camera"]),
         "keys_dest": os.path.join(h_folder, names["keys"]),
         "map_dest": os.path.join(h_folder, names["map"]),
+        "exports": exports,
     })
     return ctx
 
@@ -367,6 +384,100 @@ def image_plane_info(camera):
 
 
 # ---------------------------------------------------------------------------
+# The camera for other software: ABC, USD, FBX
+# ---------------------------------------------------------------------------
+
+def export_formats(formats):
+    """The ticked formats a camera can be written as, in order."""
+    return [fmt for fmt in EXPORT_FORMATS if fmt in (formats or ())]
+
+
+def _load_plugin(name):
+    if not cmds.pluginInfo(name, query=True, loaded=True):
+        cmds.loadPlugin(name, quiet=True)
+
+
+def _export_abc(camera, path, start, end):
+    """Alembic carries the camera's move, focal length, film back and clip
+    planes; Houdini, Blender, Gaffer and Arnold read it."""
+    _load_plugin("AbcExport")
+    cmds.AbcExport(jobArg='-frameRange %d %d -worldSpace -dataFormat ogawa -root %s -file "%s"'
+                   % (start, end, camera, path.replace("\\", "/")))
+
+
+def _export_usd(camera, path, start, end):
+    """A UsdGeomCamera, every frame: Gaffer, Houdini (Solaris), Unreal."""
+    _load_plugin("mayaUsdPlugin")
+    cmds.select(camera, replace=True)
+    cmds.mayaUSDExport(file=path.replace("\\", "/"), selection=True, frameRange=(start, end),
+                       defaultUSDFormat="usdc")
+
+
+def _export_fbx(camera, path, start, end):
+    """FBX, baked every frame: Unreal's Sequencer, Blender."""
+    import maya.mel as mel
+    _load_plugin("fbxmaya")
+    cmds.select(camera, replace=True)
+    mel.eval("FBXResetExport")
+    for command in ("FBXExportCameras -v true", "FBXExportLights -v false",
+                    "FBXExportSkins -v false", "FBXExportShapes -v false",
+                    "FBXExportConstraints -v false", "FBXExportInputConnections -v false",
+                    "FBXExportEmbeddedTextures -v false", "FBXExportBakeComplexAnimation -v true",
+                    "FBXExportBakeComplexStart -v %d" % start,
+                    "FBXExportBakeComplexEnd -v %d" % end,
+                    "FBXExportBakeComplexStep -v 1"):
+        mel.eval(command)
+    mel.eval('FBXExport -f "%s" -s' % path.replace("\\", "/"))
+
+
+# Looked up by name when publishing, so a test can swap one.
+EXPORTERS = {"abc": "_export_abc", "usd": "_export_usd", "fbx": "_export_fbx"}
+
+
+def write_exports(pub_tr, pub_sh, plan, formats, start, end, scene_path, camera, written):
+    """The baked world-space camera (bake_camera's, keys on it) as each
+    ticked format, with a .json beside each. Adds each file to written
+    before writing it, so a failure can remove it."""
+    aperture = [round(cmds.getAttr("%s.%s" % (pub_sh, a)) * 25.4, 4)
+                for a in ("horizontalFilmAperture", "verticalFilmAperture")]
+    for fmt in export_formats(formats):
+        path, info_path = plan["exports"][fmt]
+        if not os.path.isdir(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
+        written.append(path)
+        globals()[EXPORTERS[fmt]](pub_tr, path, start, end)
+        api._lock(path)
+        info = {
+            "kind": "camera",
+            "format": fmt,
+            "camera": PUBLISHED_CAMERA,
+            "shot": plan["shot"],
+            "login": plan["login"],
+            "version": plan["version"],
+            "department": plan["department"],
+            "published_from": plan.get("publish_for") or "layout",
+            "start": start,
+            "end": end,
+            "fps": api._scene_fps(),
+            "units": "cm",
+            "film_back_mm": aperture,
+            "source_scene": os.path.basename(scene_path),
+            "source_camera": cmds.ls(camera)[0],
+            "maya_file": os.path.basename(plan["dest"]),
+        }
+        written.append(info_path)
+        with open(info_path, "w") as f:
+            json.dump(info, f, indent=2, sort_keys=True)
+        api._lock(info_path)
+
+
+def _remove(path):
+    if os.path.exists(path):
+        os.chmod(path, stat.S_IWRITE)
+        os.remove(path)
+
+
+# ---------------------------------------------------------------------------
 # Export the two files
 # ---------------------------------------------------------------------------
 
@@ -471,12 +582,17 @@ def _lock_transform(node):
         cmds.setAttr("%s.%s" % (node, attr), lock=True)
 
 
-def export_camera(camera, plan, start, end, scene_path):
+def export_camera(camera, plan, start, end, scene_path, formats=()):
     """Bake, then write the keys file + map and the camera group file to the
-    H drive. Nothing it makes is left in the open scene. Returns warnings."""
-    for key in ("dest", "keys_dest", "map_dest"):
-        if os.path.exists(plan[key]):
-            raise PublishError("%s already exists — try again." % plan[key])
+    H drive, and the camera as each ticked format (formats: "abc", "usd",
+    "fbx"). Nothing it makes is left in the open scene and, if anything
+    fails, nothing it wrote is left on H. plan["written"]: the files
+    written. Returns warnings."""
+    formats = export_formats(formats)
+    for path in [plan[k] for k in ("dest", "keys_dest", "map_dest")] + \
+            [p for fmt in formats for p in plan["exports"][fmt]]:
+        if os.path.exists(path):
+            raise PublishError("%s already exists — try again." % path)
     if not os.path.isdir(plan["h_folder"]):
         os.makedirs(plan["h_folder"])
 
@@ -490,13 +606,18 @@ def export_camera(camera, plan, start, end, scene_path):
         uuid = cmds.ls(camera, uuid=True)[0]     # its path changes with the group's name
         aside = cmds.rename("|" + group_name, group_name + "_publishing")
         camera = cmds.ls(uuid, long=True)[0]
-    made = []
+    made, written = [], []
+    plan["written"] = []
     try:
         planes = image_plane_info(camera)
         pub_tr, pub_sh, curves, warnings = bake_camera(camera, start, end)
         made = [pub_tr] + list(curves)
+        # Other software gets the baked camera itself, keys on it (the
+        # data node is only Maya's way of keeping it locked).
+        write_exports(pub_tr, pub_sh, plan, formats, start, end, scene_path, camera, written)
         data, curve_attrs, attrs = make_data_node(pub_tr, pub_sh, curves)
         made = [pub_tr, data] + list(curve_attrs)
+        written.append(plan["keys_dest"])
         _export(list(curve_attrs), plan["keys_dest"])
         mapping = {
             "format": MAP_FORMAT,
@@ -516,6 +637,7 @@ def export_camera(camera, plan, start, end, scene_path):
             "attrs": attrs,                 # data node attribute -> [where, camera attribute]
             "image_planes": planes,
         }
+        written.append(plan["map_dest"])
         with open(plan["map_dest"], "w") as f:
             json.dump(mapping, f, indent=2, sort_keys=True)
         api._lock(plan["map_dest"])
@@ -529,7 +651,12 @@ def export_camera(camera, plan, start, end, scene_path):
             _lock_transform(node)
         api.finish_pipe_group(group)    # icon, locked at the origin, channels hidden
         api._stamp(group, camera_stamp(plan, scene_path, planes, start, end))
+        written.append(plan["dest"])
         _export([group], plan["dest"])
+    except Exception:
+        for path in written:        # all or nothing
+            _remove(path)
+        raise
     finally:
         existing = [n for n in made if cmds.objExists(n)]
         if existing:
@@ -538,6 +665,7 @@ def export_camera(camera, plan, start, end, scene_path):
             cmds.rename(aside, group_name)
         cmds.currentTime(current)
         cmds.select(selection, replace=True) if selection else cmds.select(clear=True)
+    plan["written"] = written
     return warnings
 
 
@@ -567,7 +695,7 @@ def find_shotgrid_shot(plan, h_root):
 # ---------------------------------------------------------------------------
 
 def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, notes="",
-                   publish_for="layout", review=None):
+                   publish_for="layout", review=None, outputs=()):
     """ShotGrid lookup -> playblast through the camera -> bake + write both
     files to the H drive -> ShotGrid Version on the Shot.
 
@@ -603,7 +731,7 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
     api.review_before_publish(plan, review, plan["shot_project"], plan["audio"], audio_offset)
 
     try:
-        plan["warnings"] = export_camera(camera, plan, start, end, scene_path)
+        plan["warnings"] = export_camera(camera, plan, start, end, scene_path, outputs)
         if edit_warning:
             plan["warnings"] = list(plan["warnings"] or []) + [edit_warning]
     except Exception:
@@ -611,9 +739,10 @@ def publish_camera(scene_path, h_root, scratch_root, camera, frame_count=None, n
         api.remove_frames(plan["frames_folder"], plan["shot_project"])
         raise
 
-    note = ("Published camera v%03d to the H drive:\n%s\n%s\n"
+    note = ("Published camera v%03d to the H drive:\n%s\n%s\n%s"
             "(from %s, camera %s, keys baked %d-%d)" % (
                 plan["version"], plan["dest"], plan["keys_dest"],
+                "".join(plan["exports"][f][0] + "\n" for f in export_formats(outputs)),
                 os.path.basename(scene_path), plan["objects"][0], start, end))
     if notes.strip():
         note = notes.strip() + "\n\n---\n" + note
