@@ -99,9 +99,25 @@ group = cmds.ls("walkingStick_cache_GRP", long=True)
 check("cache in a pipe group: dagContainer with the pipe icon",
       group and cmds.nodeType(group[0]) == "dagContainer"
       and cmds.getAttr(group[0] + ".iconName") == pub.PIPE_ICON)
-check("... the cache inside it, display Reference",
-      cmds.ls("walkingStick_cache:walkingStick", long=True)[0].startswith(group[0] + "|")
-      and cmds.getAttr(group[0] + ".overrideDisplayType") == 2)
+# Lighting imports caches (user, 2026-11-26): members of the group, so the
+# Outliner shows them, and selectable; still read from scratch, not H.
+stick = cmds.ls("walkingStick_cache:walkingStick", long=True)[0]
+check("... the cache imported inside it, a member, selectable",
+      stick.startswith(group[0] + "|") and not cmds.referenceQuery(stick, isNodeReferenced=True)
+      and stick.split("|")[-1] in [m.split("|")[-1] for m in
+                                   cmds.container(group[0], query=True, nodeList=True) or []]
+      and not cmds.getAttr(group[0] + ".overrideEnabled"))
+abc_nodes = cmds.ls("walkingStick_cache:*", type="AlembicNode")
+abc_file = cmds.getAttr(abc_nodes[0] + ".abc_File") if abc_nodes else ""
+print("    abc_File:", abc_file)
+check("... reading the cache from scratch through $PIPE_SCRATCH, not from H",
+      abc_file.startswith("$PIPE_SCRATCH/") and os.path.isfile(os.path.expandvars(abc_file))
+      and os.path.normcase(os.path.expandvars(abc_file)).startswith(os.path.normcase(SC))
+      and not os.path.normcase(os.path.expandvars(abc_file)).startswith(os.path.normcase(H)))
+again, _, _ = api.build_asset(shot_s, caches["walkingStick"], caches["walkingStick"]["latest"],
+                              "lighting")
+check("building again: already up to date, imported once",
+      "already up to date" in again and len(cmds.ls("*:walkingStick", recursive=True)) == 1)
 cmds.currentTime(10)
 check("stick moves with the hand",
       abs(cmds.xform("walkingStick_cache:walkingStick", query=True, worldSpace=True,

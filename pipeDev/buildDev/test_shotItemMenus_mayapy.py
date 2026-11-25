@@ -150,12 +150,14 @@ check("... scene_version sees it", api.scene_version(shot_s, by_fmt["usd"]) == v
 done, _, _ = api.build_asset(shot_s, by_fmt["usd"], vid, "lighting")
 check("... built again: already up to date", done == ["already up to date"])
 
-# --- FBX cache: referenced in its own namespace and group
+# --- FBX cache: Lighting imports it (2026-11-26) in its own namespace and group
 done, warning, _ = api.build_asset(shot_s, by_fmt["fbx"], vid, "lighting")
 print("   ", done, warning)
 refs = [w for _, w, _, _ in api.scene_references() if w.lower().endswith(".fbx")]
-check("FBX cache referenced through $PIPE_SCRATCH",
-      len(refs) == 1 and refs[0].startswith("$PIPE_SCRATCH/") and "/cache/fbx/anim/scout/" in refs[0])
+source = cmds.getAttr("scoutrig_fbx_cache_GRP." + api.CACHE_FILE_ATTR) \
+    if cmds.objExists("scoutrig_fbx_cache_GRP") else ""
+check("FBX cache imported (not referenced) from scratch, through $PIPE_SCRATCH",
+      not refs and source.startswith("$PIPE_SCRATCH/") and "/cache/fbx/anim/scout/" in source)
 check("... in scoutrig_fbx_cache_GRP with its skeleton",
       cmds.objExists("scoutrig_fbx_cache_GRP")
       and any(j.split("|")[1] == "scoutrig_fbx_cache_GRP"

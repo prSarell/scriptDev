@@ -266,6 +266,36 @@ rows = [r for r in tab._rows if r.get("kind") == "cache"]
 check("a Lighting scene's list has the shot's cache, unticked", tab.department() == "lighting"
       and len(rows) == 1 and not rows[0]["checked"])
 
+# --- Lighting imports caches (user, 2026-11-26), from scratch, selectable
+api.reference_cache(api.pipeEnv.to_var_path(api.entry_path(
+    shot_s, api.read_manifest(shot_s)[api.manifest_key(c["asset_type"], c["asset"], c["code"])])),
+    "scoutrig_cache")       # a Lighting scene built before: referenced
+done, warning, _ = api.build_asset(shot_s, c, vid1, "lighting")
+print("   ", done, warning)
+body = cmds.ls("scoutrig_cache:body_geo", long=True)
+check("a referenced build is swapped for an import",
+      not [r for r in api.scene_references() if r[1].lower().endswith(".abc")]
+      and len(body) == 1 and not cmds.referenceQuery(body[0], isNodeReferenced=True)
+      and body[0].startswith("|scoutrig_cache_GRP|")
+      and any("taken out" in d for d in done) and any("imported" in d for d in done))
+node = cmds.ls("scoutrig_cache:*", type="AlembicNode")[0]
+check("it reads v001 from scratch, through $PIPE_SCRATCH",
+      cmds.getAttr(node + ".abc_File").startswith("$PIPE_SCRATCH/")
+      and cmds.getAttr(node + ".abc_File").endswith("_v001.abc")
+      and os.path.normcase(os.path.expandvars(cmds.getAttr(node + ".abc_File"))).startswith(
+          os.path.normcase(SC)))
+check("its look is on", "scoutrig_cache_look:skinSG" in engine_of(body[0]))
+check("the Build tab sees it at v001", api.scene_version(shot_s, c) == vid1)
+done, _, replaced = api.build_asset(shot_s, c, vid2, "lighting")
+print("   ", done)
+check("v002: the same import repointed, not imported again",
+      done[0].startswith("updated to") and len(cmds.ls("*:body_geo", recursive=True)) == 1
+      and cmds.getAttr(node + ".abc_File").endswith("_v002.abc")
+      and api.scene_version(shot_s, c) == vid2 and replaced and replaced.endswith("_v001.abc"))
+check("an imported cache's file isn't offered for clearing",
+      api.unused_versions([os.path.expandvars(cmds.getAttr(node + ".abc_File"))],
+                          api.maya_dir_of_shot(shot_s)) == [])
+
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, fs in os.walk(base):
     for f in fs:

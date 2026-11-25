@@ -4211,6 +4211,24 @@ unsimmed dress".
   Blender. Build doesn't list them (Lighting in Maya builds the Maya
   camera). The per-app `fromMaya` folders stay for app-specific exports
   (fbxExport.py). Test: `publishDev\test_cameraExports_mayapy.py`.
+- BUILT 2026-11-26, caches outside Animation are imported (user: "we
+  really only need references for the animation part of the pipe. Once the
+  cache is done, lighting needs full access to everything"; "the cache
+  needs to be imported locally, the network wont support the caches living
+  on the H drive"). Referenced nodes inside a container never show in the
+  Outliner (Maya 2027, every Outliner setting tried by hand), and only
+  imported nodes can be its members. Animation keeps referenced caches
+  (display Reference, to compare with the live rig); every other
+  department imports them into `<item>_cache_GRP` (pipe icon), selectable.
+  The file is still pulled to scratch first and read from there: an
+  imported Alembic keeps reading its .abc (the scene stays small), its
+  AlembicNode pointed at the `$PIPE_SCRATCH` path; a new version repoints
+  it; an FBX is imported again. A Lighting scene with a referenced cache
+  from before gets it swapped for the import.
+- BUILT 2026-11-26, looks: Environment publishes write a look (hillShed
+  and its sky came into Lighting bare); Lighting puts the newest look of a
+  cached asset on (LookDev, else the cache's department), so a republished
+  rig or environment fixes its cache without a recache.
 
 ## 5. Context: what the existing tools assume
 

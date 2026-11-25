@@ -919,6 +919,11 @@ def scene_version(shot_dir, published):
     if stage:
         m = USD_RE.match(os.path.basename(_absolute(stage[2])))
         return version_id(m.group("login").lower(), int(m.group("version"))) if m else ""
+    if published.get("kind") == "cache":
+        group = imported_cache_group(namespace_for(published["asset"], published["code"]))
+        if group:       # imported (outside Animation): the file it reads
+            return cache_version_id(_absolute(cmds.getAttr(
+                "%s.%s" % (group, CACHE_FILE_ATTR)))) or ""
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
     entry = read_manifest(shot_dir).get(key)
     if entry and referenced_nodes(entry_path(shot_dir, entry)):
@@ -981,7 +986,10 @@ def build_asset(shot_dir, published, vid, department=None, usd=False, replace=Fa
         return _build_usd_cache(shot_dir, published, vid)
     if usd:
         return _build_usd(shot_dir, published, vid, replace)
-    done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
+    if published.get("kind") == "cache" and department and department != CACHE_DEPARTMENT:
+        done, warning, replaced = _build_imported_cache(shot_dir, published, vid)
+    else:
+        done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
     if published.get("kind") == "cache":
         look_done, look_warning = apply_look(shot_dir, published, vid, department)
         if look_done and done == ["already up to date"]:
@@ -1176,6 +1184,10 @@ def unused_versions(paths, maya_dir):
     used = shots_using(maya_dir)
     in_scene = set(os.path.normcase(os.path.normpath(r)) for _, _, _, r in scene_references())
     in_scene |= set(os.path.normcase(os.path.normpath(_absolute(w))) for _, _, w in usd_stages())
+    # Imported caches (Lighting etc.) read their file from the publish folder too.
+    for node in cmds.ls(type="AlembicNode") or []:
+        in_scene.add(os.path.normcase(os.path.normpath(
+            os.path.expandvars(cmds.getAttr(node + ".abc_File") or ""))))
     result, seen = [], set()
     for path in paths:
         key = os.path.normcase(os.path.normpath(path))
@@ -2056,6 +2068,129 @@ def reference_cache(path, namespace):
     cmds.setAttr(group + ".overrideEnabled", 1)
     cmds.setAttr(group + ".overrideDisplayType", 2)     # Reference
     return path
+
+
+# Caches outside Animation are imported, not referenced (user, 2026-11-26:
+# "we really only need references for the animation part of the pipe. Once
+# the cache is done, lighting needs full access to everything"). Referenced
+# nodes inside a container never show in the Outliner (tested in Maya 2027
+# with every Outliner setting), and a container can only hold imported
+# ones. An imported Alembic still reads its .abc from disk (the scene stays
+# small); its AlembicNode is pointed at the $PIPE_SCRATCH path, so a new
+# version is just a new path. An FBX is imported again.
+CACHE_FILE_ATTR = "pipe_cacheFile"      # on <ns>_GRP: the file an imported cache came from
+
+
+def imported_cache_group(namespace):
+    """<ns>_GRP of a cache imported by Build, or None."""
+    group = (cmds.ls(namespace + "_GRP", long=True) or [None])[0]
+    if group and cmds.attributeQuery(CACHE_FILE_ATTR, node=group, exists=True):
+        return group
+    return None
+
+
+def import_cache(path, namespace):
+    """Import an Alembic or FBX cache into its own namespace, under a pipe
+    group <ns>_GRP (pipe icon) whose members it all is. path: the
+    $PIPE_SCRATCH path, which the group and any AlembicNode keep. Returns
+    the group."""
+    fbx = path.lower().endswith(".fbx")
+    plugin = "fbxmaya" if fbx else "AbcImport"
+    if not cmds.pluginInfo(plugin, query=True, loaded=True):
+        cmds.loadPlugin(plugin, quiet=True)
+    free_namespace(namespace)
+    before = set(cmds.ls(assemblies=True, long=True) or [])
+    if fbx:
+        # The FBX importer ignores -namespace (its nodes keep the file's own,
+        # e.g. scout_rig:, which would clash with a live rig): import with
+        # the cache's namespace current instead.
+        cmds.namespace(add=namespace)
+        current = cmds.namespaceInfo(currentNamespace=True, absoluteName=True)
+        cmds.namespace(setNamespace=":" + namespace)
+        try:
+            new = cmds.file(os.path.expandvars(path), i=True, type="FBX",
+                            preserveReferences=False, returnNewNodes=True) or []
+        finally:
+            cmds.namespace(setNamespace=current)
+    else:
+        new = cmds.file(os.path.expandvars(path), i=True, type="Alembic",
+                        namespace=namespace, mergeNamespacesOnClash=False,
+                        preserveReferences=False, returnNewNodes=True) or []
+    # The new top nodes (the FBX importer doesn't always list what it made).
+    tops = [n for n in cmds.ls(assemblies=True, long=True) or [] if n not in before]
+    group = pub.make_pipe_group(namespace + "_GRP")
+    pub.finish_pipe_group(group)
+    if tops:
+        cmds.parent(tops, group)
+    for node in cmds.ls(new, type="AlembicNode") or []:
+        cmds.setAttr(node + ".abc_File", path, type="string")
+    cmds.addAttr(group, longName=CACHE_FILE_ATTR, dataType="string")
+    cmds.setAttr("%s.%s" % (group, CACHE_FILE_ATTR), path, type="string")
+    return cmds.ls(group, long=True)[0]
+
+
+def _remove_cache(namespace):
+    """Take a cache Build made out of the scene: a referenced one (its
+    reference) or an imported one (its group and namespace). Its look
+    stays, in <ns>_look:. Returns True if there was one."""
+    found = False
+    for ref in cmds.ls(type="reference") or []:
+        try:
+            ns = cmds.referenceQuery(ref, namespace=True).lstrip(":")
+            path = cmds.referenceQuery(ref, filename=True)
+        except RuntimeError:
+            continue
+        if ns == namespace:
+            cmds.file(path, removeReference=True)
+            found = True
+    group = (cmds.ls(namespace + "_GRP", long=True) or [None])[0]
+    if group:
+        if cmds.nodeType(group) == "dagContainer":
+            members = cmds.container(group, query=True, nodeList=True) or []
+            if members:
+                cmds.container(group, edit=True, removeNode=members)
+                cmds.delete([m for m in members if cmds.objExists(m)])
+        if cmds.objExists(group):
+            cmds.delete(group)
+        found = True
+    if cmds.namespace(exists=":" + namespace):
+        cmds.namespace(removeNamespace=":" + namespace, deleteNamespaceContent=True)
+    return found
+
+
+def _build_imported_cache(shot_dir, published, vid):
+    """One click for a cache outside Animation: pulled like any publish,
+    then imported (import_cache), fully selectable. Already imported: a
+    new version repoints its AlembicNodes (an FBX is imported again); a
+    referenced build of it (before 2026-11-26) is replaced by the import.
+    Returns (done, warning, replaced) like _build_asset."""
+    key = manifest_key(published["asset_type"], published["asset"], published["code"])
+    namespace = namespace_for(published["asset"], published["code"])
+    entry = read_manifest(shot_dir).get(key)
+    previous = shared_path(shot_dir, entry) if entry else None
+    label = version_label(published, vid, mark_latest=False)
+    dest = pull(shot_dir, published, vid)
+    replaced = previous if previous and not pub._same_path(previous, dest) else None
+    target = entry_path(shot_dir, read_manifest(shot_dir)[key])
+    pipeEnv.set_from_path(shot_dir)
+    path = pipeEnv.to_var_path(target)
+    done = []
+    group = imported_cache_group(namespace)
+    if group:
+        current = cmds.getAttr("%s.%s" % (group, CACHE_FILE_ATTR))
+        if pub._same_path(os.path.expandvars(current), target):
+            return ["already up to date"], None, replaced
+        nodes = cmds.ls(namespace + ":*", type="AlembicNode") or []
+        if nodes and not path.lower().endswith(".fbx"):
+            for node in nodes:
+                cmds.setAttr(node + ".abc_File", path, type="string")
+            cmds.setAttr("%s.%s" % (group, CACHE_FILE_ATTR), path, type="string")
+            return ["updated to %s" % label], None, replaced
+    if _remove_cache(namespace):
+        done.append("the cache built before was taken out")
+    import_cache(path, namespace)
+    done.append("%s imported into scene (%s_GRP, selectable)" % (label, namespace))
+    return done, None, replaced
 
 
 def placement_node(top):

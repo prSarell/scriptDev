@@ -547,6 +547,13 @@ hand. One T7 session could cover most of it.
       Blender, ABC in Houdini / Blender, USD in Gaffer / Unreal. The move,
       focal length and film back should match Maya's camera1 frame for
       frame. Check the scale too (Maya cm vs Unreal cm, Blender/Houdini m).
+- [ ] **Lighting imports caches; looks** (spec §4m, 2026-11-26): republish
+      the hillShed environment (first look) and scout's rig (boots in the
+      look). In the SEQ010_120 Lighting scene, Build the caches again: the
+      referenced ones are swapped for imports. Check: the meshes show under
+      each `_cache_GRP` in the Outliner and can be selected; hillShed, its
+      sky and scout's boots have their textures; the AlembicNodes read from
+      D:\ (`$PIPE_SCRATCH`), not G:\H; the saved scene stays small.
 
 ## 2. Decisions waiting on you
 
