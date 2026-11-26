@@ -182,6 +182,8 @@ class BuildShotTab(QtWidgets.QWidget):
         # on the department the open scene is worked in.
         self._target_key = None      # (scene, project) the target was last set from
         self.target_picker = picker.TargetPicker(TARGET_DEPARTMENTS, self._target_items)
+        # Nothing to start on: "(pick one)", not the first shot and its list.
+        self.target_picker.pick_first = False
         self.target_picker.kind_combo.setToolTip("Building into a shot or an asset.")
         self.target_picker.dept_combo.setToolTip(
             "Your department: each department has its own list for a shot, and "
@@ -299,6 +301,10 @@ class BuildShotTab(QtWidgets.QWidget):
         working folder or file name, else Animation / Modeling)."""
         scene, project = self._scene_and_project()
         self._target_key = (scene, project)
+        # An untitled scene in the project Maya put back from last session:
+        # nothing picked yet (user, 2026-11-27).
+        if not scene and pub.project_from_last_session(project):
+            project = ""
         place = self._start_place = pub.pipe_place(project) or pub.pipe_place(scene)
         film = place["film"] if place else None
         if film and film not in films:
@@ -312,6 +318,11 @@ class BuildShotTab(QtWidgets.QWidget):
         self.target_picker.set_current(film=film, code=code, kind=side,
                                        group=place["group"] if place else None,
                                        name=place["name"] if place else None)
+        if not place:       # nothing to start on: "(pick one)", not what was picked before
+            combo = self.target_picker.name_combo
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
         self._read_target()
 
     def _read_target(self):

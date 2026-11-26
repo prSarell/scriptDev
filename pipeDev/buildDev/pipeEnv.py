@@ -198,6 +198,16 @@ def install():
             maya.utils.executeDeferred(_warn_stopped_renders)
     except Exception as e:
         print("mpPipe: couldn't check for stopped renders: %s" % e)
+    try:
+        # The project Maya put back from last session, noted once Maya is up
+        # (deferred: after it's restored), so Build doesn't start an untitled
+        # scene in it (publishTool_api.project_from_last_session).
+        import maya.cmds as cmds
+        if not cmds.about(batch=True):
+            import maya.utils
+            maya.utils.executeDeferred(pub.remember_startup_project)
+    except Exception as e:
+        print("mpPipe: couldn't note the startup project: %s" % e)
     return current()
 
 

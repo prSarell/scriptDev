@@ -235,6 +235,30 @@ check("Rigging: Add to list still the locked list", codes(p) == LOCKED)
 check("asset work: no Keys from; the same Build button as a shot",
       tab.keys_combo.isHidden() and tab.build_btn.text() == "Build")
 
+# --- A fresh Maya (user, 2026-11-27): Maya puts last session's project
+# back, so an untitled scene isn't taken to be working in it.
+cmds.file(new=True, force=True)
+cmds.workspace(shot_s, openWorkspace=True)          # Maya restoring lastLocalWS
+api.pub.remember_startup_project()                  # pipeEnv.install, once Maya is up
+tab.check_target()
+check("fresh Maya, untitled scene in last session's project: Build into not picked, no list",
+      tab._target_shot is None and tab._target_asset is None and not tab._rows
+      and t.name() is None and tab.target_lbl.text() == "")
+check("... and it says what to do", "Pick the shot" in tab.status._text)
+cmds.file(rename=scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
+tab.check_target()
+check("a scene saved in the shot: Build into follows it",
+      tab._target_shot == (FILM, SEQ, SHOT))
+cmds.file(new=True, force=True)
+tab.check_target()
+api.pub.set_maya_project(other_s)                   # the Project Tool, this session
+tab.check_target()
+check("a project set this session: Build into follows it, untitled scene too",
+      tab._target_shot == (FILM, SEQ, OTHER) and tab._rows is not None)
+api.pub.set_maya_project(shot_s)
+tab.check_target()
+check("... even back to the one Maya started in", tab._target_shot == (FILM, SEQ, SHOT))
+
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 shutil.rmtree(base, ignore_errors=True)
 maya.standalone.uninitialize()
