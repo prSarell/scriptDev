@@ -1,8 +1,8 @@
 # Build brings in a shot's animation caches (spec §4 "Shaders on caches,
 # automatic", step 2, 2026-10-28): a Final animation publish's Alembic per
-# item, listed from the .json beside it, referenced in its own namespace and
-# group (display: Reference) beside the live rig, updated in place to a
-# newer version. Animation's Build offers them, Layout's doesn't.
+# item, listed from the .json beside it, imported (since 2026-11-26, every
+# department) in its own namespace and group beside the live rig, updated
+# in place to a newer version.
 # Run: mayapy test_buildCache_mayapy.py
 import sys, os, json, stat, shutil, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -119,23 +119,28 @@ vid1 = api.version_id(LOGIN, 1)
 check("version v001 (scout), latest", list(c["versions"]) == [vid1] and c["latest"] == vid1
       and c["cache_info"][vid1]["asset"]["version"] == 1)
 
-# --- Build references it beside the live rig
+# --- Animation's Build imports it beside the live rig (every department
+# imports caches since 2026-11-26: they're for editing)
 cmds.file(new=True, force=True)
 cmds.file(rig_file, reference=True, namespace="scout_rig")
 build_scene = os.path.join(shot_s, "scenes", "anim", LOGIN, "compare.ma")
 cmds.file(rename=build_scene); cmds.file(save=True, type="mayaAscii")
-done, warning, replaced = api.build_asset(shot_s, c, vid1)
+done, warning, replaced = api.build_asset(shot_s, c, vid1, "anim")
 print("   ", done, warning)
-refs = [(n, w) for n, w, _, _ in api.scene_references() if w.lower().endswith(".abc")]
-check("cache referenced, through $PIPE_SCRATCH, from scratch publish\\",
-      len(refs) == 1 and refs[0][1].startswith("$PIPE_SCRATCH/")
-      and "/publish/sequences/EAP_010/EAP_010_010/cache/alembic/anim/scout/" in refs[0][1])
+abc_node = (cmds.ls("scoutrig_cache:*", type="AlembicNode") or [None])[0]
+abc = cmds.getAttr(abc_node + ".abc_File") if abc_node else ""
+check("cache imported, not referenced: reads $PIPE_SCRATCH, from scratch publish\\",
+      not [r for r in api.scene_references() if r[1].lower().endswith(".abc")]
+      and abc.startswith("$PIPE_SCRATCH/")
+      and "/publish/sequences/EAP_010/EAP_010_010/cache/alembic/anim/scout/" in abc)
 check("cache in its own namespace beside the rig", cmds.objExists("scoutrig_cache:body_geo")
       and cmds.objExists("scout_rig:body_geo"))
-group = cmds.ls("scoutrig_cache_GRP")
-check("cache in scoutrig_cache_GRP, display type Reference",
-      group and cmds.getAttr(group[0] + ".overrideEnabled")
-      and cmds.getAttr(group[0] + ".overrideDisplayType") == 2)
+body = cmds.ls("scoutrig_cache:body_geo", long=True)
+check("cache in scoutrig_cache_GRP, selectable (not referenced, no Reference display)",
+      body and body[0].startswith("|scoutrig_cache_GRP|")
+      and not cmds.referenceQuery(body[0], isNodeReferenced=True)
+      and not cmds.getAttr("scoutrig_cache_GRP.overrideDisplayType") == 2)
+check("Animation: the build said imported", any("imported" in d for d in done))
 cmds.currentTime(10)
 check("cache plays the animation", abs(cmds.xform("scoutrig_cache:body_geo", query=True,
                                                     worldSpace=True, translation=True)[0] - 5) < 0.01)
@@ -168,20 +173,20 @@ check("look's texture resolves on this drive (pulled with the look)",
 check("cache group records the look it wears",
       cmds.getAttr("scoutrig_cache_GRP.pipe_look") == "scout_scout_rig_v001_look.ma")
 check("the build said so", any("look v001 put on (2 shaders)" in d for d in done))
-done, _, _ = api.build_asset(shot_s, c, vid1)
+done, _, _ = api.build_asset(shot_s, c, vid1, "anim")
 check("building again: already up to date, look not imported twice",
       done == ["already up to date"] and len(cmds.ls("scoutrig_cache_look*:skin_MTL")) == 1)
 
-# --- a newer Final: updated in place, never a second reference
+# --- a newer Final: updated in place, never imported twice
 item, p2 = publish_final()
 c = api.list_shot_caches(H, FILM, SEQ, SHOT)[0]
 vid2 = api.version_id(LOGIN, 2)
 check("v002 listed as latest", c["latest"] == vid2)
-done, warning, replaced = api.build_asset(shot_s, c, vid2)
+done, warning, replaced = api.build_asset(shot_s, c, vid2, "anim")
 print("   ", done)
-refs = [(n, w) for n, w, _, _ in api.scene_references() if w.lower().endswith(".abc")]
-check("updated: still one cache reference, now v002",
-      len(refs) == 1 and refs[0][1].endswith("EAP_010_010_scoutrig_anim_v002.abc"))
+check("updated: still one cache, its AlembicNode now reads v002",
+      len(cmds.ls("*:body_geo", recursive=True)) == 2      # the cache's and the rig's
+      and cmds.getAttr(abc_node + ".abc_File").endswith("EAP_010_010_scoutrig_anim_v002.abc"))
 check("updated: same namespace and group", cmds.objExists("scoutrig_cache:body_geo")
       and cmds.objExists("scoutrig_cache_GRP"))
 check("the old version is offered for clearing", replaced and replaced.endswith("_v001.abc"))

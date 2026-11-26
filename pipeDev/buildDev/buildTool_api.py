@@ -921,7 +921,7 @@ def scene_version(shot_dir, published):
         return version_id(m.group("login").lower(), int(m.group("version"))) if m else ""
     if published.get("kind") == "cache":
         group = imported_cache_group(namespace_for(published["asset"], published["code"]))
-        if group:       # imported (outside Animation): the file it reads
+        if group:       # imported by Build: the file it reads
             return cache_version_id(_absolute(cmds.getAttr(
                 "%s.%s" % (group, CACHE_FILE_ATTR)))) or ""
     key = manifest_key(published["asset_type"], published["asset"], published["code"])
@@ -986,7 +986,7 @@ def build_asset(shot_dir, published, vid, department=None, usd=False, replace=Fa
         return _build_usd_cache(shot_dir, published, vid)
     if usd:
         return _build_usd(shot_dir, published, vid, replace)
-    if published.get("kind") == "cache" and department and department != CACHE_DEPARTMENT:
+    if published.get("kind") == "cache":
         done, warning, replaced = _build_imported_cache(shot_dir, published, vid)
     else:
         done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
@@ -1114,10 +1114,6 @@ def _build_asset(shot_dir, published, vid, replace=False):
         done.append("scene reference switched to %s" % label)
         return done, warning, replaced
 
-    if published.get("kind") == "cache":
-        reference_cache(ref_path, namespace)
-        done.append("cache referenced into scene (%s_GRP, display: Reference)" % namespace)
-        return done, warning, replaced
     reference_into_scene(ref_path, namespace)
     done.append("referenced into scene")
     if placement:
@@ -2043,11 +2039,10 @@ def reference_into_scene(path, namespace):
 
 
 def reference_cache(path, namespace):
-    """Reference an animation cache (Alembic, or FBX: user 2026-11-25) into
-    the open scene beside the live rig (user, 2026-10-28: Animation builds
-    caches "occasionally to compare changes"): its own namespace
-    (scout_cache:) and group (scout_cache_GRP), and display type Reference
-    so it shows shaded but can't be selected or edited by accident."""
+    """How Build brought caches in before 2026-11-26: referenced in its own
+    namespace and group, display type Reference. Build no longer calls it
+    (every department imports caches: import_cache); kept so tests can
+    make a scene from before, which Build swaps for an import."""
     fbx = path.lower().endswith(".fbx")
     plugin = "fbxmaya" if fbx else "AbcImport"
     if not cmds.pluginInfo(plugin, query=True, loaded=True):
@@ -2070,9 +2065,11 @@ def reference_cache(path, namespace):
     return path
 
 
-# Caches outside Animation are imported, not referenced (user, 2026-11-26:
-# "we really only need references for the animation part of the pipe. Once
-# the cache is done, lighting needs full access to everything"). Referenced
+# Caches are imported, not referenced, in every department (user,
+# 2026-11-26: "all departments should have access to unreferenced caches.
+# The point of the cache is that they are editable"; Animation kept
+# references at first, but Build lists caches under Animation, so they
+# always came in referenced). Referenced
 # nodes inside a container never show in the Outliner (tested in Maya 2027
 # with every Outliner setting), and a container can only hold imported
 # ones. An imported Alembic still reads its .abc from disk (the scene stays
@@ -2159,7 +2156,7 @@ def _remove_cache(namespace):
 
 
 def _build_imported_cache(shot_dir, published, vid):
-    """One click for a cache outside Animation: pulled like any publish,
+    """One click for a cache (any department): pulled like any publish,
     then imported (import_cache), fully selectable. Already imported: a
     new version repoints its AlembicNodes (an FBX is imported again); a
     referenced build of it (before 2026-11-26) is replaced by the import.
@@ -2800,8 +2797,8 @@ def apply_look(shot_dir, published, vid, department=None):
     info = (published.get("cache_info") or {}).get(vid) or {}
     namespace = namespace_for(published["asset"], published["code"])
     # The pipe group (or the plain group caches had before 2026-11-25)
-    # records the look; meshes are matched from the reference's own group
-    # inside it (reference_cache).
+    # records the look; meshes are matched under it (or, for a cache
+    # referenced before 2026-11-26, under its reference's own group).
     group = (cmds.ls(namespace + "_GRP", long=True) or [None])[0]
     if not group:
         return [], None

@@ -4217,9 +4217,11 @@ unsimmed dress".
   needs to be imported locally, the network wont support the caches living
   on the H drive"). Referenced nodes inside a container never show in the
   Outliner (Maya 2027, every Outliner setting tried by hand), and only
-  imported nodes can be its members. Animation keeps referenced caches
-  (display Reference, to compare with the live rig); every other
-  department imports them into `<item>_cache_GRP` (pipe icon), selectable.
+  imported nodes can be its members. Every department imports them into
+  `<item>_cache_GRP` (pipe icon), selectable (same day, user: "all
+  departments should have access to unreferenced caches. The point of the
+  cache is that they are editable"; Animation first kept references, but
+  Build lists caches under Animation, so they always came in referenced).
   The file is still pulled to scratch first and read from there: an
   imported Alembic keeps reading its .abc (the scene stays small), its
   AlembicNode pointed at the `$PIPE_SCRATCH` path; a new version repoints
