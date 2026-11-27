@@ -110,8 +110,11 @@ was the old "Build into" row, now removed.
    `camera/SEQ010_120/cam`. *Maya today* still has one list per
    department (`anim.json`, `lighting.json`...). These are merged into the
    shared list the first time a shot is opened, so nothing is lost.
-   *OPEN:* this list is the one thing Build writes to H, which doesn't
-   sit well with "H holds only publishes". To be settled before it's built.
+   *Why on H (decided 2026-11-27):* it's key data backed up "in a place
+   where students can't delete or write over it". It's the one thing
+   Build writes to H, and only Build writes it. It's locked read-only
+   after every save, like a publish. *Maya today* leaves it writable, which
+   gets fixed with this brief.
 
 5. **Publishes are copied to scratch before they're used, never read live
    off H.** H may be a slow network share. Build copies each version once

@@ -45,7 +45,10 @@ If a rule here gets in the way of a fix, **stop and ask the project lead**
 ## Design rules (the pipe's backbone)
 
 3. **H holds only publishes** and is the source of truth. Nothing saves to
-   H except Publish.
+   H except Publish. *One exception* (project lead, 2026-11-27): Build's
+   shared list per shot or asset (`data\build\build_list.json`), kept on
+   H as a backup of key data that students can't delete or overwrite.
+   Only Build writes it, and it's locked read-only after every save.
 4. **Build is the only way in, Publish is the only way out.**
 5. **The ShotGrid entity defines the thing; the folder decides where it
    goes.** Working file names are free; Publish names the output.

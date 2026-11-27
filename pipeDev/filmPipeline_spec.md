@@ -4277,9 +4277,13 @@ Decided, point by point:
   for now"). **The Keys column stays**, from the scene's own shot, "in
   case a student needs to roll back to an older version of the animation
   from that shot".
-- **OPEN:** the shared list is written to H by Build, which sits awkwardly
-  with "H holds only publishes" (rule 3). The per-department lists already
-  did this. Raise with the user before building.
+- **The shared list stays on H** (DECIDED same day; it was OPEN against
+  rule 3, "H holds only publishes"). User: "I think this is fine, it's
+  backing up key data in a place where students cant delete or write over
+  it." So Build is the only writer, and it locks the file read-only after
+  every save (today's `write_build_list` unlocks it to write and doesn't
+  lock it again: fix with this change). PIPE_RULES rule 3 notes the
+  exception.
 
 ## 5. Context: what the existing tools assume
 
