@@ -8,7 +8,23 @@ Status: **[ ]** to do · **[?]** needs your decision · **[x]** done
 
 ---
 
-## PICK UP HERE: left 2026-11-03
+## PICK UP HERE: left 2026-11-27 (Build lists per stage)
+
+- [?] **Lists per production stage** (spec §4o, OPEN). The user said
+      "not quite" to Claude's last proposal without saying which part:
+      start tomorrow by asking. Nothing built yet; §4n's shared list is
+      what's live on branch `pipe/build-shot-item-menus` (commit 1560027).
+- [ ] Then record the decision in §4o, `build_brief.md`, `PIPE_RULES.md`
+      (locked item 2, rule 3 exception), and build it.
+- [ ] Write `PIPE_DESIGN.md` (the living design doc for the Houdini
+      teachers, `build_brief.md` folded in). Postponed from 2026-11-27.
+- [ ] Hand test of §4n Build in Maya still pending (scout rig loaded
+      instead of the cache on SEQ010_120: an old `lighting.json` on H,
+      see §4o).
+- [ ] Intermittent timeouts: `test_cameraExports`, `test_stageCache` pass
+      alone, time out in the full run.
+
+## Left 2026-11-03
 
 Stage 2 started: tidy up and add features, with contributors joining. Read
 `pipelineReview_stage2.md` (the review, plus your answers so far).

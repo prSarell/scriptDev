@@ -4297,6 +4297,69 @@ Decided, point by point:
   every save (`write_build_list`, built). PIPE_RULES rule 3 notes the
   exception.
 
+### 4o. A list per production stage, defined by publishes — OPEN (2026-11-27, in discussion)
+
+Not built. Would replace §4n's "one shared list per shot". Pick up here.
+
+**What started it.** The user's hand test of §4n: Build loaded the scout
+**rig** into a Lighting scene instead of the scout **cache**, "even though
+the build tool was defining the asset type as cache". Cause: SEQ010_120's
+old `data\build\lighting.json` on H held `character/scout/rig`; §4n merges
+every `<dept>.json` into the shared `build_list.json`, and saved-list rows
+start ticked while the shot's own caches start unticked. So the rig built
+and the cache didn't.
+
+**What the user said (agreed so far):**
+- "we need a list for each stage of production, not a universal list for
+  everything."
+- Add to list's Type should filter what's offered: "if cache is selected,
+  only offer caches for import. If camera is selected only offer cameras
+  for import, if rig is selected only offer rigs for import."
+- "the actual lighting or animation shot list gets defined by the first
+  publish, not the build tool itself." (Fits §4m: each publish writes
+  `<published>_contents.json`.)
+- "FX and creature feed lighting" (yes). A stage's list is **empty** until
+  its first publish (yes).
+- It must stay flexible: "we don't work like that. One stage is never
+  complete everything happens at once. It's the nature of creative work.
+  It has to be flexible." And: "we aim to follow the order you described
+  but it's not how production works. It's messy and modular. We are
+  actually trying to teach the students to work like this."
+
+**Claude's last proposal.** The user answered "not quite" and didn't say
+which part yet, so **ask first** before building anything:
+
+| Stage | Starts from (default only) |
+|---|---|
+| Layout | empty |
+| Animation | Layout's newest publish |
+| Creature, FX | Animation's newest publish |
+| Lighting | Animation's, Creature's and FX's newest publishes |
+
+- Nothing locked: Load list pulls any stage's newest publish, any time,
+  in any direction; + and − add or remove anything.
+- Build says when something upstream is newer ("Animation published v008
+  since you built").
+- Only publishes define lists; Build never writes a list to H (§4n's
+  rule 3 exception would go).
+- Open question asked: once a stage has published (say a second animator
+  opens the shot), does it start from its own stage's newest publish, with
+  upstream only through Load list? Claude suggested yes. Not answered.
+
+**Still to settle tomorrow:**
+1. Which part of the proposal is "not quite".
+2. Where a stage's list lives: inside the publish (`_contents.json`, H
+   stays publishes-only) or a separate list per stage.
+3. Whether the "starts from" defaults stay, change, or go (every stage
+   starts empty and uses Load list).
+4. The Type filter on the Asset side (Cache / Camera / Rig offering only
+   that kind): it's Build's dropdowns, so locked; agreed in principle,
+   exact behaviour not yet spelled out.
+5. What happens to the lists already on H (`build_list.json`,
+   `<dept>.json`), e.g. SEQ010_120's stray scout rig.
+
+**Meanwhile:** a student can take scout rig off SEQ010_120's list with −.
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:
