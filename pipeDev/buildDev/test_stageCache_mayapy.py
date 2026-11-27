@@ -147,7 +147,7 @@ os.makedirs(os.path.dirname(light))
 cmds.file(rename=light); cmds.file(save=True, type="mayaAscii")
 c = [c for c in api.list_shot_caches(H, FILM, SEQ, SHOT)
      if c["item"] == "hut" and c["format"] == "abc"][0]
-done, warning, _ = api.build_asset(shot_s, c, c["latest"], "lighting")
+done, warning, _ = api.build_asset(shot_s, c, c["latest"])
 print("   ", done, warning)
 wall = [n for n in cmds.ls("*:hut_wall_GEO", long=True, recursive=True)]
 check("the cache has the render wall and no proxy",

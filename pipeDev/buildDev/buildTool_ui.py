@@ -1,14 +1,16 @@
 """
 Build Tool — UI
 Two tabs:
-  Build Shot  — list the assets the open scene's shot needs (picker row:
-                Film, Asset or Shot, Department, Type or Sequence, Asset
-                or Shot, and on the Shot side Type and Item: the camera
-                or cache to add, e.g. Cache, scout_ABC; then - and +);
-                one click pulls every ticked one
-                from the H drive and references it into the open scene.
-                Each asset's Keys dropdown puts a Layout/Animation
-                publish's keys back on it (from the picker's shot).
+  Build Shot  — the list for the shot (or asset) the open scene is saved
+                in (spec §4n: no Build into; an untitled scene starts
+                empty and Build saves it first). One row of dropdowns,
+                Add to list: Film, Asset or Shot, Department, Type or
+                Sequence, Asset or Shot, and on the Shot side Type and
+                Item (e.g. Cache, scout_ABC); then Load list (a shot's
+                whole saved list), - and +. One click pulls every ticked
+                row from the H drive and loads it into the open scene.
+                Each rig's Keys dropdown puts one of the scene's shot's
+                Layout/Animation keys back on it (roll back).
                 The USD tick loads a model or environment published
                 with USD as a USD stage instead (spec §4h).
                 Building into an asset works the same way: referenced,
@@ -45,19 +47,15 @@ import buildTool_api as api
 import pipePicker as picker
 pub = api.pub
 
-# Two pickers, two jobs (user, 2026-10-28: "the difference between build and
-# populate list mode"):
-# - Add to list, above the list: Film | Asset or Shot | what's published |
-#   Asset type | Asset, then - and +.
-# - Build Into, under the list: Film | Asset or Shot | the artist's
-#   department | Sequence or type | Shot or asset. Where the build goes
-#   ("I want these things in this place"); it starts on the Maya project and
-#   never changes it. The shot's own camera and caches come with the shot.
-# Both Department dropdowns are the pipe's department list, exactly, whatever
-# Asset or Shot says: LOCKED, a fixed design feature (user, 2026-10-30; see
-# buildTool_api.DEPARTMENTS). Old publishes stamped env aren't listed.
-TARGET_DEPARTMENTS = [(label, code, picker.ANY, True) for label, code in api.DEPARTMENTS]
-SOURCE_DEPARTMENTS = TARGET_DEPARTMENTS
+# One row of dropdowns, Add to list (user, 2026-11-27, spec §4n: "we don't
+# need the Build into menu"): Film | Asset or Shot | the department that
+# published it | Asset type or Sequence | Asset or Shot, then on the Shot
+# side Type and Item, then Load list, - and +. Its Department only picks
+# which publish (scout's rig vs scout's model): every department sees
+# everything. The list is built into the open scene, whatever the Maya
+# project is; the shot or asset is where that scene is saved. The
+# department list is LOCKED (user, 2026-10-30; buildTool_api.DEPARTMENTS).
+SOURCE_DEPARTMENTS = [(label, code, picker.ANY, True) for label, code in api.DEPARTMENTS]
 # Published for a shot itself, not an asset: its own come with it, and
 # Add to list's Shot side brings another shot's (user, 2026-11-12).
 SHOT_ITEMS = ("camera", "cache")
@@ -140,82 +138,59 @@ def _check_cell(text, checked):
 # ---------------------------------------------------------------------------
 
 class BuildShotTab(QtWidgets.QWidget):
-    """Pick assets from the H drive into a list for the shot, then Build
-    Shot pulls + references (or updates) every ticked one in one click.
-    The shot is the open scene's (user, 2026-10-22)."""
+    """Pick what's published into a list, then Build pulls + loads every
+    ticked row into the open scene in one click. The shot or asset is
+    where the open scene is saved (spec §4n); an untitled scene is saved
+    first (Build asks where)."""
 
     def __init__(self, get_roots, parent=None):
         super(BuildShotTab, self).__init__(parent)
         self._get_roots = get_roots
-        self._target_shot = None     # (film, seq, shot) being built into
-        # Or (film, asset_type, asset) when building into an asset: built
+        self._target_shot = None     # (film, seq, shot) the open scene is saved in
+        # Or (film, asset_type, asset) for a scene saved in an asset: built
         # the same way, referenced (user, 2026-10-30).
         self._target_asset = None
-        self._published = []     # everything on the H drive for the shot's film
+        self._scene = None           # the scene the target was read from
+        self._published = []     # everything on the H drive for the list's film
+        self._published_film = None
         self._other_films = {}   # film -> list_published, for the picker
         self._shot_keys = {}     # (film, seq, shot) -> api.list_shot_keys
         self._shot_items = {}    # (film, seq, shot, department) -> api.shot_items
-        self._keys_src = None    # the shot the Keys dropdowns list (see _keys_source)
-        self._rows = []          # the shot's list: published entries shown in the table
-        self._removed = set()    # keys taken off this shot's list (kept until the shot changes)
-        self._saved_usd = set()  # keys the department's saved list loads as USD (spec §4h)
+        self._lists_seen = {}    # H folder -> has a saved list (see _has_list)
+        self._keys_src = None    # the shot the Keys dropdowns list: the scene's
+        self._rows = []          # the list: published entries shown in the table
+        self._removed = set()    # keys taken off the list (kept until the shot changes)
+        self._saved_usd = set()  # keys the shot's saved list loads as USD (spec §4h)
 
-        # Which shot: always the open scene's.
         self.target_lbl = QtWidgets.QLabel()
         self.target_lbl.setWordWrap(True)
-        # Scene and Maya project in different shots/assets (2026-10-28).
-        self.project_banner = picker.ProjectBanner(self._match_project)
 
-        # Add to list (see SOURCE_DEPARTMENTS), then - and +.
+        # Add to list (see SOURCE_DEPARTMENTS), then Load list, - and +.
         # Type and Item (user, 2026-11-25), Shot side only: what the
         # department published for the shot, then which one.
         self.picker = picker.TargetPicker(SOURCE_DEPARTMENTS, self._items_for,
                                           shot_items=self._picker_shot_items)
-        self.picker.dept_combo.setToolTip("What's published: a model, a rig, an "
-                                          "environment... Every department is listed, "
-                                          "whatever you're building as. Greyed out: "
-                                          "nothing to add yet.")
+        self.picker.dept_combo.setToolTip("Which publish: a model, a rig, an environment... "
+                                          "Every department can build everything.")
         self.picker.add_clicked.connect(self._add_asset)
         self.picker.remove_clicked.connect(self._remove_rows)
+        # Load list (user, 2026-11-27): the picked shot's (or asset's) whole
+        # saved list joins this one, the way + adds one row.
+        self.load_btn = QtWidgets.QPushButton("Load list")
+        self.load_btn.setToolTip("Add everything on the picked shot's (or asset's) saved "
+                                 "list to this list. Nothing already here is taken off.")
+        self.load_btn.clicked.connect(self._load_list)
+        row = self.picker.layout()
+        row.insertWidget(row.indexOf(self.picker.remove_btn), self.load_btn)
 
-        # Build Into (see TARGET_DEPARTMENTS): starts on the Maya project, and
-        # on the department the open scene is worked in.
-        self._target_key = None      # (scene, project) the target was last set from
-        self.target_picker = picker.TargetPicker(TARGET_DEPARTMENTS, self._target_items)
-        # Nothing to start on: "(pick one)", not the first shot and its list.
-        self.target_picker.pick_first = False
-        self.target_picker.kind_combo.setToolTip("Building into a shot or an asset.")
-        self.target_picker.dept_combo.setToolTip(
-            "Your department: each department has its own list for a shot, and "
-            "the shot's Alembic caches join it unticked.")
-        self.target_picker.group_combo.setToolTip("Sequence, or asset type")
-        self.target_picker.name_combo.setToolTip("Shot, or asset")
-        for button in (self.target_picker.add_btn, self.target_picker.remove_btn):
-            button.hide()
-        for combo in (self.target_picker.film_combo, self.target_picker.kind_combo,
-                      self.target_picker.group_combo, self.target_picker.name_combo):
-            combo.currentIndexChanged.connect(self._on_target_changed)
-        self.target_picker.dept_combo.currentIndexChanged.connect(self._on_department_changed)
-
-        # Which shot the Keys dropdowns list (user, 2026-10-23: keys can come
-        # from another shot). This shot unless picked.
-        self.keys_combo = QtWidgets.QComboBox()
-        self.keys_combo.setToolTip("Which shot's Layout / Animation publishes the Keys "
-                                   "column offers. Pick another shot to take its keys.")
-        self.keys_combo.currentIndexChanged.connect(self._on_keys_source_changed)
-
-        # The shot's asset list, filtered by department (user, 2026-10-21).
+        # The list, filtered by department (user, 2026-10-21).
         self.filter_combo = QtWidgets.QComboBox()
         self.filter_combo.setToolTip("Show only one department's assets in the list. "
-                                     "Build Shot still builds the whole list.")
+                                     "Build still builds the whole list.")
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         show = QtWidgets.QHBoxLayout()
         show.addWidget(QtWidgets.QLabel("Show:"))
         show.addWidget(self.filter_combo)
-        show.addSpacing(16)
-        self.keys_lbl = QtWidgets.QLabel("Keys from:")
-        show.addWidget(self.keys_lbl)
-        show.addWidget(self.keys_combo)
         show.addStretch(1)
         self.table = _table(["Asset", "Type", "Department", "Version", "USD", "Keys",
                              "In this shot", "Status"])
@@ -241,9 +216,9 @@ class BuildShotTab(QtWidgets.QWidget):
         # don't want a context sensitive build button").
         build_btn = self.build_btn = QtWidgets.QPushButton("Build")
         build_btn.setToolTip(
-            "References every ticked asset into the open scene (pulled from the H drive "
-            "into your scratch publish folder). New assets, and ones you pick another "
-            "version for, start ticked; ones already in the scene start unticked.\n"
+            "Brings every ticked row into the open scene (pulled from the H drive into "
+            "your scratch publish folder). An untitled scene is saved first: you pick "
+            "where, and that shot or asset is the one built.\n"
             "To work on a published model in an asset, Build it, then use Convert on "
             "the mpModel shelf.")
         build_btn.setMinimumHeight(36)
@@ -252,182 +227,56 @@ class BuildShotTab(QtWidgets.QWidget):
         self.status = StatusLabel()
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.target_lbl)
-        layout.addWidget(self.project_banner)
         layout.addWidget(_heading("Add to the list"))
         layout.addWidget(self.picker)
         layout.addLayout(show)
         layout.addWidget(self.table, 1)
         layout.addLayout(list_btns)
-        layout.addWidget(_heading("Build into"))
-        layout.addWidget(self.target_picker)
         layout.addWidget(build_btn)
         layout.addWidget(self.status)
 
     # -- filling ----------------------------------------------------------
 
     def refresh(self):
-        """Start Build Into on the Maya project (and the open scene's
-        department), refill both pickers' films and load the list. With the
-        same scene and project as before, a Build Into picked by hand stays."""
+        """Read the shot or asset from where the open scene is saved, refill
+        the picker's films and load the list."""
         h_root = self._get_roots()[0]
         films = api.list_films(h_root) if h_root else []
-        if self._scene_and_project() != self._target_key:
-            self._default_target(films)
-        else:
-            self.target_picker.set_films(films, self.target_picker.film())
-            self._read_target()
+        self._read_target()
         target = self._target_shot or self._target_asset
+        if target and target[0] not in films:
+            films = films + [target[0]]
         self.picker.set_films(films, target[0] if target else None)
         self._load_shot()
-        self._show_mismatch()
 
     def check_target(self):
-        """Another scene opened or another project set since the list was
-        made: start again from the project. Otherwise the list (and its
-        ticks, and a Build Into picked by hand) stays as it is."""
-        if self._scene_and_project() != self._target_key:
+        """Another scene opened (or the scene saved somewhere else) since
+        the list was made: start again from it. Otherwise the list (and its
+        ticks) stays as it is."""
+        if (cmds.file(query=True, sceneName=True) or "") != self._scene:
             self.refresh()
-        else:
-            self._show_mismatch()
-
-    @staticmethod
-    def _scene_and_project():
-        return (cmds.file(query=True, sceneName=True) or "",
-                cmds.workspace(query=True, rootDirectory=True) or "")
-
-    def _default_target(self, films):
-        """Build Into starts on the Maya project's shot or asset (else the
-        open scene's), on the department the scene is worked in (its
-        working folder or file name, else Animation / Modeling)."""
-        scene, project = self._scene_and_project()
-        self._target_key = (scene, project)
-        # An untitled scene in the project Maya put back from last session:
-        # nothing picked yet (user, 2026-11-27).
-        if not scene and pub.project_from_last_session(project):
-            project = ""
-        place = self._start_place = pub.pipe_place(project) or pub.pipe_place(scene)
-        film = place["film"] if place else None
-        if film and film not in films:
-            films = films + [film]
-        side = picker.SHOT if place and place["kind"] == "shot" else picker.ASSET
-        code = api.department_of_scene(
-            scene or os.path.join(place["folder"], "scenes", "untitled.ma")) if place else None
-        if not code:
-            code = "anim" if side == picker.SHOT else "model"
-        self.target_picker.set_films(films, film)
-        self.target_picker.set_current(film=film, code=code, kind=side,
-                                       group=place["group"] if place else None,
-                                       name=place["name"] if place else None)
-        if not place:       # nothing to start on: "(pick one)", not what was picked before
-            combo = self.target_picker.name_combo
-            combo.blockSignals(True)
-            combo.setCurrentIndex(0)
-            combo.blockSignals(False)
-        self._read_target()
 
     def _read_target(self):
-        """_target_shot / _target_asset from Build Into."""
-        p = self.target_picker
-        picked = (p.film(), p.group(), p.name())
-        ok = all(picked)
-        self._target_shot = picked if ok and p.kind() == picker.SHOT else None
-        self._target_asset = picked if ok and p.kind() == picker.ASSET else None
-
-    def _on_target_changed(self, *args):
-        """Build Into picked by hand: load that shot's (or asset's) list."""
-        before = (self._target_shot, self._target_asset)
-        self._read_target()
-        if (self._target_shot, self._target_asset) != before:
-            target = self._target_shot or self._target_asset
-            if target and target[0] != self.picker.film():
-                self.picker.set_films(api.list_films(self._get_roots()[0]), target[0])
-            self._load_shot()
-        self._show_mismatch()
-
-    def department(self):
-        return self.target_picker.department()
-
-    def _on_department_changed(self, *args):
-        """Another department: the list is that department's list for the
-        shot (with the shot's caches if it builds them). Add to list stays
-        as it is: it offers every department."""
-        if self._target_shot and self._published:
-            self._load_shot()
-
-    def _target_place(self):
-        target = self._target_shot or self._target_asset
-        if not target:
-            return None
-        return {"film": target[0], "kind": "shot" if self._target_shot else "asset",
-                "group": target[1], "name": target[2]}
-
-    def target_mismatch(self):
-        """{"project", "target"} places when Build Into isn't the Maya
-        project's shot or asset, else None. Building there is refused (user,
-        2026-10-28: "the pipe should refuse and make the user reset the
-        project and save the file in the correct structure"). No pipe
-        project set at all (a fresh Maya) never counts: Build sets it."""
-        project = pub.pipe_place(cmds.workspace(query=True, rootDirectory=True) or "")
-        target = self._target_place()
-        if not (project and target) or all(project[k].lower() == target[k].lower()
-                                           for k in ("film", "kind", "group", "name")):
-            return None
-        return {"project": project, "target": target}
-
-    def _mismatch_text(self, mismatch):
-        return ("Build into is <b>%s</b>, but your Maya project is <b>%s</b>, so Build "
-                "won't run.<br>To build %s: set it as your project with the Project Tool "
-                "and save your scene there. Or go back to the project's %s." % (
-                    pub.place_label(mismatch["target"]), pub.place_label(mismatch["project"]),
-                    pub.place_label(mismatch["target"]), mismatch["project"]["kind"]))
-
-    def _show_mismatch(self):
-        """The red banner: Build Into isn't the Maya project (Build refuses),
-        else the scene isn't saved in the project (spec "Scene vs project":
-        a warning)."""
-        mismatch = self.target_mismatch()
-        if mismatch:
-            self.project_banner.match_btn.setText("Back to the project's %s"
-                                                  % mismatch["project"]["kind"])
-            self.project_banner.show_mismatch(self._mismatch_text(mismatch))
-            return
-        mismatch = api.pub.project_mismatch()
-        self.project_banner.match_btn.setText("Set Project to the scene's")
-        self.project_banner.show_mismatch(self._scene_text(mismatch) if mismatch else None)
-
-    @staticmethod
-    def _scene_text(mismatch):
-        """Scene saved outside the project: Build won't run until they match."""
-        return ("Your open scene is in <b>%s</b>, but your Maya project is <b>%s</b>, so "
-                "Build won't run.<br>Set Project to the scene's, or open a scene in %s." % (
-                    pub.place_label(mismatch["scene"]), pub.place_label(mismatch["project"]),
-                    pub.place_label(mismatch["project"])))
-
-    def _match_project(self):
-        mismatch = self.target_mismatch()
-        if mismatch:
-            project = mismatch["project"]
-            code = self.department() or ("anim" if project["kind"] == "shot" else "model")
-            self.target_picker.set_current(film=project["film"], code=code, kind=project["kind"],
-                                           group=project["group"], name=project["name"])
-            self._on_target_changed()
-            return
-        mismatch = api.pub.project_mismatch()
-        if mismatch:
-            try:
-                api.pub.set_maya_project(mismatch["scene"]["folder"])
-            except api.pub.PublishError as e:
-                self.status.show_message(str(e), ok=False)
-                return
-            self.status.show_message("Maya project set to %s, where the open scene is."
-                                     % api.pub.place_label(mismatch["scene"]))
-            self._target_key = self._scene_and_project()
-        self._show_mismatch()
+        """_target_shot / _target_asset from where the open scene is saved
+        (spec §4n). Untitled, or saved outside the pipe's shot and asset
+        folders: neither."""
+        self._scene = cmds.file(query=True, sceneName=True) or ""
+        place = pub.pipe_place(self._scene)
+        target = (place["film"], place["group"], place["name"]) if place else None
+        self._target_shot = target if place and place["kind"] == "shot" else None
+        self._target_asset = target if place and place["kind"] == "asset" else None
 
     def film(self):
-        """The shot's or asset's film, else the picker's (for the My Scratch tab)."""
+        """The list's film (for the My Scratch tab)."""
+        return self._film()
+
+    def _film(self):
+        """The list's film: the scene's shot or asset's, else (an untitled
+        scene) the film it was loaded for, else the picker's."""
         target = self._target_shot or self._target_asset
-        return target[0] if target else self.picker.film()
+        if target:
+            return target[0]
+        return self._published_film or self.picker.film()
 
     def _asset_dir(self):
         scratch_root = self._get_roots()[1]
@@ -444,7 +293,7 @@ class BuildShotTab(QtWidgets.QWidget):
         return self._asset_dir()
 
     def _h_target_dir(self):
-        """The shot's or asset's folder on H: where its build lists live."""
+        """The shot's or asset's folder on H: where its shared list lives."""
         h_root = self._get_roots()[0]
         if not h_root:
             return None
@@ -464,8 +313,10 @@ class BuildShotTab(QtWidgets.QWidget):
         if not (h_root and os.path.isdir(h_root)):
             return []
         if kind == picker.SHOT:
+            # Also the shots with a saved list, for Load list (2026-11-27).
             return [(seq, shot) for seq, shot in api.list_shots(h_root, film)
-                    if self._shot_items_for(film, seq, shot, code)]
+                    if self._shot_items_for(film, seq, shot, code)
+                    or self._has_list(api.shot_folder(h_root, film, seq, shot))]
         found = []
         for p in self._published_in(film):
             item = (p["asset_type"], p["asset"])
@@ -475,24 +326,16 @@ class BuildShotTab(QtWidgets.QWidget):
                 found.append(item)
         return found
 
-    def _target_items(self, film, code, kind):
-        """Build Into's last two dropdowns: the film's shots, or its assets
-        (plus the place it started on, the project's or the scene's, if
-        that isn't on the H drive yet: never silently another one)."""
-        h_root = self._get_roots()[0]
-        if not (h_root and os.path.isdir(h_root)):
-            return []
-        found = list(api.list_shots(h_root, film) if kind == picker.SHOT
-                     else pub.list_h_assets(h_root, film))
-        place = getattr(self, "_start_place", None)
-        if (place and place["film"] == film and place["kind"] == kind
-                and (place["group"], place["name"]) not in found):
-            found.append((place["group"], place["name"]))
-        return found
+    def _has_list(self, folder):
+        """True if a shot or asset folder on H has a saved list (read once
+        per load of the list)."""
+        if folder not in self._lists_seen:
+            self._lists_seen[folder] = api.read_build_list(folder) is not None
+        return self._lists_seen[folder]
 
     def _shot_items_for(self, film, seq, shot, code):
         """What a shot published for a department, to build here (camera,
-        caches; api.shot_items). The shot being built into gives its own
+        caches; api.shot_items). The scene's own shot gives its own
         entries, so they're the same rows as the ones it already lists."""
         if self._target_shot and tuple(self._target_shot) == (film, seq, shot):
             return [p for p in self._published if p.get("kind") in SHOT_ITEMS
@@ -529,52 +372,51 @@ class BuildShotTab(QtWidgets.QWidget):
             return p.get("label") or p["asset"]
         return "camera" if count == 1 else p["asset"]
 
+    def _shot_entry(self, film, key, from_shot=None):
+        """The published entry for a list key that's a shot's camera or
+        cache, or None. from_shot: (seq, shot) if known."""
+        h_root = self._get_roots()[0]
+        if not from_shot and key.startswith(api.CAMERA_TYPE + "/"):
+            name = key.split("/")[1]
+            seq = next((q for q, s in api.list_shots(h_root, film) if s == name), None)
+            from_shot = (seq, name) if seq else None
+        if not from_shot:
+            return None
+        return next((p for p in self._shot_items_for(film, from_shot[0], from_shot[1], None)
+                     if self._key(p) == key), None)
+
     def _add_other_shot_rows(self, wanted, manifest):
         """Rows for other shots' cameras and caches this place has: on its
         saved list, or built here (the manifest says from which shot)."""
-        h_root = self._get_roots()[0]
         have = set(self._key(r) for r in self._rows)
-        shots = None
         for key in sorted(set(wanted) | set(manifest)):
-            entry = manifest.get(key) or {}
             if key in have:
                 continue
-            from_shot = entry.get("from_shot")
-            if not from_shot and key.startswith(api.CAMERA_TYPE + "/"):
-                name = key.split("/")[1]        # a camera on the list, not pulled here yet
-                if self._target_shot and name == self._target_shot[2]:
-                    continue
-                if shots is None:
-                    shots = dict((s, q) for q, s in api.list_shots(h_root, self._film()))
-                from_shot = (shots[name], name) if name in shots else None
-            if not from_shot:
-                continue
-            match = [p for p in self._shot_items_for(self._film(), from_shot[0],
-                                                     from_shot[1], None)
-                     if self._key(p) == key]
-            if match:
-                self._rows.append(self._row(match[0], match[0]["latest"]))
+            if (key.startswith(api.CAMERA_TYPE + "/") and self._target_shot
+                    and key.split("/")[1] == self._target_shot[2]):
+                continue        # the shot's own camera
+            from_shot = (manifest.get(key) or {}).get("from_shot")
+            p = self._shot_entry(self._film(), key, from_shot)
+            if p:
+                self._rows.append(self._row(p, p["latest"]))
                 have.add(key)
 
-    def _film(self):
-        target = self._target_shot or self._target_asset
-        return target[0] if target else None
-
     def _published_in(self, film):
-        target = self._target_shot or self._target_asset
-        if target and film == target[0]:
+        if film == self._published_film:
             return self._published
         if film not in self._other_films:
             self._other_films[film] = api.list_buildable(self._get_roots()[0], film)
         return self._other_films[film]
 
     def _load_shot(self, *args):
-        """Re-read the H drive and start the list with whatever is already
-        in this shot."""
+        """Re-read the H drive and start the list: in a scene saved in a
+        shot or asset, with its shared list and whatever is already there;
+        in an untitled scene, empty."""
         h_root, scratch_root = self._get_roots()
-        self._published, self._rows, self._removed = [], [], set()
+        list_film = self._published_film if self._rows else None
+        self._published, self._published_film, self._rows, self._removed = [], None, [], set()
         self._other_films, self._shot_keys, self._keys_src = {}, {}, None
-        self._shot_items = {}
+        self._shot_items, self._lists_seen = {}, {}
         self._render_table()
         try:
             pub.check_roots(pub.resolve_root(h_root), pub.resolve_root(scratch_root))
@@ -582,40 +424,43 @@ class BuildShotTab(QtWidgets.QWidget):
             self.target_lbl.setText("")
             self.status.show_message(str(e), ok=False)
             return
-        for widget in (self.keys_lbl, self.keys_combo):     # keys come from shots
-            widget.setVisible(not self._target_asset)
-        if not (self._target_shot or self._target_asset):
-            self.target_lbl.setText("")
+        target = self._target_shot or self._target_asset
+        if not target:
+            film = list_film or self.picker.film()     # a refresh keeps the list's film
+            if film:
+                self._published = api.list_buildable(h_root, film)
+                self._published_film = film
             self.picker.refill()
+            self.target_lbl.setText(
+                "<b>Untitled scene</b>: the list starts empty." if not self._scene else
+                "<b>%s</b> isn't saved in a shot or asset folder." % os.path.basename(self._scene))
             self.status.show_message(
-                "Pick the shot (or asset) to build into under Build into, or set it as "
-                "your Maya project with the Project tool.", ok=False)
+                "Add what you need with +, or a whole shot's list with Load list. Build "
+                "asks where to save the scene first: the shot or asset you save it in is "
+                "the one built.", ok=True)
             return
-        film, group, name = self._target_shot or self._target_asset
-        scene = cmds.file(query=True, sceneName=True)
+        film, group, name = target
         self.target_lbl.setText("Building into %s <b>%s</b> (%s), in %s" % (
             "shot" if self._target_shot else "asset", name, film,
-            os.path.basename(scene) if scene else "a new scene"))
+            os.path.basename(self._scene)))
         self._published = api.list_buildable(h_root, film)
+        self._published_film = film
         if self._target_shot:
             # The shot's own camera, if one has been published (spec
-            # "Cameras"), and its Final animation caches (one per item), for
-            # the departments that build them.
+            # "Cameras"), and its Final animation caches (one per item).
             self._published += api.list_shot_cameras(h_root, film, group, name)
             self._published += api.list_shot_caches(h_root, film, group, name)
         self.picker.refill()
-        if self._target_shot:
-            self._fill_keys_shots()
 
         shot_dir = self._shot_dir()
         manifest = api.read_manifest(shot_dir) if shot_dir else {}
         # The list always starts with everything that belongs to this shot:
-        # the department's list for the shot saved on the H drive (so it
-        # comes back on any machine, user 2026-10-23), or for a shot without
-        # one yet what's in its assets folder on scratch, plus anything
-        # published for the shot itself, e.g. its camera, ready to build.
-        saved = api.read_build_list(self._h_target_dir(), self.department())
-        self._saved_usd = api.read_build_list_usd(self._h_target_dir(), self.department()) \
+        # its shared list on the H drive (so it comes back on any machine,
+        # user 2026-10-23), or for a shot without one yet what's in its
+        # assets folder on scratch, plus anything published for the shot
+        # itself, e.g. its camera, ready to build.
+        saved = api.read_build_list(self._h_target_dir())
+        self._saved_usd = api.read_build_list_usd(self._h_target_dir()) \
             if saved is not None else set()
         wanted = set(saved) if saved is not None else set(manifest)
         self._rows = []
@@ -645,36 +490,22 @@ class BuildShotTab(QtWidgets.QWidget):
             ok=bool(self._published))
 
     def _add_shot_caches(self):
-        """The shot's caches join the list when the department builds them
-        (Animation compares with them "occasionally", user 2026-10-28), or
-        when the open scene already has one; unticked unless the scene's is
-        out of date. They're per scene, never on the shot's saved list, so a
-        cache built once doesn't come back ticked in every new scene of the
-        shot. Never taken off when the department changes. Only the
-        Alembics join on their own; a USD or FBX cache is listed once it's
-        in the scene, or added with Type and Item (user, 2026-11-25)."""
-        builds = api.CACHE_CODE in api.builds_for(self.department())
+        """The shot's own Alembic caches join the list unticked (every
+        department builds them), or ticked when the open scene's is out of
+        date. They're per scene, never on the shot's saved list, so a cache
+        built once doesn't come back ticked in every new scene of the shot.
+        A USD or FBX cache is listed once it's in the scene, or added with
+        Type and Item (user, 2026-11-25)."""
         have = set(self._key(r) for r in self._rows) | self._removed
         for p in self._published:
             if p.get("kind") != "cache" or self._key(p) in have:
                 continue
             row = self._row(p, p["latest"])
             if row.get("in_scene") is None:
-                if not builds or api.cache_format(p) != "abc":
+                if api.cache_format(p) != "abc":
                     continue
                 row["checked"] = False
             self._rows.append(row)
-
-    def _fill_keys_shots(self):
-        """Keys from: this shot first, then the film's other shots."""
-        film, seq, shot = self._target_shot
-        shots = [s for s in api.list_shots(self._get_roots()[0], film) if s != (seq, shot)]
-        self.keys_combo.blockSignals(True)
-        self.keys_combo.clear()
-        self.keys_combo.addItem("%s (this shot)" % shot, (film, seq, shot))
-        for s, sh in shots:
-            self.keys_combo.addItem(sh, (film, s, sh))
-        self.keys_combo.blockSignals(False)
 
     def _row(self, p, chosen):
         """A list row. 'in_scene' is what the open scene already has (see
@@ -711,11 +542,9 @@ class BuildShotTab(QtWidgets.QWidget):
     # -- keys -------------------------------------------------------------
 
     def _keys_source(self):
-        """The shot the Keys dropdowns list: the one picked in Keys from,
-        else the shot being built into."""
-        picked = self.keys_combo.currentData()
-        if self._target_shot and picked and picked[0] == self._target_shot[0]:
-            return tuple(picked)
+        """The shot the Keys dropdowns list: the scene's own, for rolling
+        back to an older animation (user, 2026-11-27: no Keys from; another
+        shot's animation comes in with Add to list)."""
         return self._target_shot
 
     def _keys_for(self, p, shot):
@@ -737,10 +566,6 @@ class BuildShotTab(QtWidgets.QWidget):
                     if sh == shot), None) if shot != self._target_shot[2] else self._target_shot[1]
         return self._keys_for(p, (self._target_shot[0], seq, shot)).get(kid) if seq else None
 
-    def _on_keys_source_changed(self, *args):
-        if self._rows and self._keys_source() != self._keys_src:
-            self._render_table()
-
     def _on_keys_changed(self, p, kid):
         """Picking other keys ticks the row; picking back what the scene has
         unticks it again."""
@@ -748,9 +573,9 @@ class BuildShotTab(QtWidgets.QWidget):
         self._on_version_changed(p, p.get("chosen", p["latest"]))
 
     def _keys_cell(self, row, p):
-        """The Keys dropdown: the picker's shot's publishes for this asset,
-        newest first, plus the current choice and what the scene has (kept
-        when the picker moves on), Keep, and None."""
+        """The Keys dropdown: the scene's shot's publishes for this asset,
+        newest first, plus the current choice and what the scene has, Keep,
+        and None."""
         self.table.removeCellWidget(row, COL_KEYS)
         if p.get("keys_chosen") is None or p.get("usd_chosen"):
             # A USD stage takes no keys (spec §4h).
@@ -774,9 +599,10 @@ class BuildShotTab(QtWidgets.QWidget):
             combo.addItem(api.keys_label(kid, this_shot=self._target_shot[2],
                                          latest=latest), kid)
         combo.setCurrentIndex(max(combo.findData(p["keys_chosen"]), 0))
-        combo.setToolTip("Keys from a Layout or Animation publish, newest first. Build "
-                         "replaces this asset's keys with them. Pick another shot in "
-                         "Keys from (above the list) to list that shot's keys.")
+        combo.setToolTip("Keys from this shot's Layout or Animation publishes, newest "
+                         "first: pick an older one to roll back. Build replaces this "
+                         "asset's keys with them. For another shot's animation, add "
+                         "that shot's items with Add to list.")
         combo.currentIndexChanged.connect(
             lambda i, c=combo, r=p: self._on_keys_changed(r, c.currentData()))
         self.table.setCellWidget(row, COL_KEYS, combo)
@@ -991,23 +817,30 @@ class BuildShotTab(QtWidgets.QWidget):
 
     # -- list -------------------------------------------------------------
 
+    def _same_film(self, film):
+        """True if film can join the list: the scene's shot's or asset's
+        film, or (an untitled scene) the list's, which an empty list takes
+        from the picker. Otherwise says why and returns False."""
+        target = self._target_shot or self._target_asset
+        if target and film != target[0]:
+            self.status.show_message("This %s is in %s: pick from %s's assets."
+                                     % ("shot" if self._target_shot else "asset",
+                                        target[0], target[0]), ok=False)
+            return False
+        if not target and film != self._published_film:
+            if self._rows:
+                self.status.show_message("The list is %s's: one film at a time."
+                                         % self._published_film, ok=False)
+                return False
+            self._published = api.list_buildable(self._get_roots()[0], film)
+            self._published_film = film
+        return True
+
     def _add_asset(self):
         """+ : add the publish Add to list points at to the list, ticked."""
         film, code = self.picker.film(), self.picker.department()
         group, name = self.picker.group(), self.picker.name()
-        target = self._target_shot or self._target_asset
-        if not target:
-            self.status.show_message("Pick the shot or asset to build into under Build "
-                                     "into first.", ok=False)
-            return
-        if film != target[0]:
-            self.status.show_message("This %s is in %s: pick from %s's assets."
-                                     % ("shot" if self._target_shot else "asset",
-                                        target[0], target[0]), ok=False)
-            return
-        if not code:
-            self.status.show_message("%s doesn't build anything yet."
-                                     % self.target_picker.dept_combo.currentText(), ok=False)
+        if not (film and code) or not self._same_film(film):
             return
         if self.picker.kind() == picker.SHOT:
             return self._add_shot_item(film, group, name, code, self.picker.item())
@@ -1077,14 +910,15 @@ class BuildShotTab(QtWidgets.QWidget):
             del self._rows[r]
         self._render_table()
         failed = self._save_shot_list()
-        self.status.show_message("Taken off this shot's list: %s\n(Anything already in your "
+        self.status.show_message("Taken off the list: %s\n(Anything already in your "
                                  "scene stays there.)%s" % (", ".join(gone), failed),
                                  ok=not failed)
 
     def _save_shot_list(self):
-        """Save the list as the department's list for the shot on the H
-        drive. Returns '' or a line saying why it couldn't be saved (never
-        stops a build)."""
+        """Save the list as the shot's (or asset's) shared list on the H
+        drive, read-only (spec §4n). Returns '' or a line saying why it
+        couldn't be saved (never stops a build). An untitled scene has no
+        shot: nothing is saved."""
         folder = self._h_target_dir()
         if not folder:
             return ""
@@ -1092,39 +926,121 @@ class BuildShotTab(QtWidgets.QWidget):
         keys = [self._key(r) for r in self._rows if r.get("kind") != "cache"]
         usd = [self._key(r) for r in self._rows if r.get("usd_chosen")]
         try:
-            api.write_build_list(folder, self.department(), keys, usd)
+            api.write_build_list(folder, keys, usd)
         except Exception as e:
             return "\nThis %s's list couldn't be saved to the H drive: %s" % (
                 "shot" if self._target_shot else "asset", e)
         return ""
 
+    def _load_list(self):
+        """Load list (user, 2026-11-27): everything on the picked shot's (or
+        asset's) saved list joins this one, ticked, the way + adds a row.
+        Rows already here stay as they are."""
+        film, kind = self.picker.film(), self.picker.kind()
+        group, name = self.picker.group(), self.picker.name()
+        if not (film and group and name):
+            self.status.show_message("Pick a shot (or asset) in Add to list first, then "
+                                     "Load list adds its saved list.", ok=False)
+            return
+        if not self._same_film(film):
+            return
+        h_root = self._get_roots()[0]
+        folder = (api.shot_folder(h_root, film, group, name) if kind == picker.SHOT
+                  else api.asset_folder(h_root, film, group, name))
+        keys = api.read_build_list(folder)
+        if not keys:
+            self.status.show_message("%s has no saved list yet." % name, ok=False)
+            return
+        usd = api.read_build_list_usd(folder)
+        have = set(self._key(r) for r in self._rows)
+        by_key = dict((self._key(p), p) for p in self._published_in(film)
+                      if p.get("kind") not in SHOT_ITEMS)
+        added, missing = [], []
+        for key in keys:
+            if key in have:
+                continue
+            p = by_key.get(key) or self._shot_entry(film, key)
+            if not p:
+                missing.append(key.split("/")[1])
+                continue
+            self._removed.discard(key)
+            row = self._row(p, p["latest"])
+            if key in usd and api.has_usd(row, row["chosen"]) and not row.get("in_scene"):
+                row["usd_chosen"] = True
+            row["checked"] = row["checked"] or row.get("in_scene") is None
+            self._rows.append(row)
+            added.append(row["asset"])
+        if self.filter_combo.currentIndex() != 0:
+            self.filter_combo.setCurrentIndex(0)
+        self._render_table()
+        text = ("Added from %s's list: %s." % (name, ", ".join(added)) if added
+                else "Everything on %s's list is already here." % name)
+        if missing:
+            text += "\nNot on the H drive any more: %s" % ", ".join(missing)
+        self.status.show_message(text, ok=not missing)
+
     # -- actions ----------------------------------------------------------
 
+    def _ask_save_path(self):
+        """Maya's Save As dialog, starting in the Maya project's scenes
+        folder. Returns the path picked, or None."""
+        start = cmds.workspace(query=True, rootDirectory=True) or ""
+        if os.path.isdir(os.path.join(start, "scenes")):
+            start = os.path.join(start, "scenes")
+        picked = cmds.fileDialog2(fileFilter="Maya ASCII (*.ma);;Maya Binary (*.mb)",
+                                  dialogStyle=2, fileMode=0, startingDirectory=start,
+                                  caption="Save the scene: the shot or asset you save it "
+                                          "in is the one Build builds")
+        return picked[0] if picked else None
+
+    def _save_first(self):
+        """An untitled scene (or one saved outside the pipe's folders) is
+        saved before building (user, 2026-11-27): the student picks where,
+        and that shot or asset is the one built. The list keeps what was
+        added, and the shot's saved list joins it. Returns True if the scene
+        is now in a shot or asset and the build can go on at once (nothing
+        new joined the list)."""
+        path = self._ask_save_path()
+        if not path:
+            self.status.show_message("Nothing built: the scene wasn't saved.", ok=False)
+            return False
+        place = pub.pipe_place(path)
+        if not place:
+            self.status.show_message(
+                "Nothing built: %s isn't in a shot or asset folder. Save it in the shot's "
+                "(or asset's) scenes\\<department>\\<login> folder." % path, ok=False)
+            return False
+        if self._rows and place["film"] != self._film():
+            self.status.show_message(
+                "Nothing built: the list is %s's, but %s is in %s." % (
+                    self._film(), os.path.basename(path), place["film"]), ok=False)
+            return False
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaBinary" if path.lower().endswith(".mb")
+                  else "mayaAscii")
+        before = set(self._key(r) for r in self._rows)
+        self._read_target()
+        self._refresh_list()
+        joined = [r["asset"] for r in self._rows
+                  if self._key(r) not in before and r["checked"]]
+        if joined:
+            self.status.show_message(
+                "Saved as %s. %s's list joined yours (%s): check the ticks, then Build "
+                "again." % (os.path.basename(path), place["name"], ", ".join(joined)))
+            return False
+        return True
+
     def _build_shot(self):
-        # Build Into isn't the project: refused (user, 2026-10-28).
-        mismatch = self.target_mismatch()
-        if mismatch:
-            self.status.show_message(
-                "Nothing built: Build into (%s) isn't your Maya project (%s). Set the "
-                "project with the Project Tool and save your scene there, or go back to "
-                "the project's %s." % (pub.place_label(mismatch["target"]),
-                                       pub.place_label(mismatch["project"]),
-                                       mismatch["project"]["kind"]), ok=False)
-            return
-        # The scene saved outside the project: refused too (user, 2026-10-28:
-        # "the students will need help to stay on pipe"; was a warning).
-        mismatch = api.pub.project_mismatch()
-        if mismatch:
-            self.status.show_message(
-                "Nothing built: the open scene is in %s, but your Maya project is %s. "
-                "Set Project to the scene's (the button above), or open a scene in %s."
-                % (pub.place_label(mismatch["scene"]), pub.place_label(mismatch["project"]),
-                   pub.place_label(mismatch["project"])), ok=False)
-            return
+        if not (self._target_shot or self._target_asset):
+            if not any(p["checked"] for p in self._rows):
+                self.status.show_message("Nothing ticked to build: add what you need with + "
+                                         "or Load list first.", ok=False)
+                return
+            if not self._save_first():
+                return
         shot_dir = self._shot_dir()
         if not shot_dir:
-            self.status.show_message("Pick the shot or asset to build into under Build "
-                                     "into first.", ok=False)
+            self.status.show_message("Set the scratch drive first.", ok=False)
             return
         if not any(p["checked"] for p in self._rows):
             # Nothing to build (e.g. an asset re-added that's already in the
@@ -1150,17 +1066,9 @@ class BuildShotTab(QtWidgets.QWidget):
                 self.status.show_message("Nothing built.", ok=False)
                 return
 
+        # Build never touches the Maya project (spec §4n): references go
+        # through $PIPE_SCRATCH, so they resolve whatever it is.
         lines, warnings, replaced, changed_rigs = [], [], [], []
-        try:
-            # Build never moves a project that's set (user, 2026-10-28:
-            # "don't change the project"); with none from the pipe yet (a
-            # fresh Maya) it still sets the shot, so references resolve.
-            if (not pub.pipe_place(cmds.workspace(query=True, rootDirectory=True) or "")
-                    and api.ensure_maya_project(shot_dir)):
-                lines.append("Maya project set to %s" % os.path.basename(shot_dir))
-                self._target_key = self._scene_and_project()
-        except Exception as e:
-            warnings.append(str(e))
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             for p in self._rows:
@@ -1170,7 +1078,6 @@ class BuildShotTab(QtWidgets.QWidget):
                 try:
                     done, warning, old = api.build_asset(shot_dir, p,
                                                          p.get("chosen", p["latest"]),
-                                                         self.department(),
                                                          usd=bool(p.get("usd_chosen")),
                                                          replace=p in switching)
                 except Exception as e:

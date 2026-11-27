@@ -1,7 +1,7 @@
 # Build: how work comes into a scene (brief, 2026-11-27)
 
-**Status:** DECIDED by the project lead on 2026-11-27. Not built yet: the
-Maya Build tool still has the old "Build into" row until this is done.
+**Status:** DECIDED by the project lead on 2026-11-27, and built in Maya the
+same day (headless tests pass; hand test in Maya pending).
 
 **Who this is for:** anyone building the film pipeline's tools, in Maya now
 and in Houdini next (then Unreal, maybe Blender). It describes **what Build
@@ -77,6 +77,9 @@ Build has **one list** and one button.
   department that **published** it, then the item) and press **+**. Press
   **−** to take rows off. The list is exactly what the student wants
   loaded.
+- **Load list:** pick a shot (or asset) in Add to list and press **Load
+  list**: its whole saved list joins this one, the way + adds one row.
+  Nothing already in the list is taken off.
 - **Build** loads the ticked rows into the **open scene**.
 
 There is **no "where am I building / which department am I" step.** That
@@ -93,7 +96,16 @@ was the old "Build into" row, now removed.
 
 2. **The shot (or asset) comes from where the open scene is saved.** A
    scene saved in `...\SEQ010_120\scenes\anim\e131988\` is in shot
-   SEQ010_120. **An untitled scene has no shot.**
+   SEQ010_120. **An untitled scene has no shot**: its list starts empty
+   (fill it with + or Load list), and **Build saves it first**. It opens
+   the program's Save As, the student picks where, and that shot or asset
+   is the one built. If the shot's own saved list adds rows when the
+   scene is saved, Build stops so the student can check the ticks, then
+   Build again. Saved outside a shot or asset folder: Build refuses and
+   says where to save. *Why save first:* rig links, the shot camera,
+   keys, USD layers and the record of what's used all live in the shot,
+   so building needs one (decided 2026-11-27 over building into an
+   untitled scene, which would have meant days of changes).
 
 3. **Every department sees every asset, any time.** The department you
    pick in Add to list only says **which publish you mean**: scout's
@@ -113,8 +125,7 @@ was the old "Build into" row, now removed.
    *Why on H (decided 2026-11-27):* it's key data backed up "in a place
    where students can't delete or write over it". It's the one thing
    Build writes to H, and only Build writes it. It's locked read-only
-   after every save, like a publish. *Maya today* leaves it writable, which
-   gets fixed with this brief.
+   after every save, like a publish.
 
 5. **Publishes are copied to scratch before they're used, never read live
    off H.** H may be a slow network share. Build copies each version once
@@ -128,17 +139,13 @@ was the old "Build into" row, now removed.
    date / newer version available" and clearing versions no shot uses any
    more.
    *Stored at:* `<shot>\assets\build_manifest.json` on scratch.
-   *Untitled scene:* nothing is recorded until it's saved into a shot and
-   built again.
 
 7. **Rigs in a shot go through one fixed name per shot.** In a scene saved
    in a shot, a rig is loaded through
    `<shot>\assets\<type>\<asset>\rig\<asset>_rig.<ext>`, a link (hardlink,
    or a read-only copy where links aren't possible) to the real version.
    Updating the rig re-points the link, so every scene in that shot gets
-   the new rig, and one shot can be rolled back on its own. In an untitled
-   scene the rig loads straight from the version file, and building again
-   after saving into a shot switches it to the shot's link.
+   the new rig, and one shot can be rolled back on its own.
 
 8. **Caches are imported, fully editable, in every department.** An
    animation cache (Alembic or FBX) is brought **into** the scene (not

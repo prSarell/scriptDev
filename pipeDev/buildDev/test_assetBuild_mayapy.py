@@ -1,6 +1,6 @@
 # Build into an asset (user, 2026-10-30): the same as building into a shot.
 # One Build button, no context: a published asset is referenced into the
-# asset scene, the asset keeps a list per department on H
+# asset scene, the asset keeps one shared list on H
 # (<asset>\data\build\<dept>.json), and Keys stay shot-only. Making a
 # referenced model editable is Convert to Model's job (mpModel shelf): it
 # imports it and copies its textures into the asset's own sourceimages.
@@ -72,9 +72,9 @@ tab = ui.BuildShotTab(lambda: (H, S), parent)
 tab.refresh()
 check("Build into the asset, Modeling",
       tab._target_asset == (FILM, "environment", "shed") and tab._target_shot is None
-      and tab.department() == "model" and "Building into asset <b>shed</b>" in tab.target_lbl.text())
+      and "Building into asset <b>shed</b>" in tab.target_lbl.text())
 check("one Build button, the same as for a shot", tab.build_btn.text() == "Build")
-check("no Keys from (keys come from shots)", tab.keys_combo.isHidden())
+check("no Keys from row (keys come from the scene's shot)", not hasattr(tab, "keys_combo"))
 check("the list starts empty (no saved list yet)", tab._rows == [])
 tab.picker.set_current(film=FILM, code="model", group="prop", name="backpack")
 tab._add_asset()
@@ -89,8 +89,8 @@ check("recorded in the asset's manifest on scratch",
       api.manifest_key("prop", "backpack", "model") in api.read_manifest(asset_dir))
 check("the row now shows it's in the scene, up to date, unticked",
       not tab._rows[0]["checked"] and tab.table.item(0, ui.COL_STATUS).text().startswith("Up to date"))
-h_list = api.build_list_path(api.asset_folder(H, FILM, "environment", "shed"), "model")
-check("Modeling's list for the asset saved on H (data\\build\\model.json)",
+h_list = api.build_list_path(api.asset_folder(H, FILM, "environment", "shed"))
+check("the asset's shared list saved on H (data\\build\\build_list.json)",
       json.load(open(h_list))["assets"] == [api.manifest_key("prop", "backpack", "model")])
 
 # Another scratch drive: the list comes back from H.

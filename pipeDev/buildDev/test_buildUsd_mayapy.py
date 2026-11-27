@@ -253,12 +253,12 @@ check("replace: the reference goes, the stage is placed where the group was",
                                            translation=True)] == [1, 2, 3]
       and "Maya reference removed" in done)
 
-# -- the department's list remembers USD ----------------------------------------
+# -- the shot's list remembers USD ----------------------------------------
 h_shot = api.shot_folder(H, FILM, "SEQ010", "SEQ010_120")
 key = api.manifest_key("environment", "grassB", "model")
-api.write_build_list(h_shot, "anim", [key], usd=[key])
+api.write_build_list(h_shot, [key], usd=[key])
 check("the build list saves which rows load as USD",
-      api.read_build_list(h_shot, "anim") == [key] and api.read_build_list_usd(h_shot, "anim") == {key})
+      api.read_build_list(h_shot) == [key] and api.read_build_list_usd(h_shot) == {key})
 
 # -- the UI: a USD column ---------------------------------------------------------
 cmds.file(save=True, type="mayaAscii")

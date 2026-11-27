@@ -119,20 +119,15 @@ combo.setCurrentIndex(combo.findData(LAYOUT))
 tab._build_shot()
 check("rolled back to layout keys", tx_at_10() == 2.0)
 
-# Keys from another shot: its keys are listed; pick them.
-tab.keys_combo.setCurrentIndex(tab.keys_combo.findText(OTHER))
+# No Keys from (user, 2026-11-27): only this shot's keys are listed; another
+# shot's animation comes in with Add to list.
 combo = keys_combo(tab)
 items = [combo.itemData(i) for i in range(combo.count())]
-check("Keys from another shot lists that shot's keys (plus the current choice)",
-      items[0] == OTHER_ANIM and LAYOUT in items and ANIM not in items)
-check("other shot shown in the label", OTHER in combo.itemText(0))
-combo.setCurrentIndex(combo.findData(OTHER_ANIM))
-tab.keys_combo.setCurrentIndex(0)      # back to this shot
-combo = keys_combo(tab)
-check("choice from another shot stays when Keys from goes back",
-      combo.currentData() == OTHER_ANIM and row["keys_chosen"] == OTHER_ANIM)
+check("only this shot's keys listed, not the other shot's",
+      OTHER_ANIM not in items and ANIM in items and LAYOUT in items)
+combo.setCurrentIndex(combo.findData(ANIM))
 tab._build_shot()
-check("keys from another shot on", tx_at_10() == 9.0)
+check("forward again to the anim keys", tx_at_10() == 5.0)
 
 # Reopen: the row shows what the scene has, unticked.
 cmds.file(save=True, force=True)
@@ -140,7 +135,7 @@ cmds.file(cmds.file(query=True, sceneName=True), open=True, force=True)
 tab.refresh()
 row = tab._rows[0]
 check("reopened: row starts at the keys the scene has, unticked",
-      row["keys_start"] == OTHER_ANIM and not row["checked"])
+      row["keys_start"] == ANIM and not row["checked"])
 check("In this shot shows the keys", "keys v001 anim" in tab.table.item(0, ui.COL_IN).text())
 
 # Keyed by hand, no record: starts at Keep, unticked, nothing wiped.
@@ -156,7 +151,7 @@ tab._build_shot()
 check("hand keys untouched", tx_at_10() == 7.0)
 
 # The shot's list is saved on the H drive (user, 2026-10-23).
-saved = api.read_shot_list(H, FILM, SEQ, SHOT, "anim")
+saved = api.read_shot_list(H, FILM, SEQ, SHOT)
 check("shot's list saved on the H drive", saved == [api.manifest_key("character", "scout", "rig")])
 
 # Another machine: a new scratch drive with nothing on it. The list comes
@@ -178,7 +173,7 @@ check("new drive: built with the latest keys", tx_at_10() == 5.0)
 # "-" takes it off the shot's list for good.
 tab2.table.selectRow(0)
 tab2._remove_rows()
-check("'-' removes it from the saved list", api.read_shot_list(H, FILM, SEQ, SHOT, "anim") == [])
+check("'-' removes it from the saved list", api.read_shot_list(H, FILM, SEQ, SHOT) == [])
 tab2.refresh()
 check("...and it doesn't come back", not [r for r in tab2._rows if r["asset"] == "scout"])
 check("still in the scene ('-' is list only)", cmds.ls("scout_rig:ctrl"))

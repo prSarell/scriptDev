@@ -43,7 +43,11 @@ def chosen():
 
 
 cmds.file(new=True, force=True)
-api.ensure_maya_project(shot)       # a new scene builds into the Maya project's shot
+# A new scene saved in the shot (Build takes the shot from where the scene
+# is saved, spec §4n), nothing referenced yet.
+blank = os.path.join(shot, "scenes", "anim", "scout", "blank.ma")
+os.makedirs(os.path.dirname(blank))
+cmds.file(rename=blank); cmds.file(save=True, type="mayaAscii")
 check("blank scene: starts at the latest (v005), not the shot's old v003", chosen() == ["scout/v005"])
 cmds.file(os.path.join(pub_dir, "backpack_scout_model_v003.ma"), reference=True, namespace="backpack")
 check("scene with the shot's assets: starts at the version it has (v003)", chosen() == ["scout/v003"])

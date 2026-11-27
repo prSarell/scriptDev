@@ -139,7 +139,7 @@ light_scene = os.path.join(shot_s, "scenes", "lighting", LOGIN, "light.ma")
 os.makedirs(os.path.dirname(light_scene))
 cmds.file(rename=light_scene); cmds.file(save=True, type="mayaAscii")
 cmds.workspace(shot_s, openWorkspace=True)
-done, warning, _ = api.build_asset(shot_s, by_fmt["usd"], vid, "lighting")
+done, warning, _ = api.build_asset(shot_s, by_fmt["usd"], vid)
 print("   ", done, warning)
 stage = api.stage_of(by_fmt["usd"])
 check("USD cache loaded as a USD stage in its pipe group",
@@ -147,11 +147,11 @@ check("USD cache loaded as a USD stage in its pipe group",
       and "/cache/usd/anim/scout/" in cmds.getAttr(stage[1] + ".filePath")
       and stage[0].split("|")[1] == "scoutrig_usd_cache_GRP")
 check("... scene_version sees it", api.scene_version(shot_s, by_fmt["usd"]) == vid)
-done, _, _ = api.build_asset(shot_s, by_fmt["usd"], vid, "lighting")
+done, _, _ = api.build_asset(shot_s, by_fmt["usd"], vid)
 check("... built again: already up to date", done == ["already up to date"])
 
 # --- FBX cache: Lighting imports it (2026-11-26) in its own namespace and group
-done, warning, _ = api.build_asset(shot_s, by_fmt["fbx"], vid, "lighting")
+done, warning, _ = api.build_asset(shot_s, by_fmt["fbx"], vid)
 print("   ", done, warning)
 refs = [w for _, w, _, _ in api.scene_references() if w.lower().endswith(".fbx")]
 source = cmds.getAttr("scoutrig_fbx_cache_GRP." + api.CACHE_FILE_ATTR) \
@@ -175,13 +175,12 @@ parent = QtWidgets.QWidget()
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
 pk = tab.picker
-check("building into the other shot as Lighting", tab._target_shot == (FILM, SEQ, OTHER)
-      and tab.department() == "lighting")
+check("building into the other shot (a Lighting scene)", tab._target_shot == (FILM, SEQ, OTHER))
 pk.set_current(film=FILM, code="anim", group=SEQ, name=SHOT, kind=picker.SHOT)
 labels = lambda combo: [combo.itemText(i) for i in range(combo.count())]
-check("Type and Item sit last, after the shot, before - and +",
-      [pk.layout().itemAt(i).widget() for i in range(4, 8)]
-      == [pk.name_combo, pk.type_combo, pk.item_combo, pk.remove_btn])
+check("Type and Item sit last, after the shot, before Load list, - and +",
+      [pk.layout().itemAt(i).widget() for i in range(4, 9)]
+      == [pk.name_combo, pk.type_combo, pk.item_combo, tab.load_btn, pk.remove_btn])
 check("Shot side: Type shows Camera and Cache", not pk.type_combo.isHidden()
       and labels(pk.type_combo) == ["Camera", "Cache"])
 check("Camera: the shot's camera", labels(pk.item_combo) == ["camera"])
@@ -207,7 +206,6 @@ check("Layout picked: no caches (they're Animation's), and no camera from Layout
 pk.set_current(code="model", kind=picker.ASSET)
 check("Asset side: Type and Item hidden", pk.type_combo.isHidden() and pk.item_combo.isHidden()
       and pk.item() is None)
-check("Build into has no Type or Item", tab.target_picker.type_combo.isHidden())
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 for root, dirs, fs in os.walk(base):

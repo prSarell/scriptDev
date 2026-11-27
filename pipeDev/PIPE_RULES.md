@@ -39,8 +39,9 @@ If a rule here gets in the way of a fix, **stop and ask the project lead**
    the open scene whatever the project is; the shot comes from where the
    scene is saved; one shared list per shot for every department; no
    "Keys from" dropdown; no scene-vs-project banner in Build. **Add to
-   list** (with its Shot-side Type and Item) is now the only row of
-   dropdowns, and that layout is the locked one. *Not built yet.*
+   list** (with its Shot-side Type and Item, then **Load list**, - and
+   +) is now the only row of dropdowns, and that layout is the locked
+   one. Built 2026-11-27.
 
 ## Design rules (the pipe's backbone)
 

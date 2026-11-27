@@ -93,7 +93,7 @@ os.makedirs(os.path.dirname(light))
 cmds.file(rename=light); cmds.file(save=True, type="mayaAscii")
 caches = dict((c["item"], c) for c in api.list_shot_caches(H, FILM, SEQ, SHOT))
 done, warning, _ = api.build_asset(shot_s, caches["walkingStick"],
-                                   caches["walkingStick"]["latest"], "lighting")
+                                   caches["walkingStick"]["latest"])
 print("   ", done, warning)
 group = cmds.ls("walkingStick_cache_GRP", long=True)
 check("cache in a pipe group: dagContainer with the pipe icon",
@@ -114,8 +114,7 @@ check("... reading the cache from scratch through $PIPE_SCRATCH, not from H",
       abc_file.startswith("$PIPE_SCRATCH/") and os.path.isfile(os.path.expandvars(abc_file))
       and os.path.normcase(os.path.expandvars(abc_file)).startswith(os.path.normcase(SC))
       and not os.path.normcase(os.path.expandvars(abc_file)).startswith(os.path.normcase(H)))
-again, _, _ = api.build_asset(shot_s, caches["walkingStick"], caches["walkingStick"]["latest"],
-                              "lighting")
+again, _, _ = api.build_asset(shot_s, caches["walkingStick"], caches["walkingStick"]["latest"])
 check("building again: already up to date, imported once",
       "already up to date" in again and len(cmds.ls("*:walkingStick", recursive=True)) == 1)
 cmds.currentTime(10)
@@ -134,7 +133,7 @@ t = cmds.getAttr(cmds.ls("*:wood_file", recursive=True)[0] + ".fileTextureName")
 check("its texture resolves on this drive", t.startswith("$PIPE_SCRATCH/")
       and os.path.isfile(os.path.expandvars(t)))
 check("the build said so", any("look" in d and "put on" in d for d in done))
-done, warning, _ = api.build_asset(shot_s, caches["box"], caches["box"]["latest"], "lighting")
+done, warning, _ = api.build_asset(shot_s, caches["box"], caches["box"]["latest"])
 check("box: built, no look, no warning", warning is None
       and not any("look" in d for d in done) and cmds.objExists("box_cache:box"))
 

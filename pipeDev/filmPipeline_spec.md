@@ -4232,7 +4232,7 @@ unsimmed dress".
   cached asset on (LookDev, else the cache's department), so a republished
   rig or environment fixes its cache without a recache.
 
-### 4n. Build without "Build into" — DECIDED (2026-11-27), not built
+### 4n. Build without "Build into" — DECIDED + BUILT (2026-11-27)
 
 The full brief, written to be handed to the Houdini team, is
 `pipeDev/build_brief.md`. This section records the decision and why.
@@ -4256,18 +4256,31 @@ Decided, point by point:
   replaces the 2026-11-27 startup fix (Build into on "(pick one)" in a
   fresh Maya), which goes with the row.
 - **The shot comes from where the open scene is saved**
-  (`pipe_place(scene)`). An untitled scene has none.
+  (`pipe_place(scene)`). An untitled scene has none: its list starts
+  empty, and **Build saves it first** (Save As; that shot or asset is
+  the one built; if the shot's saved list adds rows, Build stops to let
+  the student check the ticks). Decided the same day over building into
+  untitled scenes: 31 of Build's API functions need a shot folder (rig
+  links, camera files, keys, USD layers, manifest). User: "So does saving
+  the file connect the tool to the list?" (yes).
+- **Load list** (user: "the load list sounds interesting"): on the Add to
+  list row, adds the picked shot's (or asset's) whole saved list to
+  Build's list, the way + adds one row; nothing is taken off. Proposed
+  instead of the user's idea of "listening for changing the add to the
+  list menus", which would have swapped the list whenever a student
+  reached into another shot for one camera or cache. The Shot side now
+  also lists shots that only have a saved list.
 - **One shared list per shot**, for every department ("yes one shared
   list per shot"): `data\build\build_list.json` on H. The per-department
   lists (`<dept>.json`, 2026-10-30) are merged into it the first time
   it's read. Add to list's Department only picks which publish (rig vs
   model). It no longer picks a list.
-- **Manifest and rig links stay in the shot** when the scene is saved in
-  one ("ok this sounds good"). In an untitled scene a rig references its
-  version file directly, and nothing is recorded; building again after
-  saving into a shot switches it to the shot's link (§4a). "Clear unused
-  versions" reads what scenes use from the scenes themselves ("lets try it
-  and see how it works").
+- **Manifest and rig links stay in the shot** ("ok this sounds good").
+  (The untitled-scene rig reference agreed first was dropped with "Build
+  saves it first".) "Clear unused versions" was agreed as reading the
+  scenes themselves ("lets try it and see how it works"); with every
+  build now in a saved shot, the shot's record still covers it, so it's
+  unchanged for now.
 - **Cache looks:** always the newest LookDev look, else the rig's ("yes").
   Replaces "Lighting: LookDev, Animation: the cached version's"
   (2026-11-26).
@@ -4281,8 +4294,7 @@ Decided, point by point:
   rule 3, "H holds only publishes"). User: "I think this is fine, it's
   backing up key data in a place where students cant delete or write over
   it." So Build is the only writer, and it locks the file read-only after
-  every save (today's `write_build_list` unlocks it to write and doesn't
-  lock it again: fix with this change). PIPE_RULES rule 3 notes the
+  every save (`write_build_list`, built). PIPE_RULES rule 3 notes the
   exception.
 
 ## 5. Context: what the existing tools assume

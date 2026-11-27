@@ -125,7 +125,7 @@ cmds.file(new=True, force=True)
 cmds.file(rig_file, reference=True, namespace="scout_rig")
 build_scene = os.path.join(shot_s, "scenes", "anim", LOGIN, "compare.ma")
 cmds.file(rename=build_scene); cmds.file(save=True, type="mayaAscii")
-done, warning, replaced = api.build_asset(shot_s, c, vid1, "anim")
+done, warning, replaced = api.build_asset(shot_s, c, vid1)
 print("   ", done, warning)
 abc_node = (cmds.ls("scoutrig_cache:*", type="AlembicNode") or [None])[0]
 abc = cmds.getAttr(abc_node + ".abc_File") if abc_node else ""
@@ -173,7 +173,7 @@ check("look's texture resolves on this drive (pulled with the look)",
 check("cache group records the look it wears",
       cmds.getAttr("scoutrig_cache_GRP.pipe_look") == "scout_scout_rig_v001_look.ma")
 check("the build said so", any("look v001 put on (2 shaders)" in d for d in done))
-done, _, _ = api.build_asset(shot_s, c, vid1, "anim")
+done, _, _ = api.build_asset(shot_s, c, vid1)
 check("building again: already up to date, look not imported twice",
       done == ["already up to date"] and len(cmds.ls("scoutrig_cache_look*:skin_MTL")) == 1)
 
@@ -182,7 +182,7 @@ item, p2 = publish_final()
 c = api.list_shot_caches(H, FILM, SEQ, SHOT)[0]
 vid2 = api.version_id(LOGIN, 2)
 check("v002 listed as latest", c["latest"] == vid2)
-done, warning, replaced = api.build_asset(shot_s, c, vid2, "anim")
+done, warning, replaced = api.build_asset(shot_s, c, vid2)
 print("   ", done)
 check("updated: still one cache, its AlembicNode now reads v002",
       len(cmds.ls("*:body_geo", recursive=True)) == 2      # the cache's and the rig's
@@ -194,7 +194,8 @@ cache_body = cmds.ls("scoutrig_cache:body_geo", long=True)[0]
 check("updated: same rig, so the look stays on",
       set(engine_of(cache_body)) == {"scoutrig_cache_look:skinSG", "scoutrig_cache_look:eyeSG"})
 
-# --- which look: Lighting takes the newest LookDev look, Animation the rig's
+# --- which look (one rule since 2026-11-27, spec §4n): the newest LookDev
+# look, else the newest rig look, else the cached version's
 lookdev = os.path.join(H, FILM, "maya", "assets", "character", "scout", "scenes", "lookDev",
                        LOGIN, "scout_scout_lookDev_v001")     # spec 4g folder
 os.makedirs(os.path.dirname(lookdev), exist_ok=True)
@@ -203,49 +204,38 @@ rig_look = os.path.splitext(rig_file)[0] + "_look"
 for ext in (".ma", ".json"):
     shutil.copy2(rig_look + ext, lookdev + "_look" + ext)
 info = c["cache_info"][vid2]
-pick = lambda dept: os.path.basename(api.look_for_cache(H, FILM, info, dept)[0])
-check("Animation: the rig's look", pick("anim") == "scout_scout_rig_v001_look.ma")
-check("Lighting: the LookDev look", pick("lighting") == "scout_scout_lookDev_v001_look.ma")
+pick = lambda: os.path.basename(api.look_for_cache(H, FILM, info)[0])
+check("the LookDev look", pick() == "scout_scout_lookDev_v001_look.ma")
 os.chmod(lookdev + "_look.ma", stat.S_IWRITE); os.remove(lookdev + "_look.ma")
-check("Lighting, LookDev has no look: the rig's", pick("lighting") == "scout_scout_rig_v001_look.ma")
-# A rig republished to fix its look (2026-11-26: scout's boots): Lighting
-# takes the newest rig look without the shot being recached; Animation keeps
-# the cached version's, unless that version has none.
+check("LookDev has no look: the rig's", pick() == "scout_scout_rig_v001_look.ma")
+# A rig republished to fix its look (2026-11-26: scout's boots): the newest
+# rig look, without the shot being recached.
 import time
 rig_v2 = rig_file.replace("_rig_v001", "_rig_v002")
 for src, dst in ((rig_file, rig_v2), (rig_look + ".ma", rig_v2[:-3] + "_look.ma"),
                  (rig_look + ".json", rig_v2[:-3] + "_look.json")):
     shutil.copy(src, dst)
     os.utime(dst, (time.time() + 60, time.time() + 60))
-check("Lighting, a newer rig publish with a look: the newer one",
-      pick("lighting") == "scout_scout_rig_v002_look.ma")
-check("Animation: still the cached version's look", pick("anim") == "scout_scout_rig_v001_look.ma")
-for ext in (".ma", ".json"):
-    os.chmod(rig_look + ext, stat.S_IWRITE); os.rename(rig_look + ext, rig_look + ext + ".off")
-check("Animation, the cached version has no look: the newest one",
-      pick("anim") == "scout_scout_rig_v002_look.ma")
-for ext in (".ma", ".json"):
-    os.rename(rig_look + ext + ".off", rig_look + ext)
+check("a newer rig publish with a look: the newer one", pick() == "scout_scout_rig_v002_look.ma")
 for f in (rig_v2, rig_v2[:-3] + "_look.ma", rig_v2[:-3] + "_look.json"):
     os.chmod(f, stat.S_IWRITE); os.remove(f)
 check("made in the shot: no look", api.look_for_cache(H, FILM, {"kind": "shot", "asset": {}}) is None)
 
-# --- the Build tab: Animation's list gets the shot's caches by itself
+# --- the Build tab: a scene saved in the shot gets the shot's caches by itself
 parent = QtWidgets.QWidget()
-cmds.workspace(shot_s, openWorkspace=True)      # the Project Tool sets the shot
 cmds.file(save=True, type="mayaAscii")
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
 rows = [r for r in tab._rows if r.get("kind") == "cache"]
-check("Animation: the shot's caches are in the list, no Keys", tab.department() == "anim"
+check("the shot (from where the scene is saved): its caches are in the list, no Keys",
+      tab._target_shot == (FILM, SEQ, SHOT)
       and len(rows) == 1 and rows[0]["asset"] == "scoutrig" and rows[0]["keys_chosen"] is None)
 check("the cache row knows it's in the scene at v002, unticked",
       rows[0]["in_scene"] == vid2 and not rows[0]["checked"])
 check("caches aren't offered by the picker",
       not [n for _, n in tab._items_for(FILM, "anim", "shot") if "cache" in n.lower()])
-tab._on_department_changed()
-check("no doubles when the department is picked again",
-      len([r for r in tab._rows if r.get("kind") == "cache"]) == 1)
+tab.refresh()
+check("no doubles on a refresh", len([r for r in tab._rows if r.get("kind") == "cache"]) == 1)
 
 # A fresh scene in the shot: the cache joins unticked and stays off the
 # shot's saved list until it's built.
@@ -258,24 +248,21 @@ check("fresh scene: cache in the list, unticked", len(rows) == 1 and not rows[0]
       and rows[0]["in_scene"] is None)
 tab._save_shot_list()
 check("an unbuilt cache isn't saved to the shot's list",
-      not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT, "anim") or []))
-# Every department builds caches since 2026-11-25 (Lighting needs them).
-check("Lighting builds caches", api.CACHE_CODE in api.builds_for("lighting"))
-tab.target_picker.set_current(code="lighting")
+      not any(k.endswith("/cache") for k in api.read_shot_list(H, FILM, SEQ, SHOT) or []))
 cmds.file(new=True, force=True)
 light_scene = os.path.join(shot_s, "scenes", "lighting", LOGIN, "light.ma")
 os.makedirs(os.path.dirname(light_scene))
 cmds.file(rename=light_scene); cmds.file(save=True, type="mayaAscii")
 tab.refresh()
 rows = [r for r in tab._rows if r.get("kind") == "cache"]
-check("a Lighting scene's list has the shot's cache, unticked", tab.department() == "lighting"
-      and len(rows) == 1 and not rows[0]["checked"])
+check("a Lighting scene's list has the shot's cache too, unticked",
+      len(rows) == 1 and not rows[0]["checked"])
 
 # --- Lighting imports caches (user, 2026-11-26), from scratch, selectable
 api.reference_cache(api.pipeEnv.to_var_path(api.entry_path(
     shot_s, api.read_manifest(shot_s)[api.manifest_key(c["asset_type"], c["asset"], c["code"])])),
     "scoutrig_cache")       # a Lighting scene built before: referenced
-done, warning, _ = api.build_asset(shot_s, c, vid1, "lighting")
+done, warning, _ = api.build_asset(shot_s, c, vid1)
 print("   ", done, warning)
 body = cmds.ls("scoutrig_cache:body_geo", long=True)
 check("a referenced build is swapped for an import",
@@ -291,7 +278,7 @@ check("it reads v001 from scratch, through $PIPE_SCRATCH",
           os.path.normcase(SC)))
 check("its look is on", "scoutrig_cache_look:skinSG" in engine_of(body[0]))
 check("the Build tab sees it at v001", api.scene_version(shot_s, c) == vid1)
-done, _, replaced = api.build_asset(shot_s, c, vid2, "lighting")
+done, _, replaced = api.build_asset(shot_s, c, vid2)
 print("   ", done)
 check("v002: the same import repointed, not imported again",
       done[0].startswith("updated to") and len(cmds.ls("*:body_geo", recursive=True)) == 1

@@ -94,11 +94,8 @@ check("rows already in the scene start unticked",
 def dept_codes(picker_):
     model = picker_.dept_combo.model()
     return [model.item(i).data(QtCore.Qt.UserRole) for i in range(model.rowCount())]
-t = tab.target_picker
-check("Build into: the Maya project's shot, Shot side, Animation",
-      (t.film(), t.kind(), t.department(), t.group(), t.name())
-      == (FILM, "shot", "anim", "EAP_010", "EAP_010_010")
-      and dept_codes(t) == ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"])
+check("no Build into: the shot is where the scene is saved",
+      not hasattr(tab, "target_picker") and tab._target_shot == (FILM, "EAP_010", "EAP_010_010"))
 check("Add to list: the locked department list",
       dept_codes(p) == ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"] and p.group_combo.toolTip() == "Asset type")
 p.set_current(film=FILM, code="rig")
@@ -166,7 +163,7 @@ built = [i for i, r in enumerate(tab._rows) if r["asset"] == "backpack"][0]
 tab.table.selectRow(built)
 tab._remove_rows()
 check("a built asset comes off the list", "backpack" not in names()
-      and "Taken off this shot's list: backpack" in tab.status._text)
+      and "Taken off the list: backpack" in tab.status._text)
 check("... the scene keeps its reference", sorted(n for n, _, _, _ in api.scene_references())
       == refs_before)
 check("... and the shot's record keeps it", any(k.endswith("/backpack/model")

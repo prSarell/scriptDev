@@ -105,16 +105,11 @@ import buildTool_ui as bui
 cmds.file(shot_scene, open=True, force=True)
 tab = bui.BuildShotTab(lambda: (H, S), PARENT)
 tab.refresh()
-check("Build: red banner shown", tab.project_banner.isVisibleTo(tab)
-      and "Build uses the open scene" in tab.project_banner.label.text())
-del answers[:]
-tab._build_shot()
-check("Build: asks first, Cancel builds nothing",
-      answers == ["Build"] and "Nothing built" in tab.status._text)
+# Build ignores the Maya project (spec §4n, 2026-11-27): no banner, and
+# the shot is the open scene's.
+check("Build: no project banner, building into the scene's shot",
+      not hasattr(tab, "project_banner") and tab._target_shot is not None)
 pub.set_maya_project(shot_dir)
-tab.check_target()
-check("Build: project changed while the window was open, banner goes",
-      not tab.project_banner.isVisibleTo(tab))
 picker.confirm_mismatch = real_confirm
 
 # -- Set Project offers to switch scene -----------------------------------------

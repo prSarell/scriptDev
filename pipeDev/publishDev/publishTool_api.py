@@ -230,29 +230,7 @@ def set_maya_project(path):
     if not _same_path(now, path):
         raise PublishError("Maya didn't switch project (it's still %s). Try File > Set "
                            "Project and pick %s." % (now, path))
-    os.environ.pop(STARTUP_PROJECT_ENV, None)       # picked this session
     return path
-
-
-# Maya sets the last session's project again when it starts (lastLocalWS),
-# so a fresh Maya is "in" yesterday's shot without anyone picking it (user,
-# 2026-11-27: Build "auto loads with this list. It's not set to a shot").
-# pipeEnv.install notes that project once Maya is up; until a project is
-# set this session (the pipe's Set Project, or File > Set Project to another
-# one), Build doesn't take an untitled scene to be working in it.
-STARTUP_PROJECT_ENV = "PIPE_STARTUP_PROJECT"
-
-
-def remember_startup_project():
-    """Note the project Maya started in (pipeEnv.install, once Maya is up)."""
-    os.environ[STARTUP_PROJECT_ENV] = cmds.workspace(query=True, rootDirectory=True) or ""
-
-
-def project_from_last_session(project):
-    """True if project is only the one Maya restored at startup: nobody has
-    set a project since."""
-    start = os.environ.get(STARTUP_PROJECT_ENV)
-    return bool(start and project) and _same_path(start, project)
 
 
 def check_roots(h_root, scratch_root):

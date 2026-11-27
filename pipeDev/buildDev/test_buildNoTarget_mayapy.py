@@ -1,10 +1,9 @@
-# Build by department (spec §4 "Build by department", user 2026-10-28): the
-# tab has two rows ("the difference between build and populate list mode"):
-# Add to list (what's published) and Build into (Film | Asset or Shot |
-# department | Sequence | Shot), which starts on the Maya project and never
-# changes it. Add to list offers every department (2026-10-30); Build into starts on
-# the scene's (working folder, else file name). Every department builds everything (2026-11-25).
-# Run: mayapy test_buildDepartment_mayapy.py
+# Build without "Build into" (user, 2026-11-27, spec §4n): one row of
+# dropdowns, Add to list (every department, LOCKED list); the shot or asset
+# is where the open scene is saved, whatever the Maya project is; Build
+# never touches the project and never refuses over it; Keys come from the
+# scene's own shot. department_of_scene and builds_for are still the API's.
+# Run: mayapy test_buildNoTarget_mayapy.py
 import sys, os, shutil, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -114,27 +113,30 @@ for folder in (shot_s, other_s):
         os.makedirs(folder)
     open(os.path.join(folder, "workspace.mel"), "w").write("")
 # The other shot already has a saved list: Scout's rig.
-api.write_shot_list(H, FILM, SEQ, OTHER, "anim", [api.manifest_key("character", "scout", "rig")])
+api.write_shot_list(H, FILM, SEQ, OTHER, [api.manifest_key("character", "scout", "rig")])
 
+# --- no Build into (user, 2026-11-27, spec §4n): one row of dropdowns
 parent = QtWidgets.QWidget()
 open_new(scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
-cmds.workspace(shot_s, openWorkspace=True)          # the Project Tool's job
+cmds.workspace(other_s, openWorkspace=True)         # the project somewhere else
 tab = ui.BuildShotTab(lambda: (H, SC), parent)
 tab.refresh()
-t, p = tab.target_picker, tab.picker
-check("Build into: the Maya project's shot, for Animation (the scene's folder)",
-      (t.film(), t.kind(), t.department(), t.group(), t.name())
-      == (FILM, picker.SHOT, "anim", SEQ, SHOT) and tab._target_shot == (FILM, SEQ, SHOT))
-# Both Department dropdowns: the pipe's department list, LOCKED (user,
+p = tab.picker
+check("no Build into row, no Keys from, no project banner",
+      not hasattr(tab, "target_picker") and not hasattr(tab, "keys_combo")
+      and not hasattr(tab, "project_banner"))
+check("the shot is where the scene is saved, whatever the project is",
+      tab._target_shot == (FILM, SEQ, SHOT) and "SEQ010_120" in tab.target_lbl.text())
+# The Department dropdown: the pipe's department list, LOCKED (user,
 # 2026-10-30), whatever Asset or Shot says. No Environment.
 LOCKED = ["model", "rig", "creature", "lookDev", "layout", "anim", "fx", "lighting"]
 def all_enabled(pk):
     m = pk.dept_combo.model()
     return all(m.item(i).isEnabled() for i in range(m.rowCount()))
-check("Build into, Shot side: the locked department list", codes(t) == LOCKED and all_enabled(t))
 check("Add to list: the locked department list", codes(p) == LOCKED and all_enabled(p))
 p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.SHOT))
 check("Add to list, Shot side: the same list", codes(p) == LOCKED)
+check("Load list sits on the Add to list row", p.layout().indexOf(tab.load_btn) >= 0)
 p.kind_combo.setCurrentIndex(p.kind_combo.findData(picker.ASSET))
 p.set_current(film=FILM, code="rig", group="character", name="scout")
 tab._add_asset()
@@ -155,109 +157,34 @@ check("+ again: shed is already in the list", len(tab._rows) == before + 1
       and "already in the list" in tab.status._text)
 del tab._rows[before:]
 tab._render_table()
-check("Keys from: this shot", not tab.keys_combo.isHidden()
-      and tab._keys_source() == (FILM, SEQ, SHOT))
-check("no banner: building into the scene's shot", tab.target_mismatch() is None
-      and tab.project_banner.isHidden())
+check("Keys: the scene's own shot", tab._keys_source() == (FILM, SEQ, SHOT))
 
-# Asset side: the same list.
-t.kind_combo.setCurrentIndex(t.kind_combo.findData(picker.ASSET))
-check("Build into, Asset side: the same locked list", codes(t) == LOCKED)
-t.set_current(code="lookDev")
-tab._on_department_changed()
-check("LookDev: Add to list still the locked list", codes(p) == LOCKED)
-t.set_current(film=FILM, code="anim", group=SEQ, name=SHOT, kind=picker.SHOT)
-tab._on_target_changed()
-tab._on_department_changed()
-
-# Build into another shot: its list, a banner, the project left alone.
-t.set_current(code="anim", group=SEQ, name=OTHER)
-tab._on_target_changed()
-check("another shot picked: its list loads (Scout's rig)", tab._target_shot == (FILM, SEQ, OTHER)
-      and [(r["asset"], r["code"]) for r in tab._rows] == [("scout", "rig")])
-m = tab.target_mismatch()
-check("banner: Build into SEQ010_130 isn't the project (SEQ010_120), Build won't run",
-      m and m["target"]["name"] == OTHER and m["project"]["name"] == SHOT
-      and not tab.project_banner.isHidden()
-      and "won't run" in tab.project_banner.label.text()
-      and tab.project_banner.match_btn.text() == "Back to the project's shot")
-check("the Maya project isn't changed",
+# Build never touches the project, and never refuses over it.
+built = []
+_real = api.build_asset
+api.build_asset = lambda *a, **k: (built.append(a[0]), (["built"], None, None))[1]
+tab._build_shot()
+api.build_asset = _real
+check("Build runs with the project elsewhere, into the scene's shot",
+      built and all(os.path.normcase(b) == os.path.normcase(shot_s) for b in built))
+check("... and the Maya project is left as it was",
       os.path.normcase(os.path.normpath(cmds.workspace(query=True, rootDirectory=True)))
-      == os.path.normcase(os.path.normpath(shot_s)))
-asked = []
-picker.confirm_mismatch = lambda parent, text, action: asked.append(text) or True
-refs_before = api.scene_references()
-tab._build_shot()
-check("Build refuses (no 'build anyway'), builds nothing",
-      not asked and "Nothing built" in tab.status._text
-      and "Project Tool" in tab.status._text and api.scene_references() == refs_before)
-tab.refresh()
-check("refresh, same scene and project: Build into keeps the shot picked by hand",
-      tab._target_shot == (FILM, SEQ, OTHER))
-tab._match_project()
-check("banner button: back to the project's shot", tab._target_shot == (FILM, SEQ, SHOT)
-      and tab.target_mismatch() is None)
+      == os.path.normcase(os.path.normpath(other_s)))
 
-# Set the project to the other shot and save the scene there: allowed.
-cmds.workspace(other_s, openWorkspace=True)
-open_new(scene_in(other_s, "anim", LOGIN, "anim_work.ma"))
+# Another scene opened, in another shot: Build follows the scene.
+open_new(scene_in(other_s, "lighting", LOGIN, "light_work.ma"))
 tab.check_target()
-check("project set and scene saved in SEQ010_130: Build into it, no banner",
-      tab._target_shot == (FILM, SEQ, OTHER) and tab.target_mismatch() is None
-      and tab.project_banner.isHidden())
-# Project right, scene saved elsewhere: refused too ("help to stay on pipe").
-cmds.workspace(shot_s, openWorkspace=True)
-tab.check_target()
-asked[:] = []
-tab._build_shot()
-check("scene saved outside the project: refused, not asked",
-      tab._target_shot == (FILM, SEQ, SHOT) and not asked
-      and "Nothing built" in tab.status._text and "Set Project" in tab.status._text
-      and "won't run" in tab.project_banner.label.text()
-      and tab.project_banner.match_btn.text() == "Set Project to the scene's")
-open_new(scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
+check("a scene in SEQ010_130 opened: its shot and its list (Scout's rig)",
+      tab._target_shot == (FILM, SEQ, OTHER)
+      and [(r["asset"], r["code"]) for r in tab._rows if r.get("kind") != "camera"]
+      == [("scout", "rig")])
 
-# Another project set (the Project Tool): Build into follows it.
-cmds.workspace(other_s, openWorkspace=True)
-tab.check_target()
-check("project changed: Build into follows it", tab._target_shot == (FILM, SEQ, OTHER))
-cmds.workspace(shot_s, openWorkspace=True)
-
-# An asset's rig scene, its project set: Build into the asset, for Rigging.
+# An asset's rig scene: Build into the asset.
 open_new(scene_in(asset_s, "rig", LOGIN, "rig_work.ma"))
-open(os.path.join(asset_s, "workspace.mel"), "w").write("")
-cmds.workspace(asset_s, openWorkspace=True)
 tab.check_target()
-check("asset rig scene: Build into the asset, Rigging",
-      (t.kind(), t.department(), t.group(), t.name())
-      == (picker.ASSET, "rig", "character", "scout") and tab._target_asset)
-check("Rigging: Add to list still the locked list", codes(p) == LOCKED)
-check("asset work: no Keys from; the same Build button as a shot",
-      tab.keys_combo.isHidden() and tab.build_btn.text() == "Build")
-
-# --- A fresh Maya (user, 2026-11-27): Maya puts last session's project
-# back, so an untitled scene isn't taken to be working in it.
-cmds.file(new=True, force=True)
-cmds.workspace(shot_s, openWorkspace=True)          # Maya restoring lastLocalWS
-api.pub.remember_startup_project()                  # pipeEnv.install, once Maya is up
-tab.check_target()
-check("fresh Maya, untitled scene in last session's project: Build into not picked, no list",
-      tab._target_shot is None and tab._target_asset is None and not tab._rows
-      and t.name() is None and tab.target_lbl.text() == "")
-check("... and it says what to do", "Pick the shot" in tab.status._text)
-cmds.file(rename=scene_in(shot_s, "anim", LOGIN, "anim_work.ma"))
-tab.check_target()
-check("a scene saved in the shot: Build into follows it",
-      tab._target_shot == (FILM, SEQ, SHOT))
-cmds.file(new=True, force=True)
-tab.check_target()
-api.pub.set_maya_project(other_s)                   # the Project Tool, this session
-tab.check_target()
-check("a project set this session: Build into follows it, untitled scene too",
-      tab._target_shot == (FILM, SEQ, OTHER) and tab._rows is not None)
-api.pub.set_maya_project(shot_s)
-tab.check_target()
-check("... even back to the one Maya started in", tab._target_shot == (FILM, SEQ, SHOT))
+check("asset rig scene: building into the asset", tab._target_asset == (FILM, "character", "scout")
+      and tab._target_shot is None)
+check("asset: the same Build button as a shot", tab.build_btn.text() == "Build")
 
 print("\n%d/%d passed" % (sum(ok), len(ok)))
 shutil.rmtree(base, ignore_errors=True)

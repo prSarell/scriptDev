@@ -614,65 +614,78 @@ def manifest_key(asset_type, asset, code):
     return "%s/%s/%s" % (asset_type, asset, code)
 
 
-# The shot's build lists on the H drive (user, 2026-10-23): shared by
-# everyone building the shot, so a list comes back on any machine or scratch
-# drive. One per department (user, 2026-10-30: "everyone on the same shot
-# should see the same list"), so Lighting's list never carries Animation's
-# picks, in the shot's data folder: <shot>\data\build\<department>.json.
-# Just which assets (manifest keys): versions start at the latest and keys at
-# the shot's latest keys. Saved on Build Shot and when "-" takes an asset off.
+# The build list on the H drive: ONE list per shot or asset, the same for
+# every department (user, 2026-11-27, spec §4n: "yes one shared list per
+# shot"), in <shot or asset>\data\build\build_list.json. Just which items
+# (manifest keys): versions start at the latest, keys at the shot's latest.
+# Kept on H as a backup of key data students can't delete or overwrite
+# ("backing up key data in a place where students cant delete or write over
+# it"): only Build writes it, and locks it read-only after every save.
+# The one-list-per-department files from 2026-10-30 (<department>.json),
+# and the one list from before that (an older build_list.json, no "shared"
+# mark), are merged into the first shared list read.
 SHOT_LIST_FOLDER = ("data", "build")
-# The one list per shot from before 2026-10-30. Read (never written) as the
-# starting list for the departments that used it.
-OLD_SHOT_LIST_NAME = "build_list.json"
-OLD_SHOT_LIST_DEPARTMENTS = ("layout", "anim")
+SHOT_LIST_NAME = "build_list.json"
 
 
-def build_list_path(folder, department):
-    """A department's build list for a shot or asset folder on H. Assets
-    have lists too since Build references into them like a shot (user,
-    2026-10-30)."""
-    return os.path.join(folder, *SHOT_LIST_FOLDER + ("%s.json" % department,))
+def build_list_path(folder):
+    """The shared build list of a shot or asset folder on H."""
+    return os.path.join(folder, *SHOT_LIST_FOLDER + (SHOT_LIST_NAME,))
 
 
-def shot_list_path(h_root, film, seq, shot, department):
-    return build_list_path(shot_folder(h_root, film, seq, shot), department)
+def shot_list_path(h_root, film, seq, shot):
+    return build_list_path(shot_folder(h_root, film, seq, shot))
 
 
-def _read_list(path):
+def _read_json(path):
     try:
         with open(path, "r") as f:
-            return list(json.load(f).get("assets", []))
-    except (IOError, OSError, ValueError, AttributeError):
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (IOError, OSError, ValueError):
         return None
 
 
-def read_build_list(folder, department):
-    """The department's saved list of manifest keys for a shot or asset
-    folder on H, or None if it has none yet."""
-    keys = _read_list(build_list_path(folder, department))
-    if keys is None and department in OLD_SHOT_LIST_DEPARTMENTS:
-        keys = _read_list(os.path.join(folder, OLD_SHOT_LIST_NAME))
-    return keys
+def _list_files(folder):
+    """The shared list's data, or the older lists' merged: {"assets",
+    "usd"} or None."""
+    shared = _read_json(build_list_path(folder))
+    if shared and shared.get("shared"):
+        return shared
+    olds = [shared] if shared else []
+    olds += [_read_json(os.path.join(folder, *SHOT_LIST_FOLDER + ("%s.json" % code,)))
+             for _, code in DEPARTMENTS]
+    olds = [o for o in olds if o]
+    if not olds:
+        return None
+    assets, usd = [], []
+    for old in olds:
+        assets += [k for k in old.get("assets", []) if k not in assets]
+        usd += [k for k in old.get("usd", []) if k not in usd]
+    return {"assets": assets, "usd": usd}
 
 
-def read_shot_list(h_root, film, seq, shot, department):
-    return read_build_list(shot_folder(h_root, film, seq, shot), department)
+def read_build_list(folder):
+    """The shared list of manifest keys for a shot or asset folder on H,
+    or None if it has none yet."""
+    data = _list_files(folder) if folder else None
+    return list(data.get("assets", [])) if data else None
 
 
-def read_build_list_usd(folder, department):
-    """The keys on the department's list that load as USD (spec §4h)."""
-    try:
-        with open(build_list_path(folder, department), "r") as f:
-            return set(json.load(f).get("usd", []))
-    except (IOError, OSError, ValueError, AttributeError):
-        return set()
+def read_shot_list(h_root, film, seq, shot):
+    return read_build_list(shot_folder(h_root, film, seq, shot))
 
 
-def write_build_list(folder, department, keys, usd=()):
-    """Save the department's list (manifest keys, in list order) for a shot
-    or asset folder on H. usd: the keys loaded as USD stages (spec §4h)."""
-    path = build_list_path(folder, department)
+def read_build_list_usd(folder):
+    """The keys on the list that load as USD (spec §4h)."""
+    data = _list_files(folder) if folder else None
+    return set(data.get("usd", [])) if data else set()
+
+
+def write_build_list(folder, keys, usd=()):
+    """Save the shared list (manifest keys, in list order) for a shot or
+    asset folder on H, read-only. usd: the keys loaded as USD stages."""
+    path = build_list_path(folder)
     if not os.path.isdir(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
     if os.path.exists(path):
@@ -682,13 +695,14 @@ def write_build_list(folder, department, keys, usd=()):
     except BuildError:
         login = ""
     with open(path, "w") as f:
-        json.dump({"assets": list(keys), "usd": [k for k in keys if k in set(usd)],
-                   "department": department, "saved_by": login,
+        json.dump({"shared": True, "assets": list(keys),
+                   "usd": [k for k in keys if k in set(usd)], "saved_by": login,
                    "saved": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
+    os.chmod(path, stat.S_IREAD)
 
 
-def write_shot_list(h_root, film, seq, shot, department, keys):
-    write_build_list(shot_folder(h_root, film, seq, shot), department, keys)
+def write_shot_list(h_root, film, seq, shot, keys, usd=()):
+    write_build_list(shot_folder(h_root, film, seq, shot), keys, usd)
 
 
 def texture_folder_of(path):
@@ -973,11 +987,11 @@ def newer_maya_warning(path):
     return None
 
 
-def build_asset(shot_dir, published, vid, department=None, usd=False, replace=False):
+def build_asset(shot_dir, published, vid, usd=False, replace=False):
     """Build one asset (see _build_asset), then point any MetaHuman DNA
     nodes it brought at their files on this drive (pipeEnv.fix_dna_paths:
-    DNA nodes can't read $PIPE_SCRATCH). A cache also gets its look, picked
-    by the department building (apply_look). usd: load a model's USD
+    DNA nodes can't read $PIPE_SCRATCH). A cache also gets its look
+    (apply_look). usd: load a model's USD
     export as a USD stage instead (spec §4h); replace: allow switching an
     asset between a Maya reference and a USD stage (the other is removed).
     A USD cache is always a USD stage, wearing the shaders it was published
@@ -991,7 +1005,7 @@ def build_asset(shot_dir, published, vid, department=None, usd=False, replace=Fa
     else:
         done, warning, replaced = _build_asset(shot_dir, published, vid, replace)
     if published.get("kind") == "cache":
-        look_done, look_warning = apply_look(shot_dir, published, vid, department)
+        look_done, look_warning = apply_look(shot_dir, published, vid)
         if look_done and done == ["already up to date"]:
             done = []
         done += look_done
@@ -2686,12 +2700,15 @@ def _look_of(path):
     return files if all(os.path.isfile(f) for f in files) else None
 
 
-def look_for_cache(h_root, film, info, department=None, cache_path=None):
+def look_for_cache(h_root, film, info, cache_path=None):
     """(look .ma, look .json, the publish it belongs to) for a cache's
-    .json info, or None (published without a look). Lighting: the asset's
-    newest LookDev publish with a look first. Something made in the shot:
-    the look its Animation publish wrote (info["look"], from the shot
-    folder; user 2026-11-25)."""
+    .json info, or None (published without a look). The same in every
+    department (user, 2026-11-27, spec §4n): the asset's newest LookDev
+    look, else the newest look of the department the cache came from (a
+    republished rig fixes its look without a recache), else the look of
+    the version cached. Something made in the shot: the look its
+    Animation publish wrote (info["look"], from the shot folder; user
+    2026-11-25)."""
     stamp = info.get("asset") or {}
     if not stamp.get("asset"):
         if not (info.get("look") and cache_path):
@@ -2715,13 +2732,9 @@ def look_for_cache(h_root, film, info, department=None, cache_path=None):
                         return look + (p["versions"][vid],)
         return None
 
-    if department == "lighting":
-        # The newest look (2026-11-26): LookDev's, else the newest publish
-        # of the department the cache came from (a republished rig or
-        # environment fixes its look without the shot being recached).
-        found = newest_look("lookDev") or newest_look(stamp.get("department"))
-        if found:
-            return found
+    found = newest_look("lookDev") or newest_look(stamp.get("department"))
+    if found:
+        return found
     source = _published_source(h_root, film, stamp)
     look = _look_of(source) if source else None
     if look:
@@ -2789,7 +2802,7 @@ def _all_faces(target, faces):
     return isinstance(count, int) and count == int(m.group(1) or 0) + 1
 
 
-def apply_look(shot_dir, published, vid, department=None):
+def apply_look(shot_dir, published, vid):
     """Put the look on a cache built into the open scene: import the look's
     materials (namespace <cache namespace>_look), make its shading groups
     again and assign them by mesh name. A cache already wearing this look
@@ -2804,7 +2817,7 @@ def apply_look(shot_dir, published, vid, department=None):
         return [], None
     mesh_group = (cmds.ls(namespace + "_REF", long=True) or [group])[0]
     h_root, rel = pub.find_film_folder(published["versions"][vid])
-    look = look_for_cache(h_root, rel[0], info, department, published["versions"][vid])
+    look = look_for_cache(h_root, rel[0], info, published["versions"][vid])
     if not look:
         if info.get("kind") in ("rig", "model"):
             return [], ("no look to put on the cache: %s v%03d was published without one "
