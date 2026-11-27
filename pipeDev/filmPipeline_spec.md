@@ -4232,6 +4232,55 @@ unsimmed dress".
   cached asset on (LookDev, else the cache's department), so a republished
   rig or environment fixes its cache without a recache.
 
+### 4n. Build without "Build into" — DECIDED (2026-11-27), not built
+
+The full brief, written to be handed to the Houdini team, is
+`pipeDev/build_brief.md`. This section records the decision and why.
+
+The user, after Build opened on last session's shot and + seemed not to
+add: "we don't need the Build into menu": (1) "Students just use the add
+to list followed by the project tool to and save the result in whatever
+project they want. This leans into mayas own work flows and keeps students
+accountable in the save process"; (2) "all departments need access to all
+assets at any time"; (3) + and − give "fine control over what the do and
+don't want without needing to set a second menu". And: "The build tool
+should be able to build an shot or asset for a student regardless of the
+project their maya scene is pointing to ... The publish tool will know
+where to publish assets based on where the project the maya scene is
+pointing to."
+
+Decided, point by point:
+
+- **Build into is removed.** Build ignores the Maya project, never sets
+  it, and has no scene-vs-project banner (Publish keeps it, §4e). This
+  replaces the 2026-11-27 startup fix (Build into on "(pick one)" in a
+  fresh Maya), which goes with the row.
+- **The shot comes from where the open scene is saved**
+  (`pipe_place(scene)`). An untitled scene has none.
+- **One shared list per shot**, for every department ("yes one shared
+  list per shot"): `data\build\build_list.json` on H. The per-department
+  lists (`<dept>.json`, 2026-10-30) are merged into it the first time
+  it's read. Add to list's Department only picks which publish (rig vs
+  model). It no longer picks a list.
+- **Manifest and rig links stay in the shot** when the scene is saved in
+  one ("ok this sounds good"). In an untitled scene a rig references its
+  version file directly, and nothing is recorded; building again after
+  saving into a shot switches it to the shot's link (§4a). "Clear unused
+  versions" reads what scenes use from the scenes themselves ("lets try it
+  and see how it works").
+- **Cache looks:** always the newest LookDev look, else the rig's ("yes").
+  Replaces "Lighting: LookDev, Animation: the cached version's"
+  (2026-11-26).
+- **No "Keys from" dropdown** ("We don't need it. Students can change the
+  shot with the add to list menu ... they might need to use studio library
+  because they could end up with two rigs in the scene, but that's fine
+  for now"). **The Keys column stays**, from the scene's own shot, "in
+  case a student needs to roll back to an older version of the animation
+  from that shot".
+- **OPEN:** the shared list is written to H by Build, which sits awkwardly
+  with "H holds only publishes" (rule 3). The per-department lists already
+  did this. Raise with the user before building.
+
 ## 5. Context: what the existing tools assume
 
 The repo currently contains two conflicting Maya project models:
